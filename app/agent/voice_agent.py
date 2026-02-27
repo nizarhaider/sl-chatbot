@@ -43,7 +43,7 @@ class VoiceAgent:
         model_config = {
             "model": "gpt-4o-realtime-preview",
             "initial_model_settings": {
-                "modalities": ["text", "audio"],
+                "modalities": ["audio"],  # Changed from ["text", "audio"] to fix SDK error
                 "voice": "alloy",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
