@@ -149,36 +149,45 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._time_base = Fraction(1, self._sample_rate)
         self._samples_per_frame = 480 # 20ms at 24kHz
         self._buffer = b""
+        self._pre_roll_frames = 5 # Buffer 100ms before starting playback
+        self._is_playing = False
 
     def add_audio(self, data: bytes):
         self.queue.put_nowait(data)
 
     async def recv(self):
-        # We need to return exactly 20ms frames (960 bytes) to match WebRTC expectations.
-        # This buffering prevents choppy/broken audio.
         target_size = self._samples_per_frame * 2
         
-        while len(self._buffer) < target_size:
-            try:
-                # wait_for avoids blocking forever; if nothing comes, we yield silence
-                data = await asyncio.wait_for(self.queue.get(), timeout=0.05)
-                self._buffer += data
-            except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                # If we're waiting but have some leftover data, just pad it with silence
-                if len(self._buffer) > 0:
-                    padding = target_size - len(self._buffer)
-                    self._buffer += b'\x00' * padding
-                else:
-                    self._buffer = b'\x00' * target_size
-                break
-        
+        # Pull all available data from queue into buffer
+        while not self.queue.empty():
+            self._buffer += self.queue.get_nowait()
+
+        # Jitter Buffer / Pre-roll logic
+        if not self._is_playing:
+            if len(self._buffer) >= (target_size * self._pre_roll_frames):
+                self._is_playing = True
+                # logger.debug("Pre-roll complete, starting playback")
+            else:
+                # Return silence while buffering
+                data_to_send = b'\x00' * target_size
+                return self._create_frame(data_to_send)
+
+        # If we run out of data, stop playing and wait for pre-roll again
+        if len(self._buffer) < target_size:
+            self._is_playing = False
+            data_to_send = b'\x00' * target_size
+            return self._create_frame(data_to_send)
+
         # Take exactly 20ms from the buffer
         data_to_send = self._buffer[:target_size]
         self._buffer = self._buffer[target_size:]
         
-        num_samples = len(data_to_send) // 2
+        return self._create_frame(data_to_send)
+
+    def _create_frame(self, data):
+        num_samples = len(data) // 2
         frame = AudioFrame(format='s16', layout='mono', samples=num_samples)
-        frame.planes[0].update(data_to_send)
+        frame.planes[0].update(data)
         frame.pts = self._pts
         frame.sample_rate = self._sample_rate
         frame.time_base = self._time_base
