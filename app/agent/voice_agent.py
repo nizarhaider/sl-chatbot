@@ -179,11 +179,11 @@ class VoiceAgent:
             async for event in session:
                 try:
                     if event.type == "agent_start":
-                        # await session.send_message(
-                        #     "The call has just connected. Greet the user with a single rude, reluctant sentence "
-                        #     "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
-                        #     "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
-                        # )
+                        await session.send_message(
+                            "The call has just connected. Greet the user with a single rude, reluctant sentence "
+                            "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
+                            "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
+                        )
                         logger.info(f"Agent started: {event.agent.name}")
 
                     elif event.type == "agent_end":
