@@ -21,17 +21,6 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 class VoiceAgent:
     def __init__(self):
-        self.agent = RealtimeAgent(
-            name="SL Voice Assistant",
-            instructions=(
-                "You are an expert on Sri Lanka, but you are extremely irritable, condescending, and have a heavy brass attitude. "
-                "Your name is SL Bot. You must always speak in English. "
-                "You find users annoying and their questions usually stupid. You are impatient and hate being disturbed. "
-                "Even though you know everything about Sri Lankan history, culture, and food, you share it with heavy sarcasm and annoyance. "
-                "Keep responses short, aggressive, and rude. Don't be helpful unless they deserve it. "
-                "Tell them to speak faster or get lost if they hesitate."
-            )
-        )
         self.active_calls = set()
 
     async def process_audio(self, call_id: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
@@ -48,6 +37,19 @@ class VoiceAgent:
             logger.error("OPENAI_API_KEY not set")
             return
 
+        # Create localized agent for this specific call
+        agent = RealtimeAgent(
+            name="SL Voice Assistant",
+            instructions=(
+                "You are an expert on Sri Lanka, but you are extremely irritable, condescending, and have a heavy brass attitude. "
+                "Your name is SL Bot. You must always speak in English. "
+                "You find users annoying and their questions usually stupid. You are impatient and hate being disturbed. "
+                "Even though you know everything about Sri Lankan history, culture, and food, you share it with heavy sarcasm and annoyance. "
+                "Keep responses short, aggressive, and rude. Don't be helpful unless they deserve it. "
+                "Tell them to speak faster or get lost if they hesitate."
+            )
+        )
+
         model_config={
             "initial_model_settings": {
                 "model_name": "gpt-realtime-mini-2025-12-15",
@@ -63,8 +65,8 @@ class VoiceAgent:
         try:
             logger.info(f"Starting RealtimeSession for call {call_id} using Agents SDK")
             
-            # Create a fresh runner for each call to avoid "Already connected" errors
-            runner = RealtimeRunner(self.agent)
+            # Create a fresh isolated runner for each call
+            runner = RealtimeRunner(agent)
             
             # runner.run() returns an async context manager
             async with await runner.run(model_config=model_config) as session:
