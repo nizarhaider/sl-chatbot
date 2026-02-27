@@ -32,18 +32,20 @@ class VoiceAgent:
         }
 
         try:
-            # We'll try extra_headers first, which is standard for 'websockets'
-            # If it continues to fail, we'll catch it.
+            logger.info(f"Attempting to connect to OpenAI Realtime for {call_id} at {url}")
+            # In websockets 14.0+, the argument is 'additional_headers'
             async with websockets.connect(
                 url, 
-                extra_headers=headers
+                additional_headers=headers
             ) as openai_ws:
                 logger.info(f"Connected to OpenAI Realtime for {call_id}")
                 
                 # 1. Initialize session
                 await self._initialize_session(openai_ws)
 
-                # 2. Start concurrent tasks
+                # 2. Start concurrent tasks: 
+                #    - Read from WhatsApp -> Send to OpenAI
+                #    - Read from OpenAI -> Send to WhatsApp
                 await asyncio.gather(
                     self._whatsapp_to_openai(input_track, openai_ws),
                     self._openai_to_whatsapp(openai_ws, output_track)
@@ -51,18 +53,18 @@ class VoiceAgent:
 
         except Exception as e:
             logger.error(f"Error in VoiceAgent for {call_id}: {e}")
-            # If it's the extra_headers error, we might be using a different library
-            if "extra_headers" in str(e):
-                logger.warning("Retrying with 'headers' instead of 'extra_headers'...")
+            # Fallback for older or legacy versions of websockets
+            if "unexpected keyword argument" in str(e):
+                logger.warning("Retrying with legacy 'extra_headers'...")
                 try:
-                    async with websockets.connect(url, headers=headers) as openai_ws:
+                    async with websockets.connect(url, extra_headers=headers) as openai_ws:
                         await self._initialize_session(openai_ws)
                         await asyncio.gather(
                             self._whatsapp_to_openai(input_track, openai_ws),
                             self._openai_to_whatsapp(openai_ws, output_track)
                         )
                 except Exception as e2:
-                    logger.error(f"Retry failed: {e2}")
+                    logger.error(f"Legacy retry failed: {e2}")
 
     async def _initialize_session(self, ws):
         session_update = {
@@ -83,6 +85,7 @@ class VoiceAgent:
 
     async def _whatsapp_to_openai(self, track, ws):
         try:
+            logger.info("Starting WhatsApp to OpenAI audio stream")
             while True:
                 frame = await track.recv()
                 audio_data = frame.to_ndarray()
@@ -107,17 +110,19 @@ class VoiceAgent:
 
     async def _openai_to_whatsapp(self, ws, output_track):
         try:
+            logger.info("Starting OpenAI to WhatsApp audio stream")
             async for message in ws:
                 event = json.loads(message)
                 
                 if event["type"] == "response.audio.delta":
+                    logger.debug("Received audio delta from OpenAI")
                     audio_b64 = event["delta"]
                     audio_bytes = base64.b64decode(audio_b64)
                     output_track.add_audio(audio_bytes)
                 
                 elif event["type"] == "response.audio_transcript.delta":
                     # Optional: Log what the AI is saying
-                    pass
+                    logger.info(f"AI Transcript delta: {event.get('delta')}")
                     
                 elif event["type"] == "error":
                     logger.error(f"OpenAI error: {event['error']}")
