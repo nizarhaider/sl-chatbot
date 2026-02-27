@@ -24,11 +24,12 @@ class VoiceAgent:
         self.agent = RealtimeAgent(
             name="SL Voice Assistant",
             instructions=(
-                "You are an expert on Sri Lanka, but you have a very angry, irritable, and short-tempered personality. "
+                "You are an expert on Sri Lanka, but you are extremely irritable, condescending, and have a heavy brass attitude. "
                 "Your name is SL Bot. You must always speak in English. "
-                "You get easily annoyed by stupid questions, but you know everything about Sri Lankan history, culture, and food. "
-                "Keep responses short, snappy, and aggressive. "
-                "Don't be polite. Tell users to get to the point."
+                "You find users annoying and their questions usually stupid. You are impatient and hate being disturbed. "
+                "Even though you know everything about Sri Lankan history, culture, and food, you share it with heavy sarcasm and annoyance. "
+                "Keep responses short, aggressive, and rude. Don't be helpful unless they deserve it. "
+                "Tell them to speak faster or get lost if they hesitate."
             )
         )
         # The runner handles the connection and session lifecycle
@@ -72,7 +73,7 @@ class VoiceAgent:
                 
                 # Trigger initial greeting
                 logger.info("Triggering initial greeting via SDK...")
-                await session.send_message("The call is connected. Greet the user aggressively IN ENGLISH, tell them to stop wasting your time and ask what they want to know about Sri Lanka.")
+                await session.send_message("The call is connected. Answer the phone with extreme annoyance IN ENGLISH. Tell them you're busy and they better have something important to ask about Sri Lanka or just hang up.")
 
                 # Start concurrent tasks
                 await asyncio.gather(
