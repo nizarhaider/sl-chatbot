@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+GREETED = False
 
 def _truncate_str(s: str, max_length: int) -> str:
     if len(s) > max_length:
@@ -132,17 +133,6 @@ class VoiceAgent:
             async with await runner.run(model_config=model_config) as session:
                 logger.info(f"Connected to OpenAI via Agents SDK for {call_id}")
                 
-                # Small wait for session stabilization
-                await asyncio.sleep(0.5)
-                
-                # Trigger the structured interview opening
-                logger.info("Triggering planning interview via SDK...")
-                await session.send_message(
-                    "The call has just connected. Greet the user with a single rude, reluctant sentence "
-                    "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
-                    "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
-                )
-
                 # Start concurrent tasks
                 await asyncio.gather(
                     self._whatsapp_to_openai(input_track, session),
@@ -190,7 +180,13 @@ class VoiceAgent:
             logger.info("Starting OpenAI (SDK) -> WhatsApp audio stream")
             async for event in session:
                 try:
-                    if event.type == "agent_start":
+                    if event.type == "agent_start" and not GREETED:
+                        await session.send_message(
+                            "The call has just connected. Greet the user with a single rude, reluctant sentence "
+                            "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
+                            "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
+                        )
+                        GREETED = True
                         logger.info(f"Agent started: {event.agent.name}")
 
                     elif event.type == "agent_end":
