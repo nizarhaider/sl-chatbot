@@ -12,6 +12,7 @@ ENV UV_LINK_MODE=copy
 WORKDIR /app
 
 # Install system build dependencies
+# We need these to build any C-based dependencies (like 'av' if it's not binary-only)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     build-essential \
@@ -28,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml uv.lock ./
 
 # Sync dependencies into a virtualenv
-# Using --no-cache to save disk space on small instances
+# Using --no-cache and UV_JOBS=1 to prevent t3.micro crashes
 RUN uv sync --frozen --no-install-project --no-dev --no-cache
 
 # --- Runtime Stage ---
@@ -36,15 +37,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install ONLY runtime shared libraries for aiortc/av
+# Install runtime shared libraries
+# We use the -dev package names as they are reliable meta-packages that pull in the correct versions
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libavdevice59 \
-    libavfilter8 \
-    libavformat59 \
-    libavcodec59 \
-    libswresample4 \
-    libswscale6 \
-    libavutil57 \
+    libavdevice-dev \
+    libavfilter-dev \
+    libavformat-dev \
+    libavcodec-dev \
+    libswresample-dev \
+    libswscale-dev \
+    libavutil-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the virtualenv and app from builder
