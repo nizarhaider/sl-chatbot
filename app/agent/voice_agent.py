@@ -42,6 +42,7 @@ class VoiceAgent:
                 
                 # 1. Initialize session
                 await self._initialize_session(openai_ws)
+                await asyncio.sleep(0.5) # Wait for session to stabilize
                 
                 # 2. Trigger an initial greeting from the AI
                 await self._send_greeting(openai_ws)
@@ -60,6 +61,7 @@ class VoiceAgent:
                 try:
                     async with websockets.connect(url, extra_headers=headers) as openai_ws:
                         await self._initialize_session(openai_ws)
+                        await asyncio.sleep(0.5)
                         await self._send_greeting(openai_ws)
                         await asyncio.gather(
                             self._whatsapp_to_openai(input_track, openai_ws),
@@ -82,7 +84,7 @@ class VoiceAgent:
                 "content": [
                     {
                         "type": "input_text",
-                        "text": "Hello! Please greet me and ask how you can help."
+                        "text": "The call is connected. Please greet the user warmly and introduce yourself as the SL Voice Assistant."
                     }
                 ]
             }
@@ -105,6 +107,7 @@ class VoiceAgent:
                 "voice": "alloy",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
+                "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {"type": "server_vad"}
             }
         }
@@ -141,18 +144,23 @@ class VoiceAgent:
             async for message in ws:
                 event = json.loads(message)
                 
+                # Log all non-audio events for debugging
+                if event["type"] != "audio":
+                    logger.info(f"OpenAI Event: {event['type']}")
+                
                 if event["type"] == "response.audio.delta":
-                    logger.debug("Received audio delta from OpenAI")
                     audio_b64 = event["delta"]
                     audio_bytes = base64.b64decode(audio_b64)
                     output_track.add_audio(audio_bytes)
                 
                 elif event["type"] == "response.audio_transcript.delta":
-                    # Optional: Log what the AI is saying
-                    logger.info(f"AI Transcript delta: {event.get('delta')}")
+                    logger.info(f"AI Transcript: {event.get('delta')}")
                     
                 elif event["type"] == "error":
                     logger.error(f"OpenAI error: {event['error']}")
+                
+                elif event["type"] == "session.created":
+                    logger.info("OpenAI session created successfully")
                     
         except Exception as e:
             logger.info(f"OpenAI to WhatsApp stream ended: {e}")
