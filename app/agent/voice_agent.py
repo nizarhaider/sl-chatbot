@@ -57,8 +57,15 @@ class VoiceAgent:
                 "modalities": ["audio"],
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
+                "temperature": 0.8,
                 "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
-                "turn_detection": {"type": "semantic_vad", "interrupt_response": True},
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 1000,
+                    "interrupt_response": True
+                },
             }
         }
 
@@ -73,11 +80,12 @@ class VoiceAgent:
                 logger.info(f"Connected to OpenAI via Agents SDK for {call_id}")
                 
                 # Small wait for session stabilization
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
                 
                 # Trigger initial greeting
                 logger.info("Triggering initial greeting via SDK...")
-                await session.send_message("The call is connected. Answer the phone with extreme annoyance IN ENGLISH. Tell them you're busy and they better have something important to ask about Sri Lanka or just hang up.")
+                # We tell the model to be extremely concise in the opener to avoid VAD overlap
+                await session.send_message("The call is connected. IN ENGLISH, give a single, short, incredibly rude opening sentence about why they are bothering you. Keep it to one sentence.")
 
                 # Start concurrent tasks
                 await asyncio.gather(
