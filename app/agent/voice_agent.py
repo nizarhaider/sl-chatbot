@@ -134,7 +134,9 @@ class VoiceAgent:
                 # Start concurrent tasks
                 await asyncio.gather(
                     self._whatsapp_to_openai(input_track, session),
-                    self._openai_to_whatsapp(session, output_track)
+                    self._openai_to_whatsapp(session, output_track),
+                    self._send_greeting(session) 
+
                 )
 
         except Exception as e:
@@ -142,6 +144,18 @@ class VoiceAgent:
         finally:
             self.active_calls.discard(call_id)
             logger.info(f"Cleaned up session for {call_id}")
+
+    async def _send_greeting(self, session: RealtimeSession):
+        """
+        Proactively triggers the agent to greet the user before any input.
+        """
+        await asyncio.sleep(0.5) 
+        logger.info("Sending proactive greeting trigger")
+        await session.send_message(
+            "The call has just connected. Greet the user with a single rude, reluctant sentence "
+            "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
+            "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
+        )
 
     async def _whatsapp_to_openai(self, track: MediaStreamTrack, session: RealtimeSession):
         """
