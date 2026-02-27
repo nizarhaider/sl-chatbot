@@ -70,6 +70,8 @@ class CallsHandler:
         
         payload = {
             "call_id": call_id,
+            "messaging_product": "whatsapp", 
+            "action": "pre_accept",
             "session": {
                 "sdp": sdp_answer,
                 "sdp_type": "answer"
