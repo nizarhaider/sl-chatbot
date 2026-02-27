@@ -50,10 +50,10 @@ class VoiceAgent:
                 "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.8, # More aggressive threshold to filter noise
+                    "threshold": 0.6,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1000, # Longer silence needed to trigger turn
-                    "interrupt_response": False  # Prevent AI from being interrupted by noise
+                    "silence_duration_ms": 800,
+                    "interrupt_response": True
                 }
             }
         }
@@ -145,53 +145,51 @@ class RealtimeAudioTrack(MediaStreamTrack):
         super().__init__()
         self.queue = asyncio.Queue()
         self._pts = 0
-        self._sample_rate = 24000
+        self._sample_rate = 24000  # OpenAI sends 24kHz
         self._time_base = Fraction(1, self._sample_rate)
-        self._samples_per_frame = 480 # 20ms at 24kHz
+        self._samples_per_frame = 480  # 20ms at 24kHz
         self._buffer = b""
-        self._pre_roll_frames = 5 # Buffer 100ms before starting playback
-        self._is_playing = False
+        self._start_time = None
 
     def add_audio(self, data: bytes):
         self.queue.put_nowait(data)
 
     async def recv(self):
-        target_size = self._samples_per_frame * 2
+        # 1. Pacing: ensure we don't return frames faster than real-time
+        if self._start_time is None:
+            self._start_time = asyncio.get_event_loop().time()
         
-        # Pull all available data from queue into buffer
+        # Calculate when the NEXT frame should be sent
+        next_frame_time = self._start_time + (self._pts / self._sample_rate)
+        now = asyncio.get_event_loop().time()
+        
+        # Sleep until it's time for the next frame
+        if next_frame_time > now:
+            await asyncio.sleep(next_frame_time - now)
+
+        # 2. Frame Construction
+        target_size = self._samples_per_frame * 2  # 16-bit mono = 2 bytes per sample
+        
+        # Pull everything available in the queue into our buffer
         while not self.queue.empty():
             self._buffer += self.queue.get_nowait()
-
-        # Jitter Buffer / Pre-roll logic
-        if not self._is_playing:
-            if len(self._buffer) >= (target_size * self._pre_roll_frames):
-                self._is_playing = True
-                # logger.debug("Pre-roll complete, starting playback")
-            else:
-                # Return silence while buffering
-                data_to_send = b'\x00' * target_size
-                return self._create_frame(data_to_send)
-
-        # If we run out of data, stop playing and wait for pre-roll again
-        if len(self._buffer) < target_size:
-            self._is_playing = False
-            data_to_send = b'\x00' * target_size
-            return self._create_frame(data_to_send)
-
-        # Take exactly 20ms from the buffer
-        data_to_send = self._buffer[:target_size]
-        self._buffer = self._buffer[target_size:]
         
-        return self._create_frame(data_to_send)
+        if len(self._buffer) >= target_size:
+            # We have enough data for a real frame
+            data_to_send = self._buffer[:target_size]
+            self._buffer = self._buffer[target_size:]
+        else:
+            # Not enough data yet (jitter/lag), send 20ms of silence
+            data_to_send = b'\x00' * target_size
 
-    def _create_frame(self, data):
-        num_samples = len(data) // 2
-        frame = AudioFrame(format='s16', layout='mono', samples=num_samples)
-        frame.planes[0].update(data)
+        # 3. Create and return the frame
+        frame = AudioFrame(format='s16', layout='mono', samples=self._samples_per_frame)
+        frame.planes[0].update(data_to_send)
         frame.pts = self._pts
         frame.sample_rate = self._sample_rate
         frame.time_base = self._time_base
-        self._pts += num_samples
+        self._pts += self._samples_per_frame
+        
         return frame
 
 voice_agent = VoiceAgent()
