@@ -20,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-GREETED = False
-
 def _truncate_str(s: str, max_length: int) -> str:
     if len(s) > max_length:
         return s[:max_length] + "..."
@@ -180,13 +178,12 @@ class VoiceAgent:
             logger.info("Starting OpenAI (SDK) -> WhatsApp audio stream")
             async for event in session:
                 try:
-                    if event.type == "agent_start" and not GREETED:
+                    if event.type == "agent_start":
                         await session.send_message(
                             "The call has just connected. Greet the user with a single rude, reluctant sentence "
                             "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
                             "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
                         )
-                        GREETED = True
                         logger.info(f"Agent started: {event.agent.name}")
 
                     elif event.type == "agent_end":
