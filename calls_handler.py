@@ -1,4 +1,5 @@
 import os
+import asyncio
 import httpx
 import logging
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
@@ -48,25 +49,39 @@ class CallsHandler:
         # 4. Refine SDP for WhatsApp compatibility
         sdp = pc.localDescription.sdp
         
-        # Meta often requires uppercase SHA-256
+        # Meta requirements:
+        # 1. Fingerprint must be uppercase
         sdp = sdp.replace("a=fingerprint:sha-256", "a=fingerprint:SHA-256")
         
-        # WhatsApp/Meta often issues validation errors if it sees setup:active
-        # Since Meta sends actpass, we should respond with passive
-        sdp = sdp.replace("a=setup:active", "a=setup:passive")
+        # 2. MID MUST match the offer's MID. 
+        # aiortc typically uses '0'. WhatsApp uses 'audio'.
+        sdp = sdp.replace("a=mid:0", "a=mid:audio")
         
-        # Remove unsupported headers/attributes that can trigger validation errors
+        # 3. Setup attribute. The offer is 'actpass'. 
+        # Meta's documentation often suggests 'active' for the answerer in some scenarios,
+        # or it might be very specific about 'passive'. 
+        # Let's try 'active' as suggested by some Meta WebRTC samples.
+        sdp = sdp.replace("a=setup:passive", "a=setup:active")
+        
+        # 4. Filter out lines that Meta might find problematic
         filtered_lines = []
         for line in sdp.splitlines():
-            # Remove extmap and msid-semantic which are often problematic
-            if any(x in line for x in ["a=extmap:", "a=msid-semantic:", "a=group:BUNDLE audio video"]):
+            # Remove extmap and other non-essential headers that can trigger validation errors
+            if any(x in line for x in ["a=extmap:", "a=msid-semantic:", "a=group:BUNDLE 0"]):
                 continue
             filtered_lines.append(line)
         
-        sdp = "\r\n".join(filtered_lines) + "\r\n"
+        # 5. Add back a clean BUNDLE line if we have audio
+        # Meta expects 'a=group:BUNDLE audio'
+        if "a=mid:audio" in sdp:
+            filtered_lines.insert(4, "a=group:BUNDLE audio")
+
+        final_sdp = "\r\n".join(filtered_lines) + "\r\n"
+        
+        logger.info(f"Generated refined SDP for {call_id}:\n{final_sdp}")
 
         # 5. Send Answer back via WhatsApp Calls API
-        success = await self.send_sdp_answer(call_id, sdp)
+        success = await self.send_sdp_answer(call_id, final_sdp)
         
         if success:
             logger.info(f"Successfully connected call {call_id}")
