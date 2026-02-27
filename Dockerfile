@@ -32,7 +32,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy the rest of the application code
-COPY main.py ./
+COPY main.py calls_handler.py ./
 
 # Expose port (uvicorn default is 8000)
 EXPOSE 8000
