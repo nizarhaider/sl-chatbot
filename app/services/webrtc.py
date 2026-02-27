@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from fractions import Fraction
 from av import AudioFrame
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from app.services.whatsapp_api import whatsapp_api
@@ -21,7 +22,7 @@ class SilentAudioTrack(MediaStreamTrack):
             plane.update(b'\x00' * plane.buffer_size)
         frame.pts = self._pts
         frame.sample_rate = 48000
-        frame.time_base = 1/48000
+        frame.time_base = Fraction(1, 48000)
         self._pts += self._samples_per_frame
         return frame
 

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import websockets
 import numpy as np
+from fractions import Fraction
 from aiortc import MediaStreamTrack
 from av import AudioFrame
 
@@ -132,7 +133,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self.queue = asyncio.Queue()
         self._pts = 0
         self._sample_rate = 24000
-        self._time_base = 1 / self._sample_rate
+        self._time_base = Fraction(1, self._sample_rate)
         self._samples_per_frame = 480 # 20ms at 24kHz
 
     def add_audio(self, data: bytes):
