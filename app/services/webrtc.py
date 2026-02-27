@@ -30,13 +30,15 @@ class WebRTCService:
     def __init__(self):
         self.pcs = set()
         self.processed_calls = set()
+        self._caller_phones: dict[str, str] = {}  # call_id -> caller phone
 
-    async def handle_offer(self, call_id: str, sdp_offer: str):
+    async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = ""):
         if call_id in self.processed_calls:
             logger.warning(f"Call {call_id} already being handled, ignoring duplicate offer.")
             return
         
         self.processed_calls.add(call_id)
+        self._caller_phones[call_id] = caller_phone
         pc = RTCPeerConnection()
         self.pcs.add(pc)
 
@@ -46,6 +48,7 @@ class WebRTCService:
             if pc.connectionState in ["failed", "closed"]:
                 self.pcs.discard(pc)
                 self.processed_calls.discard(call_id)
+                self._caller_phones.pop(call_id, None)
 
         from app.agent.voice_agent import RealtimeAudioTrack
         output_track = RealtimeAudioTrack()
@@ -54,8 +57,9 @@ class WebRTCService:
         @pc.on("track")
         def on_track(track):
             if track.kind == "audio":
-                logger.info(f"Received audio track from WhatsApp for {call_id}")
-                asyncio.create_task(voice_agent.process_audio(call_id, track, output_track))
+                phone = self._caller_phones.get(call_id, "")
+                logger.info(f"Received audio track from WhatsApp for {call_id} (caller: {phone})")
+                asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
 
         # Set Remote Description
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")

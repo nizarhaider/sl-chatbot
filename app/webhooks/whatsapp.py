@@ -53,11 +53,12 @@ async def receive_webhook(request: Request):
                         for call in value["calls"]:
                             if call.get("event") == "connect":
                                 call_id = call.get("id")
+                                caller_phone = call.get("from", "")
                                 session = call.get("session", {})
                                 if session.get("sdp_type") == "offer":
                                     sdp_offer = session.get("sdp")
-                                    logger.info(f"Received SDP Offer for call {call_id}")
-                                    asyncio.create_task(webrtc_service.handle_offer(call_id, sdp_offer))
+                                    logger.info(f"Received SDP Offer for call {call_id} from {caller_phone}")
+                                    asyncio.create_task(webrtc_service.handle_offer(call_id, sdp_offer, caller_phone))
 
             return Response(content="EVENT_RECEIVED", status_code=200)
         except Exception as e:

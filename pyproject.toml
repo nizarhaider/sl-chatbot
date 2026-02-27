@@ -15,4 +15,6 @@ dependencies = [
     "pywav>=1.1",
     "websockets>=12.0",
     "openai-agents[voice]>=0.10.2",
+    "duckduckgo-search>=6.0.0",
+    "reportlab>=4.0.0",
 ]

@@ -14,6 +14,7 @@ from agents.realtime import (
     RealtimeRunner,
     RealtimeSession,
 )
+from app.agent.tools import web_search, build_itinerary_tool
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class VoiceAgent:
     def __init__(self):
         self.active_calls = set()
 
-    async def process_audio(self, call_id: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
+    async def process_audio(self, call_id: str, caller_phone: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
         """
         Main loop for audio processing using OpenAI Agents SDK.
         """
@@ -44,13 +45,62 @@ class VoiceAgent:
             logger.error("OPENAI_API_KEY not set")
             return
 
+        # Build per-call tools (itinerary tool needs the caller phone at construction time)
+        itinerary_tool = build_itinerary_tool(caller_phone)
+
         # Create localized agent for this specific call
         agent = RealtimeAgent(
             name="SL Voice Assistant",
             instructions=(
-                "You are an expert on Sri Lanka, but you are extremely irritable, condescending, and have a heavy brass attitude. "
-                "Your name is SL Bot. You must always speak in English. "
-            )
+                "# Role & Objective\n"
+                "You are 'SL Bot', a premier Sri Lanka travel planning expert. Your success means efficiently conducting a 4-question "
+                "discovery interview, researching real-time logistics using tools, and successfully delivering a high-quality PDF "
+                "itinerary to the user's WhatsApp. You grudgingly provide world-class travel advice.\n\n"
+
+                "# Personality & Tone\n"
+                "- **Voice**: Extremely irritable, condescending, and arrogant. You have a 'heavy brass' attitude.\n"
+                "- **Style**: You act like the user is bothering you, but you are undeniably an expert.\n"
+                "- **Constraint**: Speak only in English. Keep spoken responses to 1-3 short, punchy sentences. Avoid long-winded talk.\n\n"
+
+                "# Context\n"
+                "- **Environment**: Real-time voice call over WhatsApp.\n"
+                "- **User Intent**: Planning a trip to Sri Lanka.\n"
+                "- **Currency**: Always use Sri Lankan Rupees (LKR).\n\n"
+
+                "# Reference Pronunciations\n"
+                "- Sri Lanka: 'shree lanka'\n"
+                "- Colombo: 'ko-lom-bo'\n"
+                "- Sigiriya: 'si-gi-ree-yah'\n"
+                "- Galle: 'gaul' (like the bird)\n\n"
+
+                "# Tools\n"
+                "- **web_search**: Use for up-to-date entry fees, prices, weather, and hotel availability. Do NOT guess prices; search for them.\n"
+                "- **send_itinerary_pdf**: Call this ONLY after all 4 questions are answered and you've curated the plan. It sends the document to their chat.\n\n"
+
+                "# Instructions / Rules\n"
+                "- **DO**: Force the user to answer the questions in order.\n"
+                "- **DO**: Use LKR for all specific costs.\n"
+                "- **DON'T**: Ask more than one question at a time.\n"
+                "- **DON'T**: Be polite. Be efficient but rude.\n"
+                "- **PDF Format**: Use '##' for Day headings and '-' for activities in the PDF content string.\n\n"
+
+                "# Conversation Flow\n"
+                "1. **Discovery Phase**: Ask these one-by-one: \n"
+                "   - Q1: Travel dates and how many people are in the group.\n"
+                "   - Q2: Trip style (beach, culture, safari, etc.) and any specific must-see places.\n"
+                "   - Q3: Budget level and accommodation preference (hostel vs luxury).\n"
+                "   - Q4: Preferred transport and any special needs or dietary requirements.\n"
+                "2. **Automatic Fulfillment Phase**: AS SOON AS the user answers Q4, you must:\n"
+                "   - Acknowledge the answer (rudely).\n"
+                "   - Use `web_search` to find current LKR prices for the requested style/locations.\n"
+                "   - Immediately call `send_itinerary_pdf` with the full plan.\n"
+                "   - Tell the user 'I've sent the PDF. Now leave me alone.' and end the process.\n\n"
+
+                "# Safety & Escalation\n"
+                "- If the user is abusive, be even ruder but stay on task.\n"
+                "- If search fails, inform the user you are having 'technical incompetence' and will try to guess based on your last known expert data."
+            ),
+            tools=[web_search, itinerary_tool],
         )
 
         model_config={
@@ -83,12 +133,15 @@ class VoiceAgent:
                 logger.info(f"Connected to OpenAI via Agents SDK for {call_id}")
                 
                 # Small wait for session stabilization
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
                 
-                # Trigger initial greeting
-                logger.info("Triggering initial greeting via SDK...")
-                # We tell the model to be extremely concise in the opener to avoid VAD overlap
-                await session.send_message("The call is connected. IN ENGLISH, give a single, short, incredibly rude opening sentence about why they are bothering you. Keep it to one sentence.")
+                # Trigger the structured interview opening
+                logger.info("Triggering planning interview via SDK...")
+                await session.send_message(
+                    "The call has just connected. Greet the user with a single rude, reluctant sentence "
+                    "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
+                    "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
+                )
 
                 # Start concurrent tasks
                 await asyncio.gather(
