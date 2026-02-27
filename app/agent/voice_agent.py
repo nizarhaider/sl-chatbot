@@ -42,10 +42,11 @@ class VoiceAgent:
                 
                 # 1. Initialize session
                 await self._initialize_session(openai_ws)
+                
+                # 2. Trigger an initial greeting from the AI
+                await self._send_greeting(openai_ws)
 
-                # 2. Start concurrent tasks: 
-                #    - Read from WhatsApp -> Send to OpenAI
-                #    - Read from OpenAI -> Send to WhatsApp
+                # 3. Start concurrent tasks
                 await asyncio.gather(
                     self._whatsapp_to_openai(input_track, openai_ws),
                     self._openai_to_whatsapp(openai_ws, output_track)
@@ -59,6 +60,7 @@ class VoiceAgent:
                 try:
                     async with websockets.connect(url, extra_headers=headers) as openai_ws:
                         await self._initialize_session(openai_ws)
+                        await self._send_greeting(openai_ws)
                         await asyncio.gather(
                             self._whatsapp_to_openai(input_track, openai_ws),
                             self._openai_to_whatsapp(openai_ws, output_track)
@@ -66,14 +68,39 @@ class VoiceAgent:
                 except Exception as e2:
                     logger.error(f"Legacy retry failed: {e2}")
 
+    async def _send_greeting(self, ws):
+        """
+        Force the AI to speak first so the user knows it's connected.
+        """
+        logger.info("Triggering AI greeting...")
+        # Create a conversation item
+        item_create = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Hello! Please greet me and ask how you can help."
+                    }
+                ]
+            }
+        }
+        await ws.send(json.dumps(item_create))
+        
+        # Trigger the response
+        await ws.send(json.dumps({"type": "response.create"}))
+
     async def _initialize_session(self, ws):
         session_update = {
             "type": "session.update",
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": (
-                    "You are a helpful assistant. You are talking to a user over a WhatsApp voice call. "
-                    "Keep your responses concise and conversational."
+                    "You are a professional assistant on a WhatsApp voice call. "
+                    "Your name is SL Bot. Keep responses short and snappy. "
+                    "You must always respond with audio."
                 ),
                 "voice": "alloy",
                 "input_audio_format": "pcm16",
