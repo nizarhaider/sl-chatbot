@@ -1,5 +1,7 @@
 import os
+import asyncio
 from fastapi import FastAPI, Request, HTTPException, Response
+from calls_handler import calls_handler
 
 app = FastAPI()
 
@@ -53,6 +55,23 @@ async def receive_webhook(request: Request):
                     if "statuses" in value:
                         for status in value["statuses"]:
                             print(f"Received status update: {status}")
+
+                    # Handle call events (SDP offers)
+                    if "calls" in value:
+                        for call in value["calls"]:
+                            print(f"Incoming call event: {call}")
+                            
+                            if call.get("event") == "connect":
+                                call_id = call.get("id")
+                                session = call.get("session", {})
+                                
+                                if session.get("sdp_type") == "offer":
+                                    sdp_offer = session.get("sdp")
+                                    
+                                    print(f"Received SDP Offer for call {call_id}: {sdp_offer[:100]}...")
+                                    
+                                    # Handle the offer asynchronously
+                                    asyncio.create_task(calls_handler.handle_offer(call_id, sdp_offer))
                             
             # Always return a 200 OK to acknowledge receipt of the event
             return Response(content="EVENT_RECEIVED", status_code=200)
