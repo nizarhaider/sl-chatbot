@@ -32,8 +32,6 @@ class VoiceAgent:
                 "Tell them to speak faster or get lost if they hesitate."
             )
         )
-        # The runner handles the connection and session lifecycle
-        self.runner = RealtimeRunner(self.agent)
         self.active_calls = set()
 
     async def process_audio(self, call_id: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
@@ -65,8 +63,11 @@ class VoiceAgent:
         try:
             logger.info(f"Starting RealtimeSession for call {call_id} using Agents SDK")
             
+            # Create a fresh runner for each call to avoid "Already connected" errors
+            runner = RealtimeRunner(self.agent)
+            
             # runner.run() returns an async context manager
-            async with await self.runner.run(model_config=model_config) as session:
+            async with await runner.run(model_config=model_config) as session:
                 logger.info(f"Connected to OpenAI via Agents SDK for {call_id}")
                 
                 # Small wait for session stabilization
