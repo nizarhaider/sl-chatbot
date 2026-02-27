@@ -108,7 +108,12 @@ class VoiceAgent:
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {"model": "whisper-1"},
-                "turn_detection": {"type": "server_vad"}
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5, # Slightly less sensitive to avoid background noise interruption
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 500
+                }
             }
         }
         await ws.send(json.dumps(session_update))
@@ -144,8 +149,12 @@ class VoiceAgent:
             async for message in ws:
                 event = json.loads(message)
                 
-                # Log all non-audio events for debugging
-                if event["type"] != "audio":
+                # Log non-audio events with more detail for responses
+                if event["type"] == "response.done":
+                    logger.info(f"OpenAI Response Done: {json.dumps(event, indent=2)}")
+                elif event["type"] == "error":
+                    logger.error(f"OpenAI Error: {json.dumps(event, indent=2)}")
+                elif event["type"] != "audio":
                     logger.info(f"OpenAI Event: {event['type']}")
                 
                 if event["type"] == "response.audio.delta":
@@ -156,9 +165,6 @@ class VoiceAgent:
                 elif event["type"] == "response.audio_transcript.delta":
                     logger.info(f"AI Transcript: {event.get('delta')}")
                     
-                elif event["type"] == "error":
-                    logger.error(f"OpenAI error: {event['error']}")
-                
                 elif event["type"] == "session.created":
                     logger.info("OpenAI session created successfully")
                     
@@ -177,17 +183,20 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._samples_per_frame = 480 # 20ms at 24kHz
 
     def add_audio(self, data: bytes):
+        # logger.debug(f"Pushed {len(data)} bytes to audio queue")
         self.queue.put_nowait(data)
 
     async def recv(self):
-        # If we have no data, return a silent frame to keep the stream alive
-        if self.queue.empty():
-            await asyncio.sleep(0.02)
+        # We need to return exactly 20ms frames to match WebRTC expectations
+        # OpenAI sends chunks of varying sizes. 
+        # We'll just return whatever we have for now, but WebRTC prefers 20ms.
+        
+        try:
+            # wait_for avoids blocking forever if the stream ends
+            data = await asyncio.wait_for(self.queue.get(), timeout=0.1)
+        except (asyncio.TimeoutError, asyncio.QueueEmpty):
+            # Return silence if no data
             data = b'\x00' * (self._samples_per_frame * 2)
-        else:
-            data = await self.queue.get()
-            # If data is not exactly 20ms, it might cause jitter
-            # But aiortc is usually forgiving with pts
         
         num_samples = len(data) // 2
         frame = AudioFrame(format='s16', layout='mono', samples=num_samples)
