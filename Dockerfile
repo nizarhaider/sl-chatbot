@@ -28,17 +28,17 @@ WORKDIR /app
 # Copy project manifesting files First (for caching)
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies using the lockfile (excluding the project itself to be copied later)
+# Install dependencies using the lockfile
 RUN uv sync --frozen --no-install-project --no-dev
 
-# Copy the rest of the application code
-COPY main.py calls_handler.py ./
+# Copy the application code
+COPY app/ ./app/
 
-# Expose port (uvicorn default is 8000)
+# Expose port
 EXPOSE 8000
 
-# Set a default environment variable (override in your EC2 environment)
+# Set a default environment variable
 ENV VERIFY_TOKEN="my_secure_verify_token_123"
 
-# Run the FastAPI application using the uv-managed environment
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the FastAPI application
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
