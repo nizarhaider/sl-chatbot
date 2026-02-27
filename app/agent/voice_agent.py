@@ -148,21 +148,37 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._sample_rate = 24000
         self._time_base = Fraction(1, self._sample_rate)
         self._samples_per_frame = 480 # 20ms at 24kHz
+        self._buffer = b""
 
     def add_audio(self, data: bytes):
         self.queue.put_nowait(data)
 
     async def recv(self):
-        try:
-            # wait_for avoids blocking forever
-            data = await asyncio.wait_for(self.queue.get(), timeout=0.1)
-        except (asyncio.TimeoutError, asyncio.QueueEmpty):
-            # Return silence if no data
-            data = b'\x00' * (self._samples_per_frame * 2)
+        # We need to return exactly 20ms frames (960 bytes) to match WebRTC expectations.
+        # This buffering prevents choppy/broken audio.
+        target_size = self._samples_per_frame * 2
         
-        num_samples = len(data) // 2
+        while len(self._buffer) < target_size:
+            try:
+                # wait_for avoids blocking forever; if nothing comes, we yield silence
+                data = await asyncio.wait_for(self.queue.get(), timeout=0.05)
+                self._buffer += data
+            except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                # If we're waiting but have some leftover data, just pad it with silence
+                if len(self._buffer) > 0:
+                    padding = target_size - len(self._buffer)
+                    self._buffer += b'\x00' * padding
+                else:
+                    self._buffer = b'\x00' * target_size
+                break
+        
+        # Take exactly 20ms from the buffer
+        data_to_send = self._buffer[:target_size]
+        self._buffer = self._buffer[target_size:]
+        
+        num_samples = len(data_to_send) // 2
         frame = AudioFrame(format='s16', layout='mono', samples=num_samples)
-        frame.planes[0].update(data)
+        frame.planes[0].update(data_to_send)
         frame.pts = self._pts
         frame.sample_rate = self._sample_rate
         frame.time_base = self._time_base
