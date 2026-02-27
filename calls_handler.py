@@ -158,10 +158,16 @@ class CallsHandler:
                     response.raise_for_status()
 
                 # Step 2: Accept the call to finalize
+                # Meta requires the session to be included again in the accept step
+                # even if pre_accept was used, and it must be identical.
                 accept_payload = {
                     "messaging_product": "whatsapp",
                     "call_id": call_id,
-                    "action": "accept"
+                    "action": "accept",
+                    "session": {
+                        "sdp": sdp_answer,
+                        "sdp_type": "answer"
+                    }
                 }
                 
                 logger.info(f"Sending accept for {call_id}")
