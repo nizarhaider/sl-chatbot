@@ -49,36 +49,57 @@ class CallsHandler:
         # 4. Refine SDP for WhatsApp compatibility
         sdp = pc.localDescription.sdp
         
-        # Meta requirements:
+        # Meta requirements for SDP validation:
         # 1. Fingerprint must be uppercase
         sdp = sdp.replace("a=fingerprint:sha-256", "a=fingerprint:SHA-256")
         
-        # 2. MID MUST match the offer's MID. 
-        # aiortc typically uses '0'. WhatsApp uses 'audio'.
-        sdp = sdp.replace("a=mid:0", "a=mid:audio")
-        
-        # 3. Setup attribute. The offer is 'actpass'. 
-        # Meta's documentation often suggests 'active' for the answerer in some scenarios,
-        # or it might be very specific about 'passive'. 
-        # Let's try 'active' as suggested by some Meta WebRTC samples.
-        sdp = sdp.replace("a=setup:passive", "a=setup:active")
-        
-        # 4. Filter out lines that Meta might find problematic
-        filtered_lines = []
-        for line in sdp.splitlines():
-            # Remove extmap and other non-essential headers that can trigger validation errors
-            if any(x in line for x in ["a=extmap:", "a=msid-semantic:", "a=group:BUNDLE 0"]):
+        # 2. MID MUST match the offer's MID ('audio')
+        # aiortc usually uses '0' or '1'
+        lines = sdp.splitlines()
+        refined_lines = []
+        for line in lines:
+            # Force 'audio' as the mid
+            if line.startswith("a=mid:"):
+                refined_lines.append("a=mid:audio")
                 continue
-            filtered_lines.append(line)
-        
-        # 5. Add back a clean BUNDLE line if we have audio
-        # Meta expects 'a=group:BUNDLE audio'
-        if "a=mid:audio" in sdp:
-            filtered_lines.insert(4, "a=group:BUNDLE audio")
+            
+            # Use 'active' setup mode
+            if line.startswith("a=setup:"):
+                refined_lines.append("a=setup:active")
+                continue
 
-        final_sdp = "\r\n".join(filtered_lines) + "\r\n"
+            # Remove problematic/unsupported lines
+            if any(x in line for x in [
+                "a=extmap:", 
+                "a=msid-semantic:", 
+                "a=msid:", 
+                "a=ssrc:", 
+                "a=rtcp:",
+                "c=IN IP4 0.0.0.0" # Some gateways hate this
+            ]):
+                continue
+            
+            # Ensure the BUNDLE line matches the mid
+            if line.startswith("a=group:BUNDLE"):
+                refined_lines.append("a=group:BUNDLE audio")
+                continue
+
+            refined_lines.append(line)
+
+        # Ensure c= line is present and not 0.0.0.0
+        # For simplicity in signaling, we can use 127.0.0.1 or a placeholder
+        # if aiortc didn't provide a host candidate. Meta usually ignores this
+        # if ICE candidates are present, but the validator might check it.
+        has_c_line = any(line.startswith("c=") for line in refined_lines)
+        if not has_c_line:
+            refined_lines.insert(3, "c=IN IP4 127.0.0.1")
+
+        final_sdp = "\r\n".join(refined_lines) + "\r\n"
         
-        logger.info(f"Generated refined SDP for {call_id}:\n{final_sdp}")
+        # Log the full SDP for debugging
+        print(f"--- GENERATED SDP ANSWER FOR {call_id} ---")
+        print(final_sdp)
+        print("------------------------------------------")
 
         # 5. Send Answer back via WhatsApp Calls API
         success = await self.send_sdp_answer(call_id, final_sdp)

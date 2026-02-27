@@ -5,6 +5,11 @@ from calls_handler import calls_handler
 
 app = FastAPI()
 
+# Configure logging
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Identify token for WhatsApp configuration
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_verify_token_123")
 
