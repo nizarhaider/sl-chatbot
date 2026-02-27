@@ -50,11 +50,11 @@ class VoiceAgent:
             logger.error("OPENAI_API_KEY not set")
             return
 
-        model_config = {
-            "model_name": "gpt-realtime-mini-2025-12-15",
-            "initial_model_settings": {
-                "modalities": ["audio"], 
-                "voice": "alloy",
+        model_config={
+            "model_settings": {
+                "model_name": "gpt-realtime-mini-2025-12-15",
+                "voice": "sage",
+                "modalities": ["audio"],
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
