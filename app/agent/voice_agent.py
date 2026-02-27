@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+
+def _truncate_str(s: str, max_length: int) -> str:
+    if len(s) > max_length:
+        return s[:max_length] + "..."
+    return s
+
+
 class VoiceAgent:
     def __init__(self):
         self.active_calls = set()
@@ -48,7 +55,7 @@ class VoiceAgent:
 
         model_config={
             "initial_model_settings": {
-                "model_name": "gpt-realtime-mini-2025-12-15",
+                "model_name": "gpt-realtime-2025-08-28",
                 "voice": "sage",
                 "modalities": ["audio"],
                 "input_audio_format": "pcm16",
@@ -129,25 +136,51 @@ class VoiceAgent:
         try:
             logger.info("Starting OpenAI (SDK) -> WhatsApp audio stream")
             async for event in session:
-                # The SDK wraps raw events into structured dataclasses
-                if event.type == "audio":
-                    # event.audio is a RealtimeModelAudioEvent (or similar)
-                    # We need the raw bytes. Looking at session.py:
-                    # Raw model audio is in event.audio.data
-                    audio_bytes = event.audio.data
-                    output_track.add_audio(audio_bytes)
-                
-                elif event.type == "audio_interrupted":
-                    logger.info("AI audio interrupted by user")
-                    # In a advanced version, we would clear the output track buffer here
-                
-                elif event.type == "history_updated":
-                    # Logs transcripts and tool calls if needed
-                    # logger.debug(f"History updated: {len(event.history)} items")
-                    pass
-                
-                elif event.type == "error":
-                    logger.error(f"SDK Session Error: {event.error}")
+                try:
+                    if event.type == "agent_start":
+                        logger.info(f"Agent started: {event.agent.name}")
+
+                    elif event.type == "agent_end":
+                        logger.info(f"Agent ended: {event.agent.name}")
+
+                    elif event.type == "handoff":
+                        logger.info(f"Handoff from {event.from_agent.name} to {event.to_agent.name}")
+
+                    elif event.type == "tool_start":
+                        logger.info(f"Tool started: {event.tool.name}")
+
+                    elif event.type == "tool_end":
+                        logger.info(f"Tool ended: {event.tool.name}; output: {event.output}")
+
+                    elif event.type == "audio":
+                        # event.audio contains the raw PCM bytes from the model
+                        audio_bytes = event.audio.data
+                        output_track.add_audio(audio_bytes)
+
+                    elif event.type == "audio_end":
+                        logger.info("Audio ended")
+
+                    elif event.type == "audio_interrupted":
+                        logger.info("Audio interrupted by user")
+                        # Begin graceful fade + flush in the audio callback and rebuild jitter buffer.
+
+                    elif event.type == "error":
+                        logger.error(f"SDK Session Error: {event.error}")
+
+                    elif event.type == "history_updated":
+                        pass  # Skip these frequent events
+
+                    elif event.type == "history_added":
+                        pass  # Skip these frequent events
+
+                    elif event.type == "raw_model_event":
+                        logger.debug(f"Raw model event: {_truncate_str(str(event.data), 200)}")
+
+                    else:
+                        logger.debug(f"Unknown event type: {event.type}")
+
+                except Exception as e:
+                    logger.warning(f"Error processing event: {_truncate_str(str(e), 200)}")
 
         except Exception as e:
             logger.info(f"OpenAI to WhatsApp stream ended: {e}")
