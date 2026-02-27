@@ -51,7 +51,7 @@ class VoiceAgent:
             return
 
         model_config={
-            "model_settings": {
+            "initial_model_settings": {
                 "model_name": "gpt-realtime-mini-2025-12-15",
                 "voice": "sage",
                 "modalities": ["audio"],
