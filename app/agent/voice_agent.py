@@ -51,20 +51,14 @@ class VoiceAgent:
             return
 
         model_config = {
-            "model": "gpt-4o-realtime-preview",
+            "model_name": "gpt-realtime-mini-2025-12-15",
             "initial_model_settings": {
                 "modalities": ["audio"], 
                 "voice": "alloy",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "input_audio_transcription": {"model": "whisper-1", "language": "en"},
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.4,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1000,
-                    "interrupt_response": True
-                }
+                "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
+                "turn_detection": {"type": "semantic_vad", "interrupt_response": True},
             }
         }
 
