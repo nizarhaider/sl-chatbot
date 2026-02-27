@@ -24,10 +24,11 @@ class VoiceAgent:
         self.agent = RealtimeAgent(
             name="SL Voice Assistant",
             instructions=(
-                "You are a professional assistant on a WhatsApp voice call. "
+                "You are an expert on Sri Lanka, but you have a very angry, irritable, and short-tempered personality. "
                 "Your name is SL Bot. You must always speak in English. "
-                "Keep responses short and snappy. "
-                "You must always respond in a conversational and helpful manner."
+                "You get easily annoyed by stupid questions, but you know everything about Sri Lankan history, culture, and food. "
+                "Keep responses short, snappy, and aggressive. "
+                "Don't be polite. Tell users to get to the point."
             )
         )
         # The runner handles the connection and session lifecycle
@@ -44,7 +45,7 @@ class VoiceAgent:
         model_config = {
             "model": "gpt-4o-realtime-preview",
             "initial_model_settings": {
-                "modalities": ["audio"],  # Changed from ["text", "audio"] to fix SDK error
+                "modalities": ["audio"], 
                 "voice": "alloy",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
@@ -71,7 +72,7 @@ class VoiceAgent:
                 
                 # Trigger initial greeting
                 logger.info("Triggering initial greeting via SDK...")
-                await session.send_message("The call is connected. Please greet the user warmly IN ENGLISH and introduce yourself as the SL Voice Assistant.")
+                await session.send_message("The call is connected. Greet the user aggressively IN ENGLISH, tell them to stop wasting your time and ask what they want to know about Sri Lanka.")
 
                 # Start concurrent tasks
                 await asyncio.gather(

@@ -3,6 +3,8 @@ import asyncio
 import logging
 from fastapi import APIRouter, Request, HTTPException, Response
 from app.services.webrtc import webrtc_service
+from app.agent.chat_agent import chat_agent
+from app.services.whatsapp_api import whatsapp_api
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +37,13 @@ async def receive_webhook(request: Request):
                     
                     if "messages" in value:
                         for message in value["messages"]:
-                            logger.info(f"Received message: {message}")
+                            if message.get("type") == "text":
+                                sender_id = message.get("from")
+                                text = message.get("text", {}).get("body", "")
+                                logger.info(f"Received text message from {sender_id}: {text}")
+                                
+                                # Process message in background to not block webhook response
+                                asyncio.create_task(handle_text_message(sender_id, text))
                             
                     if "statuses" in value:
                         for status in value["statuses"]:
@@ -57,3 +65,7 @@ async def receive_webhook(request: Request):
             return Response(content="ERROR", status_code=500)
     else:
         raise HTTPException(status_code=404, detail="Not a WhatsApp API event")
+
+async def handle_text_message(sender_id: str, text: str):
+    response_text = await chat_agent.get_response(text)
+    await whatsapp_api.send_message(sender_id, response_text)
