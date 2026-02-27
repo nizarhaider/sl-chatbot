@@ -50,9 +50,10 @@ class VoiceAgent:
                 "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.5,
+                    "threshold": 0.8, # More aggressive threshold to filter noise
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 500
+                    "silence_duration_ms": 1000, # Longer silence needed to trigger turn
+                    "interrupt_response": False  # Prevent AI from being interrupted by noise
                 }
             }
         }
