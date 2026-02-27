@@ -50,14 +50,22 @@ class CallsHandler:
         sdp = pc.localDescription.sdp
         
         # Meta requirements for SDP validation:
-        # 1. Fingerprint must be uppercase
-        sdp = sdp.replace("a=fingerprint:sha-256", "a=fingerprint:SHA-256")
-        
+        # 1. Fingerprint must be uppercase and usually ONLY SHA-256 is expected
         # 2. MID MUST match the offer's MID ('audio')
-        # aiortc usually uses '0' or '1'
+        # 3. Origin line should have a valid-looking IP
+        
         lines = sdp.splitlines()
         refined_lines = []
+        fingerprint_added = False
+        
         for line in lines:
+            # Drop extra fingerprints
+            if line.startswith("a=fingerprint:"):
+                if not fingerprint_added and "sha-256" in line.lower():
+                    refined_lines.append(line.replace("sha-256", "SHA-256").replace("sha256", "SHA-256"))
+                    fingerprint_added = True
+                continue
+            
             # Force 'audio' as the mid
             if line.startswith("a=mid:"):
                 refined_lines.append("a=mid:audio")
@@ -68,36 +76,38 @@ class CallsHandler:
                 refined_lines.append("a=setup:active")
                 continue
 
-            # Remove problematic/unsupported lines
+            # Ensure BUNDLE matches 'audio'
+            if line.startswith("a=group:BUNDLE"):
+                refined_lines.append("a=group:BUNDLE audio")
+                continue
+
+            # Origin line cleanup
+            if line.startswith("o="):
+                parts = line.split()
+                if len(parts) >= 6 and parts[5] == "0.0.0.0":
+                    parts[5] = "127.0.0.1"
+                    line = " ".join(parts)
+                refined_lines.append(line)
+                continue
+
+            # Filter out problematic/redundant lines
             if any(x in line for x in [
                 "a=extmap:", 
                 "a=msid-semantic:", 
                 "a=msid:", 
                 "a=ssrc:", 
                 "a=rtcp:",
-                "c=IN IP4 0.0.0.0" # Some gateways hate this
+                "c=IN IP4 0.0.0.0",
+                "a=end-of-candidates" # Meta might not like this in the answer
             ]):
-                continue
-            
-            # Ensure the BUNDLE line matches the mid
-            if line.startswith("a=group:BUNDLE"):
-                refined_lines.append("a=group:BUNDLE audio")
                 continue
 
             refined_lines.append(line)
 
-        # Ensure c= line is present and not 0.0.0.0
-        # For simplicity in signaling, we can use 127.0.0.1 or a placeholder
-        # if aiortc didn't provide a host candidate. Meta usually ignores this
-        # if ICE candidates are present, but the validator might check it.
-        has_c_line = any(line.startswith("c=") for line in refined_lines)
-        if not has_c_line:
-            refined_lines.insert(3, "c=IN IP4 127.0.0.1")
-
         final_sdp = "\r\n".join(refined_lines) + "\r\n"
         
         # Log the full SDP for debugging
-        print(f"--- GENERATED SDP ANSWER FOR {call_id} ---")
+        print(f"--- REFINED SDP ANSWER FOR {call_id} ---")
         print(final_sdp)
         print("------------------------------------------")
 
