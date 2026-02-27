@@ -32,8 +32,8 @@ class CallsHandler:
         class DummyAudioTrack(MediaStreamTrack):
             kind = "audio"
             async def recv(self):
-                import asyncio
-                await asyncio.sleep(100) # Just a placeholder
+                await asyncio.sleep(10) # Reduced sleep for better response
+                return None # The track should ideally yield frames if it was real
 
         pc.addTrack(DummyAudioTrack())
 
@@ -78,6 +78,7 @@ class CallsHandler:
     async def send_sdp_answer(self, call_id: str, sdp_answer: str):
         """
         Sends the generated SDP answer back to Meta using the WhatsApp Calls API.
+        Reference: https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/user-initiated-calls
         """
         if not WHATSAPP_ACCESS_TOKEN or not PHONE_NUMBER_ID:
             logger.error("WHATSAPP_ACCESS_TOKEN or PHONE_NUMBER_ID not set")
@@ -92,46 +93,43 @@ class CallsHandler:
         
         async with httpx.AsyncClient() as client:
             try:
-                # Step 1: Pre-accept
-                pre_accept_payload = {
+                # Step 1: Pre-accept (Combining with SDP Answer as allowed by Meta)
+                # Note: Meta uses underscores for actions: 'pre_accept', 'accept'
+                payload = {
                     "messaging_product": "whatsapp",
                     "call_id": call_id,
-                    "action": "pre-accept"
-                }
-                logger.info(f"Sending pre-accept for {call_id}")
-                await client.post(url, headers=headers, json=pre_accept_payload)
-
-                # Step 2: Send Answer
-                # Note: The 'action' is usually not needed here if 'session' is present
-                # but we'll include it if requested. Actually, Meta docs usually show
-                # just the session for the answer step.
-                answer_payload = {
-                    "messaging_product": "whatsapp",
-                    "call_id": call_id,
+                    "action": "pre_accept",
                     "session": {
                         "sdp": sdp_answer,
                         "sdp_type": "answer"
                     }
                 }
-                logger.info(f"Sending SDP answer for {call_id}")
-                response = await client.post(url, headers=headers, json=answer_payload)
-                response.raise_for_status()
                 
-                # Step 3: Accept
+                logger.info(f"Sending pre_accept + SDP answer for {call_id}")
+                response = await client.post(url, headers=headers, json=payload)
+                if response.status_code != 200:
+                    logger.error(f"Error in pre_accept step: {response.text}")
+                    response.raise_for_status()
+
+                # Step 2: Accept the call to finalize
                 accept_payload = {
                     "messaging_product": "whatsapp",
                     "call_id": call_id,
                     "action": "accept"
                 }
+                
                 logger.info(f"Sending accept for {call_id}")
-                await client.post(url, headers=headers, json=accept_payload)
+                response = await client.post(url, headers=headers, json=accept_payload)
+                if response.status_code != 200:
+                    logger.error(f"Error in accept step: {response.text}")
+                    response.raise_for_status()
                 
                 return True
             except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error sending SDP answer: {e.response.text}")
+                logger.error(f"HTTP error in WhatsApp Calling API: {e.response.text}")
                 return False
             except Exception as e:
-                logger.error(f"Error sending SDP answer: {e}")
+                logger.error(f"Error in WhatsApp Calling API: {e}")
                 return False
 
 # Global handler instance
