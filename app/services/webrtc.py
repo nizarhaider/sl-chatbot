@@ -39,13 +39,15 @@ class WebRTCService:
             if pc.connectionState in ["failed", "closed"]:
                 self.pcs.discard(pc)
 
+        from app.agent.voice_agent import RealtimeAudioTrack
+        output_track = RealtimeAudioTrack()
+        pc.addTrack(output_track)
+
         @pc.on("track")
         def on_track(track):
             if track.kind == "audio":
                 logger.info(f"Received audio track from WhatsApp for {call_id}")
-                asyncio.create_task(voice_agent.process_audio(call_id, track))
-
-        pc.addTrack(SilentAudioTrack())
+                asyncio.create_task(voice_agent.process_audio(call_id, track, output_track))
 
         # Set Remote Description
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")

@@ -19,10 +19,6 @@ services:
     container_name: whatsapp_webhook_server
     expose:
       - "8000"
-    environment:
-      - VERIFY_TOKEN=my_secure_verify_token_123
-      - WHATSAPP_ACCESS_TOKEN=EAANKoXXOlQYBQZClFKiZCKTEMxEJ6BWdJvDBpUsVxmq9nNtjm3ZAWlupezIbZAqoXh5XACyyvvoR5FXVdluZAHwvL27zlyMII1rCplgqCZCA0raiXzzbpvnNJVFKBeUTsvQZCzayersZAfs8cbEMZCiEcQhOMXwAmjLZApxvDSxpACH4jf61KqMcyGMNcwYSNsnQZDZD
-      - PHONE_NUMBER_ID=912218691985795
     restart: always
 
 volumes:
