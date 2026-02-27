@@ -25,7 +25,8 @@ class VoiceAgent:
             name="SL Voice Assistant",
             instructions=(
                 "You are a professional assistant on a WhatsApp voice call. "
-                "Your name is SL Bot. Keep responses short and snappy. "
+                "Your name is SL Bot. You must always speak in English. "
+                "Keep responses short and snappy. "
                 "You must always respond in a conversational and helpful manner."
             )
         )
@@ -47,7 +48,7 @@ class VoiceAgent:
                 "voice": "alloy",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "input_audio_transcription": {"model": "whisper-1"},
+                "input_audio_transcription": {"model": "whisper-1", "language": "en"},
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.6,
@@ -70,7 +71,7 @@ class VoiceAgent:
                 
                 # Trigger initial greeting
                 logger.info("Triggering initial greeting via SDK...")
-                await session.send_message("The call is connected. Please greet the user warmly and introduce yourself as the SL Voice Assistant.")
+                await session.send_message("The call is connected. Please greet the user warmly IN ENGLISH and introduce yourself as the SL Voice Assistant.")
 
                 # Start concurrent tasks
                 await asyncio.gather(
