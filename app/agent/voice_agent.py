@@ -34,11 +34,18 @@ class VoiceAgent:
         )
         # The runner handles the connection and session lifecycle
         self.runner = RealtimeRunner(self.agent)
+        self.active_calls = set()
 
     async def process_audio(self, call_id: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
         """
         Main loop for audio processing using OpenAI Agents SDK.
         """
+        if call_id in self.active_calls:
+            logger.warning(f"Audio processing already active for {call_id}, skipping duplicate start")
+            return
+        
+        self.active_calls.add(call_id)
+        
         if not OPENAI_API_KEY:
             logger.error("OPENAI_API_KEY not set")
             return
@@ -83,6 +90,9 @@ class VoiceAgent:
 
         except Exception as e:
             logger.error(f"Error in VoiceAgent SDK bridge for {call_id}: {e}", exc_info=True)
+        finally:
+            self.active_calls.discard(call_id)
+            logger.info(f"Cleaned up session for {call_id}")
 
     async def _whatsapp_to_openai(self, track: MediaStreamTrack, session: RealtimeSession):
         """

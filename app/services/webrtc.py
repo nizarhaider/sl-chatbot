@@ -29,8 +29,14 @@ class SilentAudioTrack(MediaStreamTrack):
 class WebRTCService:
     def __init__(self):
         self.pcs = set()
+        self.processed_calls = set()
 
     async def handle_offer(self, call_id: str, sdp_offer: str):
+        if call_id in self.processed_calls:
+            logger.warning(f"Call {call_id} already being handled, ignoring duplicate offer.")
+            return
+        
+        self.processed_calls.add(call_id)
         pc = RTCPeerConnection()
         self.pcs.add(pc)
 
@@ -39,6 +45,7 @@ class WebRTCService:
             logger.info(f"Connection state for {call_id} is {pc.connectionState}")
             if pc.connectionState in ["failed", "closed"]:
                 self.pcs.discard(pc)
+                self.processed_calls.discard(call_id)
 
         from app.agent.voice_agent import RealtimeAudioTrack
         output_track = RealtimeAudioTrack()
