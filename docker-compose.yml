@@ -19,6 +19,8 @@ services:
     container_name: whatsapp_webhook_server
     expose:
       - "8000"
+    env_file:
+      - .env
     restart: always
 
 volumes:
