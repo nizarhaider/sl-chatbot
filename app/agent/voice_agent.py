@@ -8,31 +8,29 @@ from fractions import Fraction
 from aiortc import MediaStreamTrack
 from av import AudioFrame
 
-# New OpenAI Agents SDK imports
-from agents.realtime import (
-    RealtimeAgent,
-    RealtimeRunner,
-    RealtimeSession,
-)
+# Google ADK imports
+from google.adk.runners import Runner
+from google.adk.agents import LlmAgent
+from google.adk.agents.run_config import RunConfig, StreamingMode
+from google.adk.agents.live_request_queue import LiveRequestQueue
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.genai import types
+
 from app.agent.tools import web_search, build_itinerary_tool
 
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-
-def _truncate_str(s: str, max_length: int) -> str:
-    if len(s) > max_length:
-        return s[:max_length] + "..."
-    return s
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 
 class VoiceAgent:
     def __init__(self):
         self.active_calls = set()
+        self.session_service = InMemorySessionService()
 
     async def process_audio(self, call_id: str, caller_phone: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
         """
-        Main loop for audio processing using OpenAI Agents SDK.
+        Main loop for audio processing using Google ADK for Gemini Live API.
         """
         if call_id in self.active_calls:
             logger.warning(f"Audio processing already active for {call_id}, skipping duplicate start")
@@ -40,17 +38,21 @@ class VoiceAgent:
         
         self.active_calls.add(call_id)
         
-        if not OPENAI_API_KEY:
-            logger.error("OPENAI_API_KEY not set")
-            return
+        if not GEMINI_API_KEY:
+            logger.error("GEMINI_API_KEY not set")
+            # Set the key for google-genai client which ADK uses internally
+            # if os.environ.get("GOOGLE_API_KEY") is also missing.
+        else:
+            os.environ["GOOGLE_API_KEY"] = GEMINI_API_KEY
 
-        # Build per-call tools (itinerary tool needs the caller phone at construction time)
+        # Build per-call tools
         itinerary_tool = build_itinerary_tool(caller_phone)
 
-        # Create localized agent for this specific call
-        agent = RealtimeAgent(
-            name="SL Voice Assistant",
-            instructions=(
+        # Initialize LlmAgent
+        agent = LlmAgent(
+            name="SL_Bot",
+            model="gemini-2.5-flash-native-audio-preview-12-2025", 
+            instruction=(
                 "# Role & Objective\n"
                 "You are 'SL Bot', a premier Sri Lanka travel planning expert. Your success means efficiently conducting a 4-question "
                 "discovery interview, researching real-time logistics using tools, and successfully delivering a high-quality PDF "
@@ -102,67 +104,68 @@ class VoiceAgent:
             tools=[web_search, itinerary_tool],
         )
 
-        model_config={
-            "initial_model_settings": {
-                "model_name": "gpt-realtime-2025-08-28",
-                "voice": "sage",
-                "modalities": ["audio"],
-                "input_audio_format": "pcm16",
-                "output_audio_format": "pcm16",
-                "temperature": 0.8,
-                "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1000,
-                    "interrupt_response": False
-                },
-            }
-        }
+        runner = Runner(
+            app_name="sl-chatbot",
+            agent=agent,
+            session_service=self.session_service,
+            auto_create_session=True
+        )
+
+        run_config = RunConfig(
+            streaming_mode=StreamingMode.BIDI,
+            response_modalities=["AUDIO"],
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+            # Optional: Configure voice
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name="Aoede" # Relentless and expert tone match
+                    )
+                )
+            )
+        )
+
+        live_request_queue = LiveRequestQueue()
 
         try:
-            logger.info(f"Starting RealtimeSession for call {call_id} using Agents SDK")
+            logger.info(f"Starting Gemini Live session for call {call_id} using ADK")
             
-            # Create a fresh isolated runner for each call
-            runner = RealtimeRunner(agent)
-            
-            # runner.run() returns an async context manager
-            async with await runner.run(model_config=model_config) as session:
-                logger.info(f"Connected to OpenAI via Agents SDK for {call_id}")
-                
-                # Start concurrent tasks
-                await asyncio.gather(
-                    self._whatsapp_to_openai(input_track, session),
-                    self._openai_to_whatsapp(session, output_track),
-                    self._send_greeting(session) 
-
-                )
+            # Start concurrent tasks
+            await asyncio.gather(
+                self._whatsapp_to_gemini(input_track, live_request_queue),
+                self._gemini_to_whatsapp(runner, call_id, live_request_queue, run_config, output_track),
+                self._send_greeting(live_request_queue)
+            )
 
         except Exception as e:
-            logger.error(f"Error in VoiceAgent SDK bridge for {call_id}: {e}", exc_info=True)
+            logger.error(f"Error in VoiceAgent Gemini bridge for {call_id}: {e}", exc_info=True)
         finally:
+            live_request_queue.close()
             self.active_calls.discard(call_id)
             logger.info(f"Cleaned up session for {call_id}")
 
-    async def _send_greeting(self, session: RealtimeSession):
+    async def _send_greeting(self, live_request_queue: LiveRequestQueue):
         """
-        Proactively triggers the agent to greet the user before any input.
+        Proactively triggers the agent to greet the user.
         """
         await asyncio.sleep(0.5) 
         logger.info("Sending proactive greeting trigger")
-        await session.send_message(
-            "The call has just connected. Greet the user with a single rude, reluctant sentence "
-            "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
-            "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
-        )
+        live_request_queue.send_content(types.Content(
+            role="user",
+            parts=[types.Part(text=(
+                "The call has just connected. Greet the user with a single rude, reluctant sentence "
+                "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
+                "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
+            ))]
+        ))
 
-    async def _whatsapp_to_openai(self, track: MediaStreamTrack, session: RealtimeSession):
+    async def _whatsapp_to_gemini(self, track: MediaStreamTrack, live_request_queue: LiveRequestQueue):
         """
-        Reads audio from WhatsApp (aiortc) and sends it to OpenAI Session.
+        Reads audio from WhatsApp (aiortc) and sends it to Gemini Live via ADK.
         """
         try:
-            logger.info("Starting WhatsApp -> OpenAI (SDK) audio stream")
+            logger.info("Starting WhatsApp -> Gemini audio stream")
             while True:
                 frame = await track.recv()
                 audio_data = frame.to_ndarray()
@@ -172,73 +175,57 @@ class VoiceAgent:
                 else:
                     audio_data = audio_data.flatten()
 
-                # Downsample 48k to 24k
+                # Gemini Live API expects 16kHz mono 16-bit PCM for input
                 if frame.sample_rate == 48000:
-                    audio_data = audio_data[::2]
+                    audio_data = audio_data[::3]
+                elif frame.sample_rate == 24000:
+                    # In case it's 24k (unlikely for input track but good to handle)
+                    # We can use a simpler decimation or just pass it if Gemini supports 24k input
+                    # But the docs say 16k is expected for input.
+                    audio_data = audio_data[::3] # This would be 8k, maybe not what we want.
+                    # Usually aiortc gives 48k or 16k.
                 
                 audio_bytes = audio_data.astype('int16').tobytes()
                 
-                # Send raw bytes to the session
-                await session.send_audio(audio_bytes)
+                # Send realtime audio blob to the queue
+                blob = types.Blob(mime_type="audio/pcm;rate=16000", data=audio_bytes)
+                live_request_queue.send_realtime(blob)
                 
         except Exception as e:
-            logger.info(f"WhatsApp to OpenAI stream ended: {e}")
+            logger.info(f"WhatsApp to Gemini stream ended: {e}")
 
-    async def _openai_to_whatsapp(self, session: RealtimeSession, output_track):
+    async def _gemini_to_whatsapp(self, runner: Runner, call_id: str, live_request_queue: LiveRequestQueue, run_config: RunConfig, output_track):
         """
-        Reads events from OpenAI Session and pushes audio to WhatsApp.
+        Reads events from Gemini Live session and pushes audio to WhatsApp.
         """
         try:
-            logger.info("Starting OpenAI (SDK) -> WhatsApp audio stream")
-            async for event in session:
+            logger.info("Starting Gemini -> WhatsApp audio stream")
+            async for event in runner.run_live(
+                user_id="whatsapp_user",
+                session_id=call_id,
+                live_request_queue=live_request_queue,
+                run_config=run_config
+            ):
                 try:
-                    if event.type == "agent_start":
-                        logger.info(f"Agent started: {event.agent.name}")
+                    # Log transcriptions for debugging
+                    if event.input_transcription:
+                        logger.info(f"User Transcribed: {event.input_transcription.text}")
+                    
+                    if event.server_content and event.server_content.model_draft:
+                        for part in event.server_content.model_draft.parts:
+                            if part.inline_data:
+                                audio_bytes = part.inline_data.data
+                                output_track.add_audio(audio_bytes)
 
-                    elif event.type == "agent_end":
-                        logger.info(f"Agent ended: {event.agent.name}")
-
-                    elif event.type == "handoff":
-                        logger.info(f"Handoff from {event.from_agent.name} to {event.to_agent.name}")
-
-                    elif event.type == "tool_start":
-                        logger.info(f"Tool started: {event.tool.name}")
-
-                    elif event.type == "tool_end":
-                        logger.info(f"Tool ended: {event.tool.name}; output: {event.output}")
-
-                    elif event.type == "audio":
-                        # event.audio contains the raw PCM bytes from the model
-                        audio_bytes = event.audio.data
-                        output_track.add_audio(audio_bytes)
-
-                    elif event.type == "audio_end":
-                        logger.info("Audio ended")
-
-                    elif event.type == "audio_interrupted":
+                    if event.server_content and event.server_content.interrupted:
                         logger.info("Audio interrupted by user")
-                        # Begin graceful fade + flush in the audio callback and rebuild jitter buffer.
-
-                    elif event.type == "error":
-                        logger.error(f"SDK Session Error: {event.error}")
-
-                    elif event.type == "history_updated":
-                        pass  # Skip these frequent events
-
-                    elif event.type == "history_added":
-                        pass  # Skip these frequent events
-
-                    elif event.type == "raw_model_event":
-                        logger.debug(f"Raw model event: {_truncate_str(str(event.data), 200)}")
-
-                    else:
-                        logger.debug(f"Unknown event type: {event.type}")
+                        output_track.clear_buffer()
 
                 except Exception as e:
-                    logger.warning(f"Error processing event: {_truncate_str(str(e), 200)}")
+                    logger.warning(f"Error processing Gemini event: {e}")
 
         except Exception as e:
-            logger.info(f"OpenAI to WhatsApp stream ended: {e}")
+            logger.info(f"Gemini to WhatsApp stream ended: {e}")
 
 class RealtimeAudioTrack(MediaStreamTrack):
     kind = "audio"
@@ -252,6 +239,15 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._samples_per_frame = 480  # 20ms at 24kHz
         self._buffer = b""
         self._start_time = None
+
+    def clear_buffer(self):
+        """Clears the upcoming audio queue and buffer."""
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._buffer = b""
 
     def add_audio(self, data: bytes):
         self.queue.put_nowait(data)

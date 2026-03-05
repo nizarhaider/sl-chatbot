@@ -1,12 +1,14 @@
 import os
 import logging
-from openai import AsyncOpenAI
+from google import genai
 
 logger = logging.getLogger(__name__)
 
 class ChatAgent:
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        # Use GEMINI_API_KEY or fallback to GOOGLE_API_KEY
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        self.client = genai.Client(api_key=api_key)
         self.system_prompt = (
             "You are an expert on Sri Lanka, but you have a very angry, irritable, and short-tempered personality. "
             "Your name is SL Bot. You must always speak in English. "
@@ -17,18 +19,18 @@ class ChatAgent:
 
     async def get_response(self, text: str) -> str:
         try:
-            response = await self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": text}
-                ],
-                max_tokens=150,
-                temperature=0.8
+            response = await self.client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=text,
+                config={
+                    "system_instruction": self.system_prompt,
+                    "max_output_tokens": 150,
+                    "temperature": 0.8,
+                }
             )
-            return response.choices[0].message.content
+            return response.text
         except Exception as e:
-            logger.error(f"Error getting response from OpenAI: {e}")
+            logger.error(f"Error getting response from Gemini: {e}")
             return "What do you want? I'm busy. (Internal Error)"
 
 chat_agent = ChatAgent()

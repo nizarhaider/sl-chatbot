@@ -5,12 +5,10 @@ import io
 import asyncio
 import logging
 from datetime import datetime
-from agents import function_tool
 
 logger = logging.getLogger(__name__)
 
 
-@function_tool
 def web_search(query: str) -> str:
     """Search the web for up-to-date information.
 
@@ -137,7 +135,6 @@ def build_itinerary_tool(caller_phone: str):
     Call this once per voice session to create a session-specific tool instance.
     """
 
-    @function_tool
     async def send_itinerary_pdf(itinerary: str) -> str:
         """Prepare a Sri Lanka travel itinerary PDF and send it to the user's WhatsApp chat.
 
