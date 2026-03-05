@@ -107,6 +107,13 @@ class VoiceAgent:
             response_modalities=["AUDIO"],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    # Adjust silence duration to control how quickly the model 
+                    # considers the user to have finished speaking. Lower = faster.
+                    silence_duration_ms=600, 
+                )
+            ),
             # Optional: Configure voice
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
