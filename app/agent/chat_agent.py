@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 class ChatAgent:
     def __init__(self):
         # Use GEMINI_API_KEY or fallback to GOOGLE_API_KEY
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY")
         self.client = genai.Client(api_key=api_key)
         self.system_prompt = (
             "You are an expert on Sri Lanka, but you have a very angry, irritable, and short-tempered personality. "

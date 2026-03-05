@@ -20,8 +20,6 @@ from app.agent.tools import web_search, build_itinerary_tool
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
 
 class VoiceAgent:
     def __init__(self):
@@ -38,13 +36,6 @@ class VoiceAgent:
         
         self.active_calls.add(call_id)
         
-        if not GEMINI_API_KEY:
-            logger.error("GEMINI_API_KEY not set")
-            # Set the key for google-genai client which ADK uses internally
-            # if os.environ.get("GOOGLE_API_KEY") is also missing.
-        else:
-            os.environ["GOOGLE_API_KEY"] = GEMINI_API_KEY
-
         # Build per-call tools
         itinerary_tool = build_itinerary_tool(caller_phone)
 
