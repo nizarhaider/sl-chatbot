@@ -199,21 +199,26 @@ class VoiceAgent:
             ):
                 try:
                     # Log transcriptions for debugging
-                    if event.input_transcription:
+                    if event.input_transcription and event.input_transcription.text:
                         logger.info(f"User Transcribed: {event.input_transcription.text}")
                     
-                    if event.server_content and event.server_content.model_draft:
-                        for part in event.server_content.model_draft.parts:
-                            if part.inline_data:
-                                audio_bytes = part.inline_data.data
-                                output_track.add_audio(audio_bytes)
+                    if event.output_transcription and event.output_transcription.text:
+                        logger.info(f"Model Transcribed: {event.output_transcription.text}")
 
-                    if event.server_content and event.server_content.interrupted:
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if part.inline_data and part.inline_data.data:
+                                # Native audio models send audio in inline_data
+                                if part.inline_data.mime_type and "audio" in part.inline_data.mime_type:
+                                    audio_bytes = part.inline_data.data
+                                    output_track.add_audio(audio_bytes)
+
+                    if event.interrupted:
                         logger.info("Audio interrupted by user")
                         output_track.clear_buffer()
 
                 except Exception as e:
-                    logger.warning(f"Error processing Gemini event: {e}")
+                    logger.warning(f"Error processing Gemini event: {e}", exc_info=True)
 
         except Exception as e:
             logger.info(f"Gemini to WhatsApp stream ended: {e}")
