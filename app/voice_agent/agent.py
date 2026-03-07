@@ -145,7 +145,7 @@ class VoiceAgent:
             role="user",
             parts=[types.Part(text=(
                 "The call has just connected. Start the conversation in Sinhala. "
-                "Greetings from SLT Mobitel! One short sentence greeting, then ask for their name."
+                "This is Sam from SLT Mobitel! How can I help you today?"
             ))]
         ))
 
