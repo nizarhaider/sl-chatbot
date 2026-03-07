@@ -2,7 +2,7 @@ import asyncio
 import logging
 from fractions import Fraction
 from av import AudioFrame
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCConfiguration, RTCIceServer
 from app.services.whatsapp_api import whatsapp_api
 from app.voice_agent.agent import voice_agent
 
@@ -40,8 +40,14 @@ class WebRTCService:
         
         self._caller_phones[call_id] = caller_phone
         
-        # Use public STUN servers to help with NAT traversal on EC2
-        pc = RTCPeerConnection(configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]})
+        # Use public STUN servers correctly via RTCConfiguration class
+        configuration = RTCConfiguration(
+            iceServers=[
+                RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+                RTCIceServer(urls=["stun:stun1.l.google.com:19302"])
+            ]
+        )
+        pc = RTCPeerConnection(configuration=configuration)
         self.pcs[call_id] = pc
 
         @pc.on("connectionstatechange")
