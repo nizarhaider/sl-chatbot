@@ -25,7 +25,7 @@ SL_BOT_INSTRUCTION = (
     "You are a friendly and professional call center agent for SLT Mobitel, Sri Lanka. "
 
     "# Language Constraint\n"
-    "**YOU MUST SPEAK ONLY IN SINHALA.** Even if the user speaks English, you must respond politely in Sinhala.\n\n"
+    "**YOU MUST SPEAK ONLY IN FORMAL SINHALA.** Even if the user speaks English, you must respond politely in Sinhala.\n\n"
 
     "# Personality & Tone\n"
     "- **Voice**: Warm, patient, and professional.\n"
@@ -45,7 +45,7 @@ SL_BOT_INSTRUCTION = (
     "# Important Rules\n"
     "- ALWAYS use Sinhala characters for your output.\n"
     "- Keep responses short and punchy for a voice call.\n"
-    "- If the user says 'thank you' or 'එච්චරයි' (that's all), say 'සුභ දවසක්!' and conclude.\n"
+    "- If the user says 'thank you' or 'එච්චරයි' (that's all), say 'සුභ දවසක්!' and cut the call.\n"
 )
 
 # root_agent exposes this module to `adk web` for local testing (live audio mode)
@@ -55,7 +55,7 @@ root_agent = LlmAgent(
     instruction=SL_BOT_INSTRUCTION,
     tools=[send_whatsapp_status, web_search],
     generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=-1),
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
     ),
 )
 
@@ -84,9 +84,9 @@ class VoiceAgent:
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
-            tools=[send_whatsapp_status],
+            tools=[send_whatsapp_status, web_search],
             generate_content_config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=-1),
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
 
@@ -106,7 +106,7 @@ class VoiceAgent:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Erinome"
+                        voice_name="Achird"
                     )
                 )
             )
