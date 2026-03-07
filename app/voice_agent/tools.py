@@ -21,6 +21,8 @@ def web_search(query: str) -> str:
 
     Returns:
         A concise summary of the top search results.
+
+    **Invocation Condition:** Invoke this tool when you need real-time data or specific details about Mobitel plans, technical troubleshooting steps, or local services that are not in your base training data.
     """
     try:
         from ddgs import DDGS
@@ -59,6 +61,8 @@ def send_whatsapp_status(phone_number: str, name: str, issue: str, status: str) 
 
     Returns:
         A confirmation message indicating if the WhatsApp notification was sent.
+
+    **Invocation Condition:** Invoke this tool *only after* you have gathered the customer's full name, their WhatsApp phone number, and a brief description of their technical issue. This should be called once per issue reported.
     """
     from app.services.whatsapp_api import whatsapp_api
     import asyncio
