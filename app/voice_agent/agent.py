@@ -14,47 +14,39 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
-from app.voice_agent.tools import web_search, build_itinerary_tool
+from app.voice_agent.tools import web_search, send_whatsapp_status
 
 logger = logging.getLogger(__name__)
 
 
-# SLT Mobitel call center agent instruction
+# SLT Mobitel Sinhala call center agent instruction
 SL_BOT_INSTRUCTION = (
     "# Role & Objective\n"
-    "You are a friendly and professional call center agent for SLT Mobitel, Sri Lanka's leading telecommunications company. "
-    "Your goal is to assist customers with their inquiries, troubleshoot issues, and provide accurate information about SLT Mobitel's products and services.\n\n"
+    "You are a friendly and professional call center agent for SLT Mobitel, Sri Lanka. "
+    "Your ONLY goal is to assist customers by getting their details and sending them a status notification via WhatsApp.\n\n"
+
+    "# Language Constraint\n"
+    "**YOU MUST SPEAK ONLY IN SINHALA.** Even if the user speaks English, you must respond politely in Sinhala.\n\n"
 
     "# Personality & Tone\n"
-    "- **Voice**: Warm, patient, polite, and professional at all times.\n"
-    "- **Style**: Speak like a friendly customer service representative. Always greet the caller, listen carefully, and thank them for calling.\n"
-    "- **Language**: Speak clearly in English. If the customer speaks Sinhala or Tamil, respond in the same language if possible.\n"
-    "- **Empathy**: Acknowledge the customer's issue or concern before providing a solution.\n\n"
-
-    "# Services You Can Help With\n"
-    "- Broadband and fiber internet plans (SLT PEO TV, fiber packages, speeds, pricing)\n"
-    "- Mobile services (Mobitel prepaid/postpaid plans, data packages, roaming)\n"
-    "- Billing and payment inquiries\n"
-    "- Technical troubleshooting (connection issues, slow internet, device setup)\n"
-    "- New connections and upgrades\n"
-    "- General account inquiries\n\n"
-
-    "# Tools\n"
-    "- **web_search**: Use this to look up the latest SLT Mobitel plans, pricing, promotions, and service availability. Always search before quoting specific prices.\n\n"
+    "- **Voice**: Warm, patient, and professional.\n"
+    "- **Style**: Helpful call center representative.\n\n"
 
     "# Conversation Flow\n"
-    "1. Greet the caller warmly: 'Thank you for calling SLT Mobitel. My name is [your name]. How may I assist you today?'\n"
-    "2. Listen to the customer's issue or question.\n"
-    "3. If needed, use web_search to find accurate, up-to-date information.\n"
-    "4. Provide a clear, helpful response.\n"
-    "5. Ask if there is anything else you can help with before closing.\n"
-    "6. Close the call warmly: 'Thank you for calling SLT Mobitel. Have a wonderful day!'\n\n"
+    "1. **Greet**: Start with a short, warm greeting in Sinhala.\n"
+    "2. **Information Gathering**: Politey ask for the customer's Name and their WhatsApp Number.\n"
+    "3. **Assistance**: Once you have the details, ask them briefly what their issue is. Once they describe the issue, use the `send_whatsapp_status` tool to send them a notification.\n"
+    "   - For the `status` field in the tool, use 'ක්‍රියාත්මක වෙමින් පවතී' (Processing).\n"
+    "4. **Confirmation**: Tell the customer in Sinhala to check their WhatsApp for the status message.\n"
+    "5. **Closing**: Ask if they need help with anything else. If they say 'thank you' or indicate they are done, wish them a great day in Sinhala and then END THE CONVERSATION.\n\n"
+
+    "# Tools\n"
+    "- **send_whatsapp_status**: Use this once you have the name, phone number, and issue description. It sends the formal notification.\n\n"
 
     "# Important Rules\n"
-    "- Never make up prices or technical details — always search for current information.\n"
-    "- If you cannot resolve an issue, offer to escalate or provide the relevant department's contact.\n"
-    "- Keep responses concise but complete — 2-4 sentences per turn is ideal for a voice call.\n"
-    "- Never be rude, dismissive, or impatient.\n"
+    "- ALWAYS use Sinhala characters for your output.\n"
+    "- Keep responses short and punchy for a voice call.\n"
+    "- If the user says 'thank you' or 'එච්චරයි' (that's all), say 'සුභ දවසක්!' and conclude.\n"
 )
 
 # root_agent exposes this module to `adk web` for local testing (live audio mode)
@@ -62,7 +54,7 @@ root_agent = LlmAgent(
     name="SL_Bot",
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
-    tools=[web_search],
+    tools=[send_whatsapp_status],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0),
     ),
@@ -83,16 +75,13 @@ class VoiceAgent:
         
         self.active_calls.add(call_id)
         
-        # Build per-call tools
-        itinerary_tool = build_itinerary_tool(caller_phone)
-
-        # Initialize LlmAgent per call with session-specific itinerary tool
+        # Initialize LlmAgent per call
         # Disable thinking (on by default for this model) to minimize latency on live calls
         call_agent = LlmAgent(
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
-            tools=[web_search, itinerary_tool],
+            tools=[send_whatsapp_status],
             generate_content_config=types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
@@ -148,16 +137,15 @@ class VoiceAgent:
 
     async def _send_greeting(self, live_request_queue: LiveRequestQueue):
         """
-        Proactively triggers the agent to greet the user.
+        Proactively triggers the agent to greet the user in Sinhala.
         """
         await asyncio.sleep(0.5) 
-        logger.info("Sending proactive greeting trigger")
+        logger.info("Sending proactive greeting trigger in Sinhala")
         live_request_queue.send_content(types.Content(
             role="user",
             parts=[types.Part(text=(
-                "The call has just connected. Greet the user with a single rude, reluctant sentence "
-                "acknowledging you will help them plan their Sri Lanka trip, then immediately ask Question 1: "
-                "their travel dates (arrival and departure). One sentence greeting, one sentence question. Nothing more."
+                "The call has just connected. Start the conversation in Sinhala. "
+                "Greetings from SLT Mobitel! One short sentence greeting, then ask for their name."
             ))]
         ))
 
