@@ -61,19 +61,24 @@ root_agent = LlmAgent(
 
 class VoiceAgent:
     def __init__(self):
-        self.active_calls = set()
-        self.session_service = InMemorySessionService()
+        self.active_calls: dict[str, asyncio.Task] = {}
 
     async def process_audio(self, call_id: str, caller_phone: str, input_track: MediaStreamTrack, output_track: MediaStreamTrack):
         """
         Main loop for audio processing using Google ADK for Gemini Live API.
+        Supports multiple concurrent calls, each with isolated session state.
         """
         if call_id in self.active_calls:
-            logger.warning(f"Audio processing already active for {call_id}, skipping duplicate start")
-            return
-        
-        self.active_calls.add(call_id)
-        
+            logger.warning(f"Audio processing already active for {call_id}, cancelling old session first")
+            self.active_calls[call_id].cancel()
+            try:
+                await self.active_calls[call_id]
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # Each call gets its own fresh session service to avoid state bleed
+        session_service = InMemorySessionService()
+
         # Initialize LlmAgent per call
         call_agent = LlmAgent(
             name="SL_Bot",
@@ -88,7 +93,7 @@ class VoiceAgent:
         runner = Runner(
             app_name="sl-chatbot",
             agent=call_agent,
-            session_service=self.session_service,
+            session_service=session_service,
             auto_create_session=True
         )
 
@@ -98,7 +103,7 @@ class VoiceAgent:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             # Affective Dialog: model adapts to the user's tone and emotion.
-            # Requires v1alpha API — set via GOOGLE_GENAI_VERSION env var.
+            # Requires v1alpha API — ADK uses this automatically for Gemini API key backends.
             enable_affective_dialog=True,
             # Configure voice
             speech_config=types.SpeechConfig(
@@ -112,22 +117,26 @@ class VoiceAgent:
 
         live_request_queue = LiveRequestQueue()
 
-        try:
-            logger.info(f"Starting Gemini Live session for call {call_id} using ADK")
-            
-            # Start concurrent tasks
-            await asyncio.gather(
-                self._whatsapp_to_gemini(input_track, live_request_queue),
-                self._gemini_to_whatsapp(runner, call_id, live_request_queue, run_config, output_track),
-                self._send_greeting(live_request_queue)
-            )
+        async def _run_call():
+            try:
+                logger.info(f"Starting Gemini Live session for call {call_id}")
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(self._whatsapp_to_gemini(input_track, live_request_queue), name=f"mic-{call_id}")
+                    tg.create_task(self._gemini_to_whatsapp(runner, call_id, live_request_queue, run_config, output_track), name=f"speaker-{call_id}")
+                    tg.create_task(self._send_greeting(live_request_queue), name=f"greeting-{call_id}")
+            except* asyncio.CancelledError:
+                pass
+            except* Exception as eg:
+                for exc in eg.exceptions:
+                    logger.error(f"Error in call task for {call_id}: {exc}", exc_info=exc)
+            finally:
+                live_request_queue.close()
+                self.active_calls.pop(call_id, None)
+                logger.info(f"Cleaned up session for {call_id}")
 
-        except Exception as e:
-            logger.error(f"Error in VoiceAgent Gemini bridge for {call_id}: {e}", exc_info=True)
-        finally:
-            live_request_queue.close()
-            self.active_calls.discard(call_id)
-            logger.info(f"Cleaned up session for {call_id}")
+        task = asyncio.create_task(_run_call(), name=f"call-{call_id}")
+        self.active_calls[call_id] = task
+        await task
 
     async def _send_greeting(self, live_request_queue: LiveRequestQueue):
         """

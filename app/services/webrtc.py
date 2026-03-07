@@ -28,27 +28,30 @@ class SilentAudioTrack(MediaStreamTrack):
 
 class WebRTCService:
     def __init__(self):
-        self.pcs = set()
-        self.processed_calls = set()
+        self.pcs: dict[str, RTCPeerConnection] = {}  # call_id -> pc
         self._caller_phones: dict[str, str] = {}  # call_id -> caller phone
 
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = ""):
-        if call_id in self.processed_calls:
-            logger.warning(f"Call {call_id} already being handled, ignoring duplicate offer.")
-            return
+        # If call_id is already active, clean up the old one first to allow re-entry
+        if call_id in self.pcs:
+            logger.warning(f"Call {call_id} already exists, closing old connection for re-entry.")
+            old_pc = self.pcs.pop(call_id)
+            await old_pc.close()
         
-        self.processed_calls.add(call_id)
         self._caller_phones[call_id] = caller_phone
-        pc = RTCPeerConnection()
-        self.pcs.add(pc)
+        
+        # Use public STUN servers to help with NAT traversal on EC2
+        pc = RTCPeerConnection(configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]})
+        self.pcs[call_id] = pc
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
             logger.info(f"Connection state for {call_id} is {pc.connectionState}")
-            if pc.connectionState in ["failed", "closed"]:
-                self.pcs.discard(pc)
-                self.processed_calls.discard(call_id)
+            if pc.connectionState in ["failed", "closed", "disconnected"]:
+                self.pcs.pop(call_id, None)
                 self._caller_phones.pop(call_id, None)
+                if pc.connectionState != "closed":
+                    await pc.close()
 
         from app.voice_agent.agent import RealtimeAudioTrack
         output_track = RealtimeAudioTrack()
@@ -59,6 +62,7 @@ class WebRTCService:
             if track.kind == "audio":
                 phone = self._caller_phones.get(call_id, "")
                 logger.info(f"Received audio track from WhatsApp for {call_id} (caller: {phone})")
+                # VoiceAgent handles multiple calls concurrently via call_id isolating the Task
                 asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
 
         # Set Remote Description
