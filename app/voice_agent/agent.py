@@ -62,6 +62,9 @@ root_agent = LlmAgent(
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
     tools=[web_search],
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    ),
 )
 
 class VoiceAgent:
@@ -83,11 +86,15 @@ class VoiceAgent:
         itinerary_tool = build_itinerary_tool(caller_phone)
 
         # Initialize LlmAgent per call with session-specific itinerary tool
+        # Disable thinking (on by default for this model) to minimize latency on live calls
         call_agent = LlmAgent(
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
             tools=[web_search, itinerary_tool],
+            generate_content_config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
         )
 
         runner = Runner(
