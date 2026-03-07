@@ -164,33 +164,55 @@ class VoiceAgent:
         """
         Reads audio from WhatsApp (aiortc) and sends it to Gemini Live via ADK.
         """
+        _logged_format = False
         try:
             logger.info("Starting WhatsApp -> Gemini audio stream")
             while True:
                 frame = await track.recv()
                 audio_data = frame.to_ndarray()
-                
+
+                # Log format once for debugging
+                if not _logged_format:
+                    logger.info(
+                        f"Audio frame format: fmt={frame.format.name}, "
+                        f"rate={frame.sample_rate}, layout={frame.layout.name}, "
+                        f"shape={audio_data.shape}, dtype={audio_data.dtype}"
+                    )
+                    _logged_format = True
+
+                # Mix down to mono
                 if audio_data.ndim > 1:
                     audio_data = np.mean(audio_data, axis=0)
                 else:
                     audio_data = audio_data.flatten()
 
-                # Gemini Live API expects 16kHz mono 16-bit PCM for input
-                if frame.sample_rate == 48000:
-                    audio_data = audio_data[::3]
-                elif frame.sample_rate == 24000:
-                    # In case it's 24k (unlikely for input track but good to handle)
-                    # We can use a simpler decimation or just pass it if Gemini supports 24k input
-                    # But the docs say 16k is expected for input.
-                    audio_data = audio_data[::3] # This would be 8k, maybe not what we want.
-                    # Usually aiortc gives 48k or 16k.
-                
-                audio_bytes = audio_data.astype('int16').tobytes()
-                
-                # Send realtime audio blob to the queue
-                blob = types.Blob(mime_type="audio/pcm;rate=16000", data=audio_bytes)
+                # Convert to 16-bit PCM.
+                # aiortc/WebRTC commonly delivers audio as 'fltp' (float32, range -1.0 to 1.0)
+                # OR 's16' (int16, range -32768 to 32767).
+                # We must handle both — casting floats directly to int16 gives near-silence!
+                fmt = frame.format.name
+                if fmt in ('fltp', 'flt', 'dbl', 'dblp'):
+                    # Float format: scale to int16 range
+                    audio_data = np.clip(audio_data, -1.0, 1.0)
+                    audio_data = (audio_data * 32767).astype('int16')
+                else:
+                    # Integer format (s16, s16p, etc.): cast directly
+                    audio_data = audio_data.astype('int16')
+
+                # Resample to 16kHz (Gemini Live API input requirement)
+                rate = frame.sample_rate
+                if rate == 48000:
+                    audio_data = audio_data[::3]   # 48000 / 3 = 16000 ✓
+                elif rate == 24000:
+                    audio_data = audio_data[::2]   # 24000 / 2 = 16000 ✓ (was wrong before: [::3] = 8000)
+                elif rate == 32000:
+                    audio_data = audio_data[::2]   # 32000 / 2 = 16000 ✓
+                # If already 16000, no resampling needed
+
+                # Send realtime audio blob to Gemini
+                blob = types.Blob(mime_type="audio/pcm;rate=16000", data=audio_data.tobytes())
                 live_request_queue.send_realtime(blob)
-                
+
         except Exception as e:
             logger.info(f"WhatsApp to Gemini stream ended: {e}")
 
