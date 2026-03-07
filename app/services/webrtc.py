@@ -4,7 +4,7 @@ from fractions import Fraction
 from av import AudioFrame
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from app.services.whatsapp_api import whatsapp_api
-from app.agent.voice_agent import voice_agent
+from app.voice_agent.agent import voice_agent
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class WebRTCService:
                 self.processed_calls.discard(call_id)
                 self._caller_phones.pop(call_id, None)
 
-        from app.agent.voice_agent import RealtimeAudioTrack
+        from app.voice_agent.agent import RealtimeAudioTrack
         output_track = RealtimeAudioTrack()
         pc.addTrack(output_track)
 

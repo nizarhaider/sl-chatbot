@@ -23,7 +23,7 @@ def web_search(query: str) -> str:
         A concise summary of the top search results.
     """
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
 
         results = DDGS().text(query, max_results=5)
 

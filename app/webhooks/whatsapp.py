@@ -3,7 +3,7 @@ import asyncio
 import logging
 from fastapi import APIRouter, Request, HTTPException, Response
 from app.services.webrtc import webrtc_service
-from app.agent.chat_agent import chat_agent
+from app.voice_agent.chat_agent import chat_agent
 from app.services.whatsapp_api import whatsapp_api
 
 logger = logging.getLogger(__name__)
