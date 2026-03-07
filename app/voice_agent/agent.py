@@ -53,9 +53,10 @@ root_agent = LlmAgent(
     name="SL_Bot",
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
-    tools=[send_whatsapp_status],
+    tools=[send_whatsapp_status, web_search],
+    enable_affective_dialog=True,
     generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=0),
+        thinking_config=types.ThinkingConfig(thinking_budget=-1),
     ),
 )
 
