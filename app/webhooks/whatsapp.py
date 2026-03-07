@@ -1,7 +1,8 @@
 import os
 import asyncio
 import logging
-from fastapi import APIRouter, Request, HTTPException, Response
+from fastapi import APIRouter, Request, HTTPException, Response, Header, status
+from pydantic import BaseModel
 from app.services.webrtc import webrtc_service
 from app.voice_agent.chat_agent import chat_agent
 from app.services.whatsapp_api import whatsapp_api
@@ -10,6 +11,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_verify_token_123")
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
+
+
+class SendWhatsAppMessageRequest(BaseModel):
+    phone_number: str
+    message: str
 
 @router.get("/webhook")
 async def verify_webhook(request: Request):
@@ -75,6 +82,46 @@ async def receive_webhook(request: Request):
             return Response(content="ERROR", status_code=500)
     else:
         raise HTTPException(status_code=404, detail="Not a WhatsApp API event")
+
+
+@router.post("/send-message")
+async def send_whatsapp_message(
+    payload: SendWhatsAppMessageRequest,
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+):
+    """
+    Internal endpoint to send a WhatsApp message.
+
+    This is intended to be called from trusted backend services (e.g. your Next.js app),
+    not directly from the public internet or frontend clients.
+    """
+    if not INTERNAL_API_KEY:
+        logger.error("INTERNAL_API_KEY is not set on the server")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server not configured for internal messaging",
+        )
+
+    if x_api_key != INTERNAL_API_KEY:
+        logger.warning("Unauthorized attempt to call /send-message")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+        )
+
+    success = await whatsapp_api.send_message(
+        to=payload.phone_number,
+        text=payload.message,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to send WhatsApp message",
+        )
+
+    return {"status": "sent"}
+
 
 async def handle_text_message(sender_id: str, text: str):
     response_text = await chat_agent.get_response(text)
