@@ -54,7 +54,6 @@ root_agent = LlmAgent(
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
     tools=[send_whatsapp_status, web_search],
-    enable_affective_dialog=True,
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=-1),
     ),
@@ -76,14 +75,13 @@ class VoiceAgent:
         self.active_calls.add(call_id)
         
         # Initialize LlmAgent per call
-        # Disable thinking (on by default for this model) to minimize latency on live calls
         call_agent = LlmAgent(
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
             tools=[send_whatsapp_status],
             generate_content_config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_budget=-1),
             ),
         )
 
@@ -99,18 +97,14 @@ class VoiceAgent:
             response_modalities=["AUDIO"],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    # Adjust silence duration to control how quickly the model 
-                    # considers the user to have finished speaking. Lower = faster.
-                    silence_duration_ms=600, 
-                )
-            ),
-            # Optional: Configure voice
+            # Affective Dialog: model adapts to the user's tone and emotion.
+            # Requires v1alpha API — set via GOOGLE_GENAI_VERSION env var.
+            enable_affective_dialog=True,
+            # Configure voice
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Aoede" # Relentless and expert tone match
+                        voice_name="Erinome"
                     )
                 )
             )
