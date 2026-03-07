@@ -76,7 +76,7 @@ class VoiceAgent:
         # Initialize LlmAgent per call
         call_agent = LlmAgent(
             name="SL_Bot",
-            model="gemini-2.5-flash-preview-tts",
+            model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
             tools=[send_whatsapp_status, web_search],
         )
