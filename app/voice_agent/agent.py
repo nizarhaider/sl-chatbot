@@ -9,7 +9,7 @@ from av.audio.resampler import AudioResampler
 # Google ADK imports
 from google.adk.runners import Runner
 from google.adk.agents import LlmAgent
-from google.adk.agents.run_config import RunConfig, StreamingMode, ContextWindowCompressionConfig
+from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
@@ -99,7 +99,7 @@ class VoiceAgent:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             # Optimize for long sessions as per best practices
-            context_window_compression=ContextWindowCompressionConfig(),
+            context_window_compression=types.ContextWindowCompressionConfig(),
             # Configure voice
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
