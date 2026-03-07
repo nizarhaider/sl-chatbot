@@ -102,9 +102,6 @@ class VoiceAgent:
             response_modalities=["AUDIO"],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            # Affective Dialog: model adapts to the user's tone and emotion.
-            # Requires v1alpha API — ADK uses this automatically for Gemini API key backends.
-            enable_affective_dialog=True,
             # Configure voice
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
