@@ -14,7 +14,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
-from app.voice_agent.tools import web_search, send_whatsapp_status
+from app.voice_agent.tools import web_search
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -120,8 +120,8 @@ class VoiceAgent:
             auto_create_session=True
         )
 
-        # Load the MP3 sample for replicated voice
-        sample_path = "../voices/sample_si_lk.mp3"
+        # Use absolute path based on current file location to work correctly in Docker and locally
+        sample_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "sample_si_lk.mp3")
         with open(sample_path, "rb") as f:
             voice_sample_bytes = f.read()
 
