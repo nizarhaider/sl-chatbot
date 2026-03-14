@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from fractions import Fraction
 from aiortc import MediaStreamTrack
 from av import AudioFrame
@@ -121,8 +122,8 @@ class VoiceAgent:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["AUDIO"],
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
+            input_audio_transcription=types.AudioTranscriptionConfig(return_partial=True),
+            output_audio_transcription=types.AudioTranscriptionConfig(return_partial=True),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Erinome")
@@ -187,10 +188,12 @@ class VoiceAgent:
                 run_config=run_config
             ):
                 if event.input_transcription and event.input_transcription.text:
-                    logger.info(f"User Transcribed: {event.input_transcription.text}")
+                    time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    logger.info(f"[{time_str}] User Transcribed: {event.input_transcription.text}")
 
                 if event.output_transcription and event.output_transcription.text:
-                    logger.info(f"Model Transcribed: {event.output_transcription.text}")
+                    time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    logger.info(f"[{time_str}] Model Transcribed: {event.output_transcription.text}")
 
                 if event.content and event.content.parts:
                     for part in event.content.parts:
