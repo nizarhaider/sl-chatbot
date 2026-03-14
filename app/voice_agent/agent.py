@@ -5,7 +5,6 @@ from aiortc import MediaStreamTrack
 from av import AudioFrame
 from av.audio.resampler import AudioResampler
 
-# Google ADK imports
 from google.adk.runners import Runner
 from google.adk.agents import LlmAgent
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -41,7 +40,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._pts = 0
         self._sample_rate = sample_rate
         self._time_base = Fraction(1, self._sample_rate)
-        self._samples_per_frame = 480  # 20ms frames
+        self._samples_per_frame = 480
         self._buffer = b""
         self._start_time = None
 
@@ -64,7 +63,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         if next_frame_time > now:
             await asyncio.sleep(next_frame_time - now)
 
-        target_size = self._samples_per_frame * 2  # 16-bit mono
+        target_size = self._samples_per_frame * 2
 
         while not self.queue.empty():
             try:
@@ -93,7 +92,6 @@ class VoiceAgent:
         self.greetings_sent: dict[str, bool] = {}
 
     async def process_audio(self, call_id: str, caller_phone: str, input_track: MediaStreamTrack, output_track: RealtimeAudioTrack):
-        # Cancel previous session if exists
         if call_id in self.active_calls:
             task = self.active_calls.pop(call_id)
             task.cancel()
@@ -136,7 +134,6 @@ class VoiceAgent:
 
         async def _run_call():
             try:
-                # Send greeting once
                 if not self.greetings_sent[call_id]:
                     live_request_queue.send_content(types.Content(
                         role="user",
@@ -180,10 +177,9 @@ class VoiceAgent:
 
     async def _gemini_to_whatsapp(self, runner: Runner, call_id: str, live_request_queue: LiveRequestQueue, run_config: RunConfig, output_track: RealtimeAudioTrack):
         """
-        Streams partial TTS immediately, avoiding repeated audio.
+        Streams Gemini audio continuously, without skipping any word or repeating.
         """
         try:
-            sent_audio = 0  # tracks already sent bytes
             async for event in runner.run_live(
                 user_id="whatsapp_user",
                 session_id=call_id,
@@ -199,16 +195,11 @@ class VoiceAgent:
                 if event.content and event.content.parts:
                     for part in event.content.parts:
                         if part.inline_data and part.inline_data.data:
-                            audio_bytes = part.inline_data.data
-                            # Send only new audio
-                            if len(audio_bytes) > sent_audio:
-                                new_bytes = audio_bytes[sent_audio:]
-                                output_track.add_audio(new_bytes)
-                                sent_audio = len(audio_bytes)
+                            # Send each audio chunk immediately
+                            output_track.add_audio(part.inline_data.data)
 
                 if event.interrupted:
                     output_track.clear_buffer()
-                    sent_audio = 0
         except asyncio.CancelledError:
             logger.info(f"Gemini -> WhatsApp stream for call {call_id} cancelled")
         except Exception as e:

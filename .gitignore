@@ -1,3 +1,7 @@
 .venv
 .env
 __pycache__
+.adk/
+*.db
+*.log
+.DS_Store
