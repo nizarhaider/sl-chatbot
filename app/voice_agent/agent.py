@@ -50,7 +50,7 @@ root_agent = LlmAgent(
     name="SL_Bot",
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
-    tools=[send_whatsapp_status, web_search],
+    tools=[web_search],
 )
 
 class VoiceAgent:
@@ -78,7 +78,7 @@ class VoiceAgent:
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
-            tools=[send_whatsapp_status, web_search],
+            tools=[web_search],
         )
 
         runner = Runner(
