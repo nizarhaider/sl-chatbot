@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from datetime import datetime
@@ -119,6 +120,11 @@ class VoiceAgent:
             auto_create_session=True
         )
 
+        # Load the MP3 sample for replicated voice
+        sample_path = "../voices/sample_si_lk.mp3"
+        with open(sample_path, "rb") as f:
+            voice_sample_bytes = f.read()
+
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["AUDIO"],
@@ -126,7 +132,10 @@ class VoiceAgent:
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Erinome")
+                    replicated_voice_config=types.ReplicatedVoiceConfig(
+                        mime_type='audio/mp3',
+                        voice_sample_audio=voice_sample_bytes
+                    )
                 )
             )
         )
