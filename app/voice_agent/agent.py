@@ -122,8 +122,8 @@ class VoiceAgent:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["AUDIO"],
-            input_audio_transcription=types.AudioTranscriptionConfig(return_partial=True),
-            output_audio_transcription=types.AudioTranscriptionConfig(return_partial=True),
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Erinome")
