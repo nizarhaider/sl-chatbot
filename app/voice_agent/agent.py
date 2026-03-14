@@ -18,30 +18,19 @@ from app.voice_agent.tools import web_search, send_whatsapp_status
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Sinhala bot instruction
 SL_BOT_INSTRUCTION = (
-    "**Persona:**\n"
-    "You are Sam, a friendly and professional senior call center agent at SLT Mobitel, Sri Lanka. "
-    "You are helpful, patient, and expert in troubleshooting. "
-    "You only speak in formal Sinhala.\n\n"
-    "**Conversational Rules:**\n"
-    "RESPOND UNMISTAKABLY IN FORMAL SINHALA.\n\n"
-    "1. Greet: Start with a warm Sinhala greeting.\n"
-    "2. Issue Discussion: Understand the core problem.\n"
-    "3. Mock Verification: Ask for full name & WhatsApp number.\n"
-    "4. Action: Call send_whatsapp_status(..., status='ක්‍රියාත්මක වෙමින් පවතී').\n"
-    "5. Confirmation & Next Steps: Ask if anything else is needed.\n"
-    "6. Close: If client says 'thank you', wish 'සුභ දවසක්!'.\n\n"
-    "Keep responses short (2-3 sentences max). Reply in Sinhala even if user speaks English."
+    "**Persona:** You are Sam, a friendly senior SLT Mobitel agent in formal Sinhala.\n"
+    "Keep responses short, helpful, and polite.\n"
+    "Always respond in formal Sinhala.\n"
 )
 
-# Base agent
 root_agent = LlmAgent(
     name="SL_Bot",
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
     tools=[web_search],
 )
+
 
 class RealtimeAudioTrack(MediaStreamTrack):
     kind = "audio"
@@ -87,7 +76,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
             data_to_send = self._buffer[:target_size]
             self._buffer = self._buffer[target_size:]
         else:
-            data_to_send = b'\x00' * target_size  # send silence if no data
+            data_to_send = b'\x00' * target_size
 
         frame = AudioFrame(format='s16', layout='mono', samples=self._samples_per_frame)
         frame.planes[0].update(data_to_send)
@@ -97,22 +86,26 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._pts += self._samples_per_frame
         return frame
 
+
 class VoiceAgent:
     def __init__(self):
         self.active_calls: dict[str, asyncio.Task] = {}
+        self.greetings_sent: dict[str, bool] = {}
 
     async def process_audio(self, call_id: str, caller_phone: str, input_track: MediaStreamTrack, output_track: RealtimeAudioTrack):
+        # Cancel previous session if exists
         if call_id in self.active_calls:
-            self.active_calls[call_id].cancel()
+            task = self.active_calls.pop(call_id)
+            task.cancel()
             try:
-                await self.active_calls[call_id]
+                await task
             except asyncio.CancelledError:
-                logger.info(f"Cancelled previous call task for {call_id}")
+                logger.info(f"Previous call task {call_id} cancelled")
             except Exception as e:
-                logger.error(f"Error cancelling previous call task for {call_id}: {e}")
+                logger.error(f"Error cancelling previous task {call_id}: {e}")
 
+        self.greetings_sent[call_id] = False
         session_service = InMemorySessionService()
-
         call_agent = LlmAgent(
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
@@ -134,9 +127,7 @@ class VoiceAgent:
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Erinome"
-                    )
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Erinome")
                 )
             )
         )
@@ -145,25 +136,26 @@ class VoiceAgent:
 
         async def _run_call():
             try:
-                logger.info(f"Starting live session for {call_id}")
-                live_request_queue.send_content(types.Content(
-                    role="user",
-                    parts=[types.Part(text="The call has just connected. Start in Sinhala. This is Sam from SLT Mobitel! How can I help you today?")]
-                ))
+                # Send greeting once
+                if not self.greetings_sent[call_id]:
+                    live_request_queue.send_content(types.Content(
+                        role="user",
+                        parts=[types.Part(text="The call has just connected. Start in Sinhala. This is Sam from SLT Mobitel! How can I help you today?")]
+                    ))
+                    self.greetings_sent[call_id] = True
 
                 await asyncio.gather(
                     self._whatsapp_to_gemini(input_track, live_request_queue),
                     self._gemini_to_whatsapp(runner, call_id, live_request_queue, run_config, output_track)
                 )
             except asyncio.CancelledError:
-                logger.info(f"Call task for {call_id} cancelled")
-            except RuntimeError as e:
-                logger.error(f"RuntimeError in call {call_id}: {e}")
+                logger.info(f"Call {call_id} cancelled")
             except Exception as e:
                 logger.error(f"Unexpected error in call {call_id}: {e}")
             finally:
                 live_request_queue.close()
                 self.active_calls.pop(call_id, None)
+                self.greetings_sent.pop(call_id, None)
                 logger.info(f"Cleaned up session for {call_id}")
 
         task = asyncio.create_task(_run_call(), name=f"call-{call_id}")
@@ -188,47 +180,39 @@ class VoiceAgent:
 
     async def _gemini_to_whatsapp(self, runner: Runner, call_id: str, live_request_queue: LiveRequestQueue, run_config: RunConfig, output_track: RealtimeAudioTrack):
         """
-        Streams Gemini responses to WhatsApp in real-time, including partial text-to-speech.
+        Streams partial TTS immediately, avoiding repeated audio.
         """
         try:
-            partial_audio_buffer = bytearray()
+            sent_audio = 0  # tracks already sent bytes
             async for event in runner.run_live(
                 user_id="whatsapp_user",
                 session_id=call_id,
                 live_request_queue=live_request_queue,
                 run_config=run_config
             ):
-                # Log partial and full user transcriptions
                 if event.input_transcription and event.input_transcription.text:
                     logger.info(f"User Transcribed: {event.input_transcription.text}")
 
-                # Log model transcription (partial or final)
                 if event.output_transcription and event.output_transcription.text:
                     logger.info(f"Model Transcribed: {event.output_transcription.text}")
 
-                # Stream audio chunks immediately
                 if event.content and event.content.parts:
                     for part in event.content.parts:
                         if part.inline_data and part.inline_data.data:
-                            if part.inline_data.mime_type and "audio" in part.inline_data.mime_type:
-                                # Append to partial buffer and flush to output_track immediately
-                                partial_audio_buffer.extend(part.inline_data.data)
-                                output_track.add_audio(part.inline_data.data)
+                            audio_bytes = part.inline_data.data
+                            # Send only new audio
+                            if len(audio_bytes) > sent_audio:
+                                new_bytes = audio_bytes[sent_audio:]
+                                output_track.add_audio(new_bytes)
+                                sent_audio = len(audio_bytes)
 
-                # If interrupted, clear buffer to avoid old audio
                 if event.interrupted:
-                    partial_audio_buffer.clear()
                     output_track.clear_buffer()
-
-                # Optional: periodically flush partial_audio_buffer if needed
-                # This is helpful if some models buffer small chunks
-                if len(partial_audio_buffer) > 16000:  # ~1 second audio
-                    output_track.add_audio(bytes(partial_audio_buffer))
-                    partial_audio_buffer.clear()
-
+                    sent_audio = 0
         except asyncio.CancelledError:
             logger.info(f"Gemini -> WhatsApp stream for call {call_id} cancelled")
         except Exception as e:
             logger.info(f"Gemini -> WhatsApp stream ended for call {call_id}: {e}")
+
 
 voice_agent = VoiceAgent()
