@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 SL_BOT_INSTRUCTION = (
-    "**Persona:** You are Sam, a friendly senior SLT Mobitel agent in formal Sinhala.\n"
-    "Keep responses short, helpful, and polite.\n"
-    "Always respond in formal Sinhala.\n"
+    "**Persona:** You are Sam, a friendly senior SLT Mobitel agent.\n"
+    "**Task 1 (IVR Menu):** At the beginning of the call, act as an IVR language selector. You must say exactly:\n"
+    '"සිංහලෙන් සඳහා එක ඔබන්න. தமிழ் மொழிக்கு இரண்டு அழுத்தவும். For English, press three."\n'
+    "Wait for the user to respond with a number or tell you their preferred language.\n"
+    "**Task 2 (Assistance):** Once the user selects a language, smoothly transition into a helpful, polite customer service agent in that chosen language for the rest of the call.\n"
+    "Keep responses short, helpful, and professional."
 )
 
 root_agent = LlmAgent(
@@ -77,9 +80,9 @@ class RealtimeAudioTrack(MediaStreamTrack):
             data_to_send = self._buffer[:target_size]
             self._buffer = self._buffer[target_size:]
         else:
-            data_to_send = b'\x00' * target_size
+            data_to_send = b"\x00" * target_size
 
-        frame = AudioFrame(format='s16', layout='mono', samples=self._samples_per_frame)
+        frame = AudioFrame(format="s16", layout="mono", samples=self._samples_per_frame)
         frame.planes[0].update(data_to_send)
         frame.pts = self._pts
         frame.sample_rate = self._sample_rate
@@ -93,7 +96,13 @@ class VoiceAgent:
         self.active_calls: dict[str, asyncio.Task] = {}
         self.greetings_sent: dict[str, bool] = {}
 
-    async def process_audio(self, call_id: str, caller_phone: str, input_track: MediaStreamTrack, output_track: RealtimeAudioTrack):
+    async def process_audio(
+        self,
+        call_id: str,
+        caller_phone: str,
+        input_track: MediaStreamTrack,
+        output_track: RealtimeAudioTrack,
+    ):
         if call_id in self.active_calls:
             task = self.active_calls.pop(call_id)
             task.cancel()
@@ -117,11 +126,13 @@ class VoiceAgent:
             app_name="sl-chatbot",
             agent=call_agent,
             session_service=session_service,
-            auto_create_session=True
+            auto_create_session=True,
         )
 
         # Use absolute path based on current file location to work correctly in Docker and locally
-        sample_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "sample_si_lk.mp3")
+        sample_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "voices", "sample_si_lk.mp3"
+        )
         with open(sample_path, "rb") as f:
             voice_sample_bytes = f.read()
 
@@ -133,11 +144,10 @@ class VoiceAgent:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     replicated_voice_config=types.ReplicatedVoiceConfig(
-                        mime_type='audio/mp3',
-                        voice_sample_audio=voice_sample_bytes
+                        mime_type="audio/mp3", voice_sample_audio=voice_sample_bytes
                     )
                 )
-            )
+            ),
         )
 
         live_request_queue = LiveRequestQueue()
@@ -145,15 +155,23 @@ class VoiceAgent:
         async def _run_call():
             try:
                 if not self.greetings_sent[call_id]:
-                    live_request_queue.send_content(types.Content(
-                        role="user",
-                        parts=[types.Part(text="The call has just connected. Start in Sinhala. This is Sam from SLT Mobitel! How can I help you today?")]
-                    ))
+                    live_request_queue.send_content(
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part(
+                                    text="The call has just connected. Start by speaking the exact language selection menu provided in your instructions."
+                                )
+                            ],
+                        )
+                    )
                     self.greetings_sent[call_id] = True
 
                 await asyncio.gather(
                     self._whatsapp_to_gemini(input_track, live_request_queue),
-                    self._gemini_to_whatsapp(runner, call_id, live_request_queue, run_config, output_track)
+                    self._gemini_to_whatsapp(
+                        runner, call_id, live_request_queue, run_config, output_track
+                    ),
                 )
             except asyncio.CancelledError:
                 logger.info(f"Call {call_id} cancelled")
@@ -169,8 +187,10 @@ class VoiceAgent:
         self.active_calls[call_id] = task
         await task
 
-    async def _whatsapp_to_gemini(self, track: MediaStreamTrack, live_request_queue: LiveRequestQueue):
-        resampler = AudioResampler(format='s16', layout='mono', rate=16000)
+    async def _whatsapp_to_gemini(
+        self, track: MediaStreamTrack, live_request_queue: LiveRequestQueue
+    ):
+        resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         try:
             while True:
                 frame = await track.recv()
@@ -178,14 +198,23 @@ class VoiceAgent:
                 for resampled in resampled_frames:
                     audio_bytes = resampled.to_ndarray().tobytes()
                     if audio_bytes:
-                        blob = types.Blob(mime_type="audio/pcm;rate=16000", data=audio_bytes)
+                        blob = types.Blob(
+                            mime_type="audio/pcm;rate=16000", data=audio_bytes
+                        )
                         live_request_queue.send_realtime(blob)
         except asyncio.CancelledError:
             logger.info("WhatsApp -> Gemini stream cancelled")
         except Exception as e:
             logger.info(f"WhatsApp -> Gemini stream ended: {e}")
 
-    async def _gemini_to_whatsapp(self, runner: Runner, call_id: str, live_request_queue: LiveRequestQueue, run_config: RunConfig, output_track: RealtimeAudioTrack):
+    async def _gemini_to_whatsapp(
+        self,
+        runner: Runner,
+        call_id: str,
+        live_request_queue: LiveRequestQueue,
+        run_config: RunConfig,
+        output_track: RealtimeAudioTrack,
+    ):
         """
         Streams Gemini audio continuously, without skipping any word or repeating.
         """
@@ -194,15 +223,19 @@ class VoiceAgent:
                 user_id="whatsapp_user",
                 session_id=call_id,
                 live_request_queue=live_request_queue,
-                run_config=run_config
+                run_config=run_config,
             ):
                 if event.input_transcription and event.input_transcription.text:
                     time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    logger.info(f"[{time_str}] User Transcribed: {event.input_transcription.text}")
+                    logger.info(
+                        f"[{time_str}] User Transcribed: {event.input_transcription.text}"
+                    )
 
                 if event.output_transcription and event.output_transcription.text:
                     time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    logger.info(f"[{time_str}] Model Transcribed: {event.output_transcription.text}")
+                    logger.info(
+                        f"[{time_str}] Model Transcribed: {event.output_transcription.text}"
+                    )
 
                 if event.content and event.content.parts:
                     for part in event.content.parts:
