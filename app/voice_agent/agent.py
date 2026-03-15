@@ -30,7 +30,7 @@ SL_BOT_INSTRUCTION = (
 
 root_agent = LlmAgent(
     name="SL_Bot",
-    model="gemini-2.5-flash-native-audio-preview-12-2025",
+    model="gemini-2.5-flash-native-audio-preview-09-2025",
     instruction=SL_BOT_INSTRUCTION,
     tools=[web_search, send_whatsapp_status],
 )
@@ -117,7 +117,7 @@ class VoiceAgent:
         session_service = InMemorySessionService()
         call_agent = LlmAgent(
             name="SL_Bot",
-            model="gemini-2.5-flash-native-audio-preview-12-2025",
+            model="gemini-2.5-flash-native-audio-preview-09-2025",
             instruction=SL_BOT_INSTRUCTION,
             tools=[web_search, send_whatsapp_status],
         )
@@ -131,7 +131,7 @@ class VoiceAgent:
 
         # Use absolute path based on current file location to work correctly in Docker and locally
         sample_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "voices", "sample_si_lk.mp3"
+            os.path.dirname(os.path.dirname(__file__)), "voices", "sample_en_lk.mp3"
         )
         with open(sample_path, "rb") as f:
             voice_sample_bytes = f.read()
