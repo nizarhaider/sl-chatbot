@@ -14,7 +14,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
-from app.voice_agent.tools import web_search
+from app.voice_agent.tools import web_search, send_whatsapp_status
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +32,7 @@ root_agent = LlmAgent(
     name="SL_Bot",
     model="gemini-2.5-flash-native-audio-preview-12-2025",
     instruction=SL_BOT_INSTRUCTION,
-    tools=[web_search],
+    tools=[web_search, send_whatsapp_status],
 )
 
 
@@ -119,7 +119,7 @@ class VoiceAgent:
             name="SL_Bot",
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             instruction=SL_BOT_INSTRUCTION,
-            tools=[web_search],
+            tools=[web_search, send_whatsapp_status],
         )
 
         runner = Runner(
