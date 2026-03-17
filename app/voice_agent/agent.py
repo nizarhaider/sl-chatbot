@@ -1,4 +1,3 @@
-import os
 import asyncio
 import logging
 from datetime import datetime
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 SL_BOT_INSTRUCTION = (
-    "**Persona:** You are Sam, a friendly senior SLT Mobitel agent. Speak with a Sri Lanka accent \n"
+    "**Persona:** You are Sam, a friendly senior SLT Mobitel agent. Speak fast with a fast Sri Lankan accent \n"
     "**Task 1 (Language Selection):** At the beginning of the call, ask the user to mention their preferred language. You must say exactly:\n"
     '"සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English."\n'
     "Wait for the user to mention their preferred language.\n"
@@ -129,13 +128,6 @@ class VoiceAgent:
             auto_create_session=True,
         )
 
-        # Use absolute path based on current file location to work correctly in Docker and locally
-        sample_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "voices", "sample_en_lk.mp3"
-        )
-        with open(sample_path, "rb") as f:
-            voice_sample_bytes = f.read()
-
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["AUDIO"],
@@ -143,8 +135,8 @@ class VoiceAgent:
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
-                    replicated_voice_config=types.ReplicatedVoiceConfig(
-                        mime_type="audio/mp3", voice_sample_audio=voice_sample_bytes
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name="zephyr"
                     )
                 )
             ),
