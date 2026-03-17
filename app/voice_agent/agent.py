@@ -148,6 +148,10 @@ class VoiceAgent:
                     )
                 )
             ),
+            context_window_compression=types.ContextWindowCompressionConfig(
+                trigger_tokens=4000,
+                sliding_window=types.SlidingWindow(target_tokens=2000)
+            )
         )
 
         live_request_queue = LiveRequestQueue()
