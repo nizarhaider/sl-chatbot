@@ -195,6 +195,9 @@ class VoiceAgent:
         self, track: MediaStreamTrack, live_request_queue: LiveRequestQueue
     ):
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
+        buffer = bytearray()
+        # 16kHz * 2 bytes/sample (16-bit) * 0.1 seconds = 3200 bytes
+        CHUNK_SIZE = 3200  
         try:
             while True:
                 frame = await track.recv()
@@ -202,10 +205,14 @@ class VoiceAgent:
                 for resampled in resampled_frames:
                     audio_bytes = resampled.to_ndarray().tobytes()
                     if audio_bytes:
-                        blob = types.Blob(
-                            mime_type="audio/pcm;rate=16000", data=audio_bytes
-                        )
-                        live_request_queue.send_realtime(blob)
+                        buffer.extend(audio_bytes)
+                        while len(buffer) >= CHUNK_SIZE:
+                            chunk = bytes(buffer[:CHUNK_SIZE])
+                            del buffer[:CHUNK_SIZE]
+                            blob = types.Blob(
+                                mime_type="audio/pcm;rate=16000", data=chunk
+                            )
+                            live_request_queue.send_realtime(blob)
         except asyncio.CancelledError:
             logger.info("WhatsApp -> Gemini stream cancelled")
         except Exception as e:
