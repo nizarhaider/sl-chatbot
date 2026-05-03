@@ -14,4 +14,6 @@ dependencies = [
     "google-genai>=1.66.0",
     "google-adk>=1.26.0",
     "ddgs>=9.11.2",
+    "torch>=2.8.0",
+    "omnivoice>=0.1.4",
 ]

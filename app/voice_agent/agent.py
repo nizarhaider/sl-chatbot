@@ -5,6 +5,7 @@ from fractions import Fraction
 from aiortc import MediaStreamTrack
 from av import AudioFrame
 from av.audio.resampler import AudioResampler
+import numpy as np
 
 from google.adk.runners import Runner
 from google.adk.agents import LlmAgent
@@ -13,6 +14,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
+from app.services.tts import get_tts_service
 from app.voice_agent.tools import web_search, send_whatsapp_status
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,14 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._samples_per_frame = 480
         self._buffer = b""
         self._start_time = None
+
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
+
+    @property
+    def frame_size_bytes(self) -> int:
+        return self._samples_per_frame * 2
 
     def clear_buffer(self):
         while not self.queue.empty():
@@ -94,6 +104,8 @@ class VoiceAgent:
     def __init__(self):
         self.active_calls: dict[str, asyncio.Task] = {}
         self.greetings_sent: dict[str, bool] = {}
+        self.playback_generation: dict[str, int] = {}
+        self.tts_service = get_tts_service()
 
     async def process_audio(
         self,
@@ -113,6 +125,7 @@ class VoiceAgent:
                 logger.error(f"Error cancelling previous task {call_id}: {e}")
 
         self.greetings_sent[call_id] = False
+        self.playback_generation[call_id] = 0
         session_service = InMemorySessionService()
         call_agent = LlmAgent(
             name="SL_Bot",
@@ -130,20 +143,35 @@ class VoiceAgent:
 
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
-            response_modalities=["AUDIO"],
+            response_modalities=(
+                ["AUDIO"] if self.tts_service.uses_gemini_audio() else ["TEXT"]
+            ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="zephyr"
+            output_audio_transcription=(
+                types.AudioTranscriptionConfig()
+                if self.tts_service.uses_gemini_audio()
+                else None
+            ),
+            speech_config=(
+                types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name="zephyr"
+                        )
                     )
                 )
+                if self.tts_service.uses_gemini_audio()
+                else None
             ),
             context_window_compression=types.ContextWindowCompressionConfig(
                 trigger_tokens=4000,
                 sliding_window=types.SlidingWindow(target_tokens=2000)
-            )
+            ),
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=True
+                )
+            ),
         )
 
         live_request_queue = LiveRequestQueue()
@@ -164,9 +192,20 @@ class VoiceAgent:
                     self.greetings_sent[call_id] = True
 
                 await asyncio.gather(
-                    self._whatsapp_to_gemini(input_track, live_request_queue),
-                    self._gemini_to_whatsapp(
-                        runner, call_id, live_request_queue, run_config, output_track
+                    self._whatsapp_to_gemini(
+                        call_id,
+                        input_track,
+                        output_track,
+                        live_request_queue,
+                    ),
+                    (
+                        self._gemini_audio_to_whatsapp(
+                            runner, call_id, live_request_queue, run_config, output_track
+                        )
+                        if self.tts_service.uses_gemini_audio()
+                        else self._gemini_text_to_whatsapp(
+                            runner, call_id, live_request_queue, run_config, output_track
+                        )
                     ),
                 )
             except asyncio.CancelledError:
@@ -177,6 +216,7 @@ class VoiceAgent:
                 live_request_queue.close()
                 self.active_calls.pop(call_id, None)
                 self.greetings_sent.pop(call_id, None)
+                self.playback_generation.pop(call_id, None)
                 logger.info(f"Cleaned up session for {call_id}")
 
         task = asyncio.create_task(_run_call(), name=f"call-{call_id}")
@@ -184,12 +224,22 @@ class VoiceAgent:
         await task
 
     async def _whatsapp_to_gemini(
-        self, track: MediaStreamTrack, live_request_queue: LiveRequestQueue
+        self,
+        call_id: str,
+        track: MediaStreamTrack,
+        output_track: RealtimeAudioTrack,
+        live_request_queue: LiveRequestQueue,
     ):
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         buffer = bytearray()
         # 16kHz * 2 bytes/sample (16-bit) * 0.1 seconds = 3200 bytes
         CHUNK_SIZE = 3200  
+        
+        is_speaking = False
+        silence_threshold = 1000  # RMS threshold
+        silence_duration_chunks = 0
+        MAX_SILENCE_CHUNKS = 8  # ~800ms of silence to trigger end
+        
         try:
             while True:
                 frame = await track.recv()
@@ -201,6 +251,27 @@ class VoiceAgent:
                         while len(buffer) >= CHUNK_SIZE:
                             chunk = bytes(buffer[:CHUNK_SIZE])
                             del buffer[:CHUNK_SIZE]
+                            
+                            # Simple VAD using RMS
+                            audio_np = np.frombuffer(chunk, dtype=np.int16)
+                            rms = np.sqrt(np.mean(audio_np.astype(np.float64)**2))
+                            
+                            if rms > silence_threshold:
+                                if not is_speaking:
+                                    logger.info("VAD: Speech started")
+                                    is_speaking = True
+                                    self._interrupt_playback(call_id, output_track)
+                                    live_request_queue.send_activity_start()
+                                silence_duration_chunks = 0
+                            else:
+                                if is_speaking:
+                                    silence_duration_chunks += 1
+                                    if silence_duration_chunks >= MAX_SILENCE_CHUNKS:
+                                        logger.info("VAD: Speech ended")
+                                        is_speaking = False
+                                        silence_duration_chunks = 0
+                                        live_request_queue.send_activity_end()
+                            
                             blob = types.Blob(
                                 mime_type="audio/pcm;rate=16000", data=chunk
                             )
@@ -210,7 +281,7 @@ class VoiceAgent:
         except Exception as e:
             logger.info(f"WhatsApp -> Gemini stream ended: {e}")
 
-    async def _gemini_to_whatsapp(
+    async def _gemini_audio_to_whatsapp(
         self,
         runner: Runner,
         call_id: str,
@@ -247,11 +318,91 @@ class VoiceAgent:
                             output_track.add_audio(part.inline_data.data)
 
                 if event.interrupted:
-                    output_track.clear_buffer()
+                    self._interrupt_playback(call_id, output_track)
         except asyncio.CancelledError:
             logger.info(f"Gemini -> WhatsApp stream for call {call_id} cancelled")
         except Exception as e:
             logger.info(f"Gemini -> WhatsApp stream ended for call {call_id}: {e}")
+
+    async def _gemini_text_to_whatsapp(
+        self,
+        runner: Runner,
+        call_id: str,
+        live_request_queue: LiveRequestQueue,
+        run_config: RunConfig,
+        output_track: RealtimeAudioTrack,
+    ):
+        latest_response_text = ""
+        try:
+            async for event in runner.run_live(
+                user_id="whatsapp_user",
+                session_id=call_id,
+                live_request_queue=live_request_queue,
+                run_config=run_config,
+            ):
+                if event.input_transcription and event.input_transcription.text:
+                    time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    logger.info(
+                        f"[{time_str}] User Transcribed: {event.input_transcription.text}"
+                    )
+
+                if event.content and event.content.parts:
+                    text_parts = [
+                        part.text.strip()
+                        for part in event.content.parts
+                        if part.text and part.text.strip()
+                    ]
+                    if text_parts and not event.partial:
+                        latest_response_text = " ".join(text_parts)
+                        time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                        logger.info(
+                            f"[{time_str}] Model Text: {latest_response_text}"
+                        )
+
+                if event.turn_complete and latest_response_text:
+                    await self._speak_text_response(
+                        call_id=call_id,
+                        text=latest_response_text,
+                        output_track=output_track,
+                    )
+                    latest_response_text = ""
+
+                if event.interrupted:
+                    self._interrupt_playback(call_id, output_track)
+                    latest_response_text = ""
+        except asyncio.CancelledError:
+            logger.info(f"Gemini text -> WhatsApp stream for call {call_id} cancelled")
+        except Exception as e:
+            logger.info(f"Gemini text -> WhatsApp stream ended for call {call_id}: {e}")
+
+    async def _speak_text_response(
+        self,
+        call_id: str,
+        text: str,
+        output_track: RealtimeAudioTrack,
+    ):
+        generation_id = self.playback_generation.get(call_id, 0)
+        synthesized = await self.tts_service.synthesize(text)
+        if self.playback_generation.get(call_id, 0) != generation_id:
+            logger.info("Discarding stale TTS output for %s", call_id)
+            return
+
+        frame_size = output_track.frame_size_bytes
+        for offset in range(0, len(synthesized.pcm), frame_size):
+            if self.playback_generation.get(call_id, 0) != generation_id:
+                logger.info("Stopping interrupted TTS playback for %s", call_id)
+                return
+            output_track.add_audio(synthesized.pcm[offset:offset + frame_size])
+
+    def _interrupt_playback(
+        self,
+        call_id: str | None,
+        output_track: RealtimeAudioTrack | None,
+    ) -> None:
+        if call_id is not None:
+            self.playback_generation[call_id] = self.playback_generation.get(call_id, 0) + 1
+        if output_track is not None:
+            output_track.clear_buffer()
 
 
 voice_agent = VoiceAgent()
