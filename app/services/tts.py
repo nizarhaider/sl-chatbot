@@ -1,9 +1,13 @@
 import asyncio
+import json
 import logging
 import os
+import wave
 from dataclasses import dataclass
 from functools import lru_cache
+from io import BytesIO
 
+import httpx
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -30,131 +34,133 @@ def _normalize_provider(value: str | None) -> str:
     provider = (value or "gemini_live").strip().lower()
     if provider in {"gemini", "gemini_live"}:
         return "gemini_live"
-    if provider == "omnivoice":
+    if provider in {"omnivoice", "omnivoice_remote"}:
         return "omnivoice"
     logger.warning("Unknown VOICE_OUTPUT_PROVIDER=%s, falling back to gemini_live", value)
     return "gemini_live"
 
 
-class OmniVoiceSynthesizer:
+class OmniVoiceRemoteSynthesizer:
     def __init__(self) -> None:
-        self.model_id = os.environ.get("OMNIVOICE_MODEL_ID", "k2-fsa/OmniVoice")
-        self.device = os.environ.get("OMNIVOICE_DEVICE", "cpu")
-        self.dtype_name = os.environ.get("OMNIVOICE_DTYPE", "float32")
-        self.num_step = int(os.environ.get("OMNIVOICE_NUM_STEP", "16"))
+        self.base_url = os.environ.get(
+            "OMNIVOICE_REMOTE_BASE_URL",
+            "https://k2-fsa-omnivoice.hf.space",
+        ).rstrip("/")
+        self.api_name = os.environ.get("OMNIVOICE_REMOTE_API_NAME", "_design_fn")
+        self.timeout_seconds = float(os.environ.get("OMNIVOICE_REMOTE_TIMEOUT_SECONDS", "120"))
+        self.inference_steps = int(os.environ.get("OMNIVOICE_NUM_STEP", "16"))
+        self.guidance_scale = float(os.environ.get("OMNIVOICE_GUIDANCE_SCALE", "2.0"))
         self.speed = float(os.environ.get("OMNIVOICE_SPEED", "1.12"))
-        self.sample_rate = 24000
-        self._model = None
-        self._load_lock = asyncio.Lock()
+        self.denoise = _env_bool("OMNIVOICE_DENOISE", True)
+        self.preprocess_prompt = _env_bool("OMNIVOICE_PREPROCESS_PROMPT", True)
+        self.postprocess_output = _env_bool("OMNIVOICE_POSTPROCESS_OUTPUT", True)
+        self.english_accent = os.environ.get(
+            "OMNIVOICE_ENGLISH_ACCENT",
+            "Indian Accent / 印度口音",
+        )
+        self.default_gender = os.environ.get("OMNIVOICE_GENDER", "Auto")
+        self.default_age = os.environ.get("OMNIVOICE_AGE", "Young Adult / 青年")
+        self.default_pitch = os.environ.get("OMNIVOICE_PITCH", "Moderate Pitch / 中音调")
+        self.default_style = os.environ.get("OMNIVOICE_STYLE", "Auto")
+        self.default_chinese_dialect = os.environ.get("OMNIVOICE_CHINESE_DIALECT", "Auto")
 
     async def synthesize(self, text: str) -> SynthesizedAudio:
-        model = await self._get_model()
-        language = _detect_language_variant(text)
-        generation_kwargs = self._build_generation_kwargs(language)
-        pcm = await asyncio.to_thread(
-            self._generate_pcm_sync,
-            model,
+        data = await self._call_space(text)
+        wav_url = data[0]["url"]
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+            response = await client.get(wav_url)
+            response.raise_for_status()
+        pcm, sample_rate = await asyncio.to_thread(self._wav_bytes_to_pcm, response.content)
+        return SynthesizedAudio(pcm=pcm, sample_rate=sample_rate, text=text)
+
+    async def _call_space(self, text: str):
+        endpoint = f"{self.base_url}/gradio_api/call/{self.api_name}"
+        payload = {"data": self._build_inputs(text)}
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+            response = await client.post(endpoint, json=payload)
+            response.raise_for_status()
+            event_id = response.json()["event_id"]
+
+            stream_url = f"{endpoint}/{event_id}"
+            async with client.stream("GET", stream_url) as stream:
+                async for line in stream.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    raw_data = line[6:].strip()
+                    if not raw_data:
+                        continue
+                    decoded = json.loads(raw_data)
+                    if isinstance(decoded, list) and decoded and isinstance(decoded[0], dict):
+                        return decoded
+
+        raise RuntimeError("OmniVoice remote API returned no audio result")
+
+    def _build_inputs(self, text: str) -> list:
+        language_variant = _detect_language_variant(text)
+        language_name = {
+            "en": "English",
+            "si": "Sinhala",
+            "ta": "Tamil",
+        }.get(language_variant, "Auto")
+
+        english_accent = self.english_accent if language_variant == "en" else "Auto"
+
+        return [
             text,
-            generation_kwargs,
-        )
-        return SynthesizedAudio(pcm=pcm, sample_rate=self.sample_rate, text=text)
-
-    async def _get_model(self):
-        if self._model is not None:
-            return self._model
-
-        async with self._load_lock:
-            if self._model is not None:
-                return self._model
-
-            logger.info(
-                "Loading OmniVoice model %s on %s with dtype=%s",
-                self.model_id,
-                self.device,
-                self.dtype_name,
-            )
-            self._model = await asyncio.to_thread(self._load_model_sync)
-            return self._model
-
-    def _load_model_sync(self):
-        import torch
-        from omnivoice import OmniVoice
-
-        dtype_map = {
-            "float16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            "float32": torch.float32,
-        }
-        dtype = dtype_map.get(self.dtype_name, torch.float32)
-        if self.device == "cpu" and dtype is torch.float16:
-            logger.warning("OMNIVOICE_DTYPE=float16 is not suitable on CPU, using float32")
-            dtype = torch.float32
-
-        return OmniVoice.from_pretrained(
-            self.model_id,
-            device_map=self.device,
-            dtype=dtype,
-        )
-
-    def _build_generation_kwargs(self, language: str) -> dict:
-        kwargs: dict[str, object] = {
-            "num_step": self.num_step,
-            "speed": self.speed,
-        }
-
-        ref_audio = self._env_by_language("OMNIVOICE_REF_AUDIO", language)
-        ref_text = self._env_by_language("OMNIVOICE_REF_TEXT", language)
-        instruct = self._env_by_language("OMNIVOICE_INSTRUCT", language)
-
-        if ref_audio:
-            kwargs["ref_audio"] = ref_audio
-            if ref_text:
-                kwargs["ref_text"] = ref_text
-        elif instruct:
-            kwargs["instruct"] = instruct
-
-        return kwargs
-
-    def _env_by_language(self, prefix: str, language: str) -> str | None:
-        candidates = [
-            f"{prefix}_{language.upper()}",
-            f"{prefix}_DEFAULT",
+            language_name,
+            self.inference_steps,
+            self.guidance_scale,
+            self.denoise,
+            self.speed,
+            None,
+            self.preprocess_prompt,
+            self.postprocess_output,
+            self.default_gender,
+            self.default_age,
+            self.default_pitch,
+            self.default_style,
+            english_accent,
+            self.default_chinese_dialect,
         ]
-        for key in candidates:
-            value = os.environ.get(key)
-            if value:
-                return value
-        return None
 
-    def _generate_pcm_sync(self, model, text: str, generation_kwargs: dict) -> bytes:
-        audio = model.generate(text=text, **generation_kwargs)
-        if not audio:
-            raise RuntimeError("OmniVoice returned no audio")
+    def _wav_bytes_to_pcm(self, wav_bytes: bytes) -> tuple[bytes, int]:
+        with wave.open(BytesIO(wav_bytes), "rb") as wav_file:
+            sample_rate = wav_file.getframerate()
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            frames = wav_file.readframes(wav_file.getnframes())
 
-        samples = np.asarray(audio[0], dtype=np.float32)
-        if samples.ndim != 1:
-            samples = samples.reshape(-1)
+        if sample_width != 2:
+            raise RuntimeError(f"Unsupported OmniVoice sample width: {sample_width}")
 
-        samples = np.clip(samples, -1.0, 1.0)
-        pcm16 = (samples * 32767.0).astype(np.int16)
-        return pcm16.tobytes()
+        audio = np.frombuffer(frames, dtype=np.int16)
+        if channels > 1:
+            audio = audio.reshape(-1, channels).mean(axis=1).astype(np.int16)
+
+        return audio.tobytes(), sample_rate
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class TTSService:
     def __init__(self) -> None:
         self.provider = _normalize_provider(os.environ.get("VOICE_OUTPUT_PROVIDER"))
-        self._omnivoice = OmniVoiceSynthesizer() if self.provider == "omnivoice" else None
+        self._omnivoice = OmniVoiceRemoteSynthesizer() if self.provider == "omnivoice" else None
 
     def uses_gemini_audio(self) -> bool:
         return self.provider == "gemini_live"
 
     async def synthesize(self, text: str) -> SynthesizedAudio:
         if self.provider != "omnivoice" or self._omnivoice is None:
-            raise RuntimeError(f"TTS provider '{self.provider}' does not support local synthesis")
+            raise RuntimeError(f"TTS provider '{self.provider}' does not support synthesis")
         return await self._omnivoice.synthesize(text)
 
 
 @lru_cache(maxsize=1)
 def get_tts_service() -> TTSService:
     return TTSService()
-
