@@ -135,6 +135,11 @@ async def handle_text_message(sender_id: str, text: str):
         if not success:
             logger.error("Failed to send WhatsApp reply to %s", sender_id)
 
+        for image_url in result.image_urls or []:
+            image_sent = await whatsapp_api.send_image(sender_id, image_url)
+            if not image_sent:
+                logger.error("Failed to send WhatsApp product image to %s: %s", sender_id, image_url)
+
         if result.manager_message:
             manager_number = os.environ.get("MANAGER_WHATSAPP_NUMBER", "94742530708")
             manager_notified = await whatsapp_api.send_message(manager_number, result.manager_message)

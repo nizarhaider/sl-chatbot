@@ -136,6 +136,59 @@ class WebhookPipelineTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_text_message_webhook_sends_product_images_from_agent_result(self):
+        sent = asyncio.Event()
+        captured = {"messages": [], "images": []}
+
+        async def fake_process_message(text: str, sender_id: str | None = None) -> ChatAgentResult:
+            return ChatAgentResult(
+                "Here is the product.",
+                image_urls=["https://img.drz.lazcdn.com/static/lk/p/example.jpg"],
+            )
+
+        async def fake_send_message(to: str, text: str) -> bool:
+            captured["messages"].append((to, text))
+            return True
+
+        async def fake_send_image(to: str, image_url: str, caption: str = "") -> bool:
+            captured["images"].append((to, image_url, caption))
+            sent.set()
+            return True
+
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "type": "text",
+                                        "from": "94770000000",
+                                        "text": {"body": "Show me nails"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ],
+        }
+
+        with patch("app.webhooks.whatsapp.chat_agent.process_message", new=fake_process_message):
+            with patch("app.webhooks.whatsapp.whatsapp_api.send_message", new=fake_send_message):
+                with patch("app.webhooks.whatsapp.whatsapp_api.send_image", new=fake_send_image):
+                    response = await self.client.post("/webhook", json=payload)
+                    self.assertEqual(response.status_code, 200)
+                    await asyncio.wait_for(sent.wait(), timeout=1)
+
+        self.assertEqual(captured["messages"], [("94770000000", "Here is the product.")])
+        self.assertEqual(
+            captured["images"],
+            [("94770000000", "https://img.drz.lazcdn.com/static/lk/p/example.jpg", "")],
+        )
+
     async def test_confirmed_order_updates_sheet_and_notifies_manager(self):
         sent = asyncio.Event()
         replies = []
@@ -200,12 +253,21 @@ class WebhookPipelineTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             agent.product_catalog,
             "search",
-            return_value=[Product(name="Glow Serum", sku="GS-01", price="2500", stock="12")],
+            return_value=[
+                Product(
+                    name="Glow Serum",
+                    sku="GS-01",
+                    price="2500",
+                    stock="12",
+                    image_url="https://img.drz.lazcdn.com/static/lk/p/glow.jpg",
+                )
+            ],
         ):
             result = await agent.process_message("Do you have glow serum price?", "94770000000")
 
         self.assertIn("Glow Serum", result.reply)
         self.assertIn("2500", result.reply)
+        self.assertEqual(result.image_urls, ["https://img.drz.lazcdn.com/static/lk/p/glow.jpg"])
 
     async def test_exact_order_request_creates_single_pending_line(self):
         agent = ChatAgent()

@@ -18,6 +18,8 @@ class Product:
     stock: str = ""
     description: str = ""
     variant: str = ""
+    image_url: str = ""
+    product_url: str = ""
 
     def display_name(self) -> str:
         if self.variant and self.variant.lower() not in self.name.lower():
@@ -47,6 +49,8 @@ class ProductCatalog:
                     product.stock,
                     product.description,
                     product.variant,
+                    product.image_url,
+                    product.product_url,
                 ]
             ).lower()
             score = sum(3 if token in product.name.lower() else 1 for token in tokens if token in haystack)
@@ -130,6 +134,8 @@ def _product_from_row(row: dict[str, str]) -> Product:
         stock=_row_value(row, "stock", "qty", "quantity", "inventory", "available"),
         description=_row_value(row, "description", "details", "notes"),
         variant=_row_value(row, "variant", "shade", "size", "colour", "color"),
+        image_url=_row_value(row, "image_url", "image", "photo_url", "photo"),
+        product_url=_row_value(row, "product_url", "url", "link"),
     )
 
 

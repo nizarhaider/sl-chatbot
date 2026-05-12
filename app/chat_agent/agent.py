@@ -29,6 +29,7 @@ DEFAULT_ESCALATION_MESSAGE = "call or WhatsApp +94 77 167 9595"
 class ChatAgentResult:
     reply: str
     manager_message: str | None = None
+    image_urls: list[str] | None = None
 
 
 class ChatAgent:
@@ -182,7 +183,11 @@ class ChatAgent:
 
         if not response.text:
             return None
-        return ChatAgentResult(reply=response.text, manager_message=manager_message)
+            return ChatAgentResult(
+                reply=response.text,
+                manager_message=manager_message,
+                image_urls=self._images_for_current_reply(sender_key, text),
+            )
 
     def _build_system_prompt(self) -> str:
         business_name = os.environ.get("CHAT_AGENT_BUSINESS_NAME", DEFAULT_BUSINESS_NAME)
@@ -222,6 +227,7 @@ class ChatAgent:
             "If multiple products match, show a numbered list with SKU and ask the customer to pick one. "
             "Do not create an order containing multiple products unless the customer explicitly asks for multiple specific SKUs. "
             "When a pending order exists, ask the customer to reply CONFIRM to place it or CANCEL to stop. "
+            "When products have image_url values, tell the customer you will send the official product image separately. "
             "Use confirm_pending_order only when the customer clearly confirms."
         )
 
@@ -290,7 +296,10 @@ class ChatAgent:
         if selected_product:
             quantity = _extract_quantity(text) or 1
             order = self._create_pending_order(sender_key, selected_product, quantity, text)
-            return ChatAgentResult(reply=_format_pending_order(order))
+            return ChatAgentResult(
+                reply=_format_pending_order(order),
+                image_urls=_image_urls_for_products([selected_product]),
+            )
 
         product_matches = self.product_catalog.search(text)
         if not product_matches:
@@ -302,13 +311,37 @@ class ChatAgent:
             if exact_product:
                 quantity = _extract_quantity(text) or 1
                 order = self._create_pending_order(sender_key, exact_product, quantity, text)
-                return ChatAgentResult(reply=_format_pending_order(order))
-            return ChatAgentResult(reply=_format_product_choices(product_matches))
+                return ChatAgentResult(
+                    reply=_format_pending_order(order),
+                    image_urls=_image_urls_for_products([exact_product]),
+                )
+            return ChatAgentResult(
+                reply=_format_product_choices(product_matches),
+                image_urls=_image_urls_for_products(product_matches),
+            )
 
         if _is_product_query(normalized):
-            return ChatAgentResult(reply=_format_product_matches(product_matches))
+            return ChatAgentResult(
+                reply=_format_product_matches(product_matches),
+                image_urls=_image_urls_for_products(product_matches),
+            )
 
         return None
+
+    def _images_for_current_reply(self, sender_key: str, text: str) -> list[str]:
+        order = self.pending_orders.get(sender_key)
+        if order:
+            products = [
+                product
+                for line in order.lines
+                for product in [self.product_catalog.get_by_sku(line.sku)]
+                if product
+            ]
+            return _image_urls_for_products(products)
+
+        if _is_product_query(text.lower()) or _is_order_request(text.lower()):
+            return _image_urls_for_products(self.last_product_searches.get(sender_key, []))
+        return []
 
     def _product_from_selection(self, sender_key: str, normalized_text: str) -> Product | None:
         products = self.last_product_searches.get(sender_key, [])
@@ -465,6 +498,8 @@ def _product_payload(product: Product, index: int) -> dict:
         "price": product.price,
         "stock": product.stock,
         "description": product.description,
+        "image_url": product.image_url,
+        "product_url": product.product_url,
     }
 
 
@@ -481,6 +516,16 @@ def _order_payload(order: CustomerOrder) -> dict:
             for line in order.lines
         ],
     }
+
+
+def _image_urls_for_products(products: list[Product], limit: int = 3) -> list[str]:
+    urls: list[str] = []
+    for product in products:
+        if product.image_url and product.image_url not in urls:
+            urls.append(product.image_url)
+        if len(urls) >= limit:
+            break
+    return urls
 
 
 def _manager_order_message(order: CustomerOrder, order_written: bool) -> str:

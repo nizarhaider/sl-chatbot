@@ -143,5 +143,9 @@ Product catalog columns are flexible, but these names are recognized:
 - Stock: `stock`, `qty`, `quantity`, `inventory`, or `available`
 - Variant: `variant`, `shade`, `size`, `colour`, or `color`
 - Notes: `description`, `details`, or `notes`
+- Product image: `image_url`, `image`, `photo_url`, or `photo`
+- Product page: `product_url`, `url`, or `link`
+
+Product images are sent only when the matching catalog row has an approved `image_url`. Keep these URLs limited to official Nails by Ayidaah/Ayidaah Beauty sources.
 
 For local mode, keep products in `data/products.xlsx`, store information in `data/business_info.md`, and confirmed orders will append to `data/orders.xlsx`. For Google integration later, share both the orders Google Sheet and the business-info Google Doc with the service account email. Confirmed orders append rows with timestamp, customer WhatsApp number, product, SKU, quantity, price, and original customer message. After the customer confirms, the manager at `MANAGER_WHATSAPP_NUMBER` receives a WhatsApp order summary.

@@ -92,6 +92,45 @@ class WhatsAppAPI:
                 return False
 
     @staticmethod
+    async def send_image(to: str, image_url: str, caption: str = "") -> bool:
+        """
+        Sends an image via WhatsApp Business API using a public image URL.
+        """
+        access_token = _whatsapp_access_token()
+        phone_number_id = _phone_number_id()
+        if not access_token or not phone_number_id:
+            logger.error("WHATSAPP_ACCESS_TOKEN/WHATSAPP_TOKEN or PHONE_NUMBER_ID not set")
+            return False
+
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        image_payload = {"link": image_url}
+        if caption:
+            image_payload["caption"] = caption[:1024]
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "image",
+            "image": image_payload,
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+                if response.status_code != 200:
+                    logger.error(f"Error sending image: {response.text}")
+                    return False
+                logger.info(f"Image sent to {to}: {image_url}")
+                return True
+            except Exception as e:
+                logger.error(f"Error in WhatsApp Image API: {e}")
+                return False
+
+    @staticmethod
     async def upload_media(file_bytes: bytes, mime_type: str, filename: str) -> str | None:
         """
         Uploads a file to the WhatsApp media endpoint.
