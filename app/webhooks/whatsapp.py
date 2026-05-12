@@ -125,7 +125,8 @@ async def send_whatsapp_message(
 
 async def handle_text_message(sender_id: str, text: str):
     try:
-        response_text = await chat_agent.get_response(text)
+        result = await chat_agent.process_message(text, sender_id=sender_id)
+        response_text = result.reply
         if not response_text:
             logger.error("Chat agent returned an empty response for sender %s", sender_id)
             response_text = "Sorry, I could not process that right now. Please try again shortly."
@@ -133,5 +134,11 @@ async def handle_text_message(sender_id: str, text: str):
         success = await whatsapp_api.send_message(sender_id, response_text)
         if not success:
             logger.error("Failed to send WhatsApp reply to %s", sender_id)
+
+        if result.manager_message:
+            manager_number = os.environ.get("MANAGER_WHATSAPP_NUMBER", "94742530708")
+            manager_notified = await whatsapp_api.send_message(manager_number, result.manager_message)
+            if not manager_notified:
+                logger.error("Failed to send manager order notification to %s", manager_number)
     except Exception as e:
         logger.error("Error handling text message from %s: %s", sender_id, e, exc_info=True)

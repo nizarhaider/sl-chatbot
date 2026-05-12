@@ -86,12 +86,24 @@ uv run pytest -q
 - `PHONE_NUMBER_ID`: WhatsApp phone number ID used for outbound messages and call actions.
 - `GRAPH_API_VERSION`: Optional Meta Graph API version. Defaults to `v22.0`.
 - `CHAT_AGENT_MODEL`: Text chatbot model. Defaults to `gemini-2.5-flash-lite`.
-- `CHAT_AGENT_BUSINESS_NAME`: Business name used by the WhatsApp text chatbot. Defaults to `SLT Mobitel`.
-- `CHAT_AGENT_BUSINESS_DESCRIPTION`: Short business context used by the WhatsApp text chatbot.
-- `CHAT_AGENT_ESCALATION_MESSAGE`: Where the chatbot should send users when it cannot answer a business-specific question. Defaults to `visit slt.lk or call 1212`.
+- `CHAT_AGENT_BUSINESS_NAME`: Business name used by the WhatsApp text chatbot. Defaults to `Ayidaah Beauty`.
+- `CHAT_AGENT_BUSINESS_DESCRIPTION`: Store context used by the WhatsApp text chatbot, including address, hours, delivery, payment methods, and contact details.
+- `CHAT_AGENT_ESCALATION_MESSAGE`: Where the chatbot should send users when it cannot answer a business-specific question. Defaults to `call or WhatsApp +94 77 167 9595`.
 - `CHAT_AGENT_SYSTEM_PROMPT`: Optional full override for the chatbot system prompt.
 - `CHAT_AGENT_MAX_OUTPUT_TOKENS`: Optional chatbot response cap. Defaults to `150`.
 - `CHAT_AGENT_TEMPERATURE`: Optional chatbot temperature. Defaults to `0.8`.
+- `MANAGER_WHATSAPP_NUMBER`: Manager WhatsApp number for confirmed order notifications. Defaults to `94742530708`.
+- `PRODUCT_CATALOG_PATH`: Local product catalog spreadsheet. Supports `.xlsx` and `.csv`. Defaults to `data/products.xlsx`.
+- `PRODUCT_CATALOG_SHEET`: Optional worksheet name inside the product catalog workbook.
+- `LOCAL_ORDERS_PATH`: Local workbook where orders are appended when `GOOGLE_ORDERS_SPREADSHEET_ID` is not set. Defaults to `data/orders.xlsx`.
+- `BUSINESS_INFO_PATH`: Local Markdown/text file used for store information before falling back to Google Docs. Defaults to `data/business_info.md`.
+- `GOOGLE_SERVICE_ACCOUNT_FILE`: Path to a Google service account JSON file used for Google Docs and Sheets.
+- `GOOGLE_SERVICE_ACCOUNT_JSON`: Alternative to `GOOGLE_SERVICE_ACCOUNT_FILE`; raw service account JSON in an environment variable.
+- `GOOGLE_ORDERS_SPREADSHEET_ID`: Google Sheet ID where confirmed order rows are appended.
+- `GOOGLE_ORDERS_WORKSHEET_NAME`: Orders worksheet name. Defaults to `Orders`.
+- `GOOGLE_BUSINESS_INFO_DOC_ID`: Google Doc ID used as the live source for closing times, address, notices, and similar store information.
+- `GOOGLE_BUSINESS_INFO_CACHE_SECONDS`: Google Doc cache duration. Defaults to `300`.
+- `ORDER_TIMEZONE`: Timezone used for order timestamps. Defaults to `Asia/Colombo`.
 - `VOICE_OUTPUT_PROVIDER`: `gemini_live`, `omnivoice_remote`, or `omnivoice_local`. `omnivoice` is treated as `omnivoice_remote` for compatibility.
 - `VOICE_PIPELINE_MODE`: `live` or `gemini_turn`. Defaults to `live`.
 - `OMNIVOICE_REMOTE_BASE_URL`: Optional. Defaults to `https://k2-fsa-omnivoice.hf.space`.
@@ -119,3 +131,17 @@ Text chat and voice calls are separated:
 
 - [app/chat_agent](/Users/nizar/Documents/Projects/sl_chatbot/app/chat_agent): WhatsApp text chatbot logic.
 - [app/voice_agent](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent): WhatsApp voice call pipeline, WebRTC audio handling, Gemini Live integration, and TTS.
+
+## Commerce Setup
+The WhatsApp text bot can now answer product questions from a spreadsheet, hold a pending order per customer, and finalize the order when the customer replies `CONFIRM`.
+
+Product catalog columns are flexible, but these names are recognized:
+
+- Product name: `name`, `product`, `item`, or `product_name`
+- SKU: `sku`, `code`, or `item_code`
+- Price: `price`, `selling_price`, or `unit_price`
+- Stock: `stock`, `qty`, `quantity`, `inventory`, or `available`
+- Variant: `variant`, `shade`, `size`, `colour`, or `color`
+- Notes: `description`, `details`, or `notes`
+
+For local mode, keep products in `data/products.xlsx`, store information in `data/business_info.md`, and confirmed orders will append to `data/orders.xlsx`. For Google integration later, share both the orders Google Sheet and the business-info Google Doc with the service account email. Confirmed orders append rows with timestamp, customer WhatsApp number, product, SKU, quantity, price, and original customer message. After the customer confirms, the manager at `MANAGER_WHATSAPP_NUMBER` receives a WhatsApp order summary.

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import logging
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,6 +12,9 @@ os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 os.environ.setdefault("VOICE_OUTPUT_PROVIDER", "omnivoice")
 
 from app.main import app
+from app.chat_agent.agent import ChatAgent, ChatAgentResult
+from app.services.order_sheet import CustomerOrder, OrderLine
+from app.services.product_catalog import Product
 from app.services.tts import SynthesizedAudio
 from app.voice_agent.agent import (
     GEMINI_LIVE_AUDIO_MODEL,
@@ -83,9 +87,10 @@ class WebhookPipelineTests(unittest.IsolatedAsyncioTestCase):
         sent = asyncio.Event()
         captured = {}
 
-        async def fake_get_response(text: str) -> str:
+        async def fake_process_message(text: str, sender_id: str | None = None) -> ChatAgentResult:
             captured["prompt"] = text
-            return "Hello from the bot"
+            captured["sender_id"] = sender_id
+            return ChatAgentResult("Hello from the bot")
 
         async def fake_send_message(to: str, text: str) -> bool:
             captured["to"] = to
@@ -114,7 +119,7 @@ class WebhookPipelineTests(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
-        with patch("app.webhooks.whatsapp.chat_agent.get_response", new=fake_get_response):
+        with patch("app.webhooks.whatsapp.chat_agent.process_message", new=fake_process_message):
             with patch("app.webhooks.whatsapp.whatsapp_api.send_message", new=fake_send_message):
                 response = await self.client.post("/webhook", json=payload)
                 self.assertEqual(response.status_code, 200)
@@ -125,10 +130,115 @@ class WebhookPipelineTests(unittest.IsolatedAsyncioTestCase):
             captured,
             {
                 "prompt": "Hi",
+                "sender_id": "94770000000",
                 "to": "94770000000",
                 "reply": "Hello from the bot",
             },
         )
+
+    async def test_confirmed_order_updates_sheet_and_notifies_manager(self):
+        sent = asyncio.Event()
+        replies = []
+        manager_messages = []
+        captured_orders = []
+
+        async def fake_send_message(to: str, text: str) -> bool:
+            if to == "94742530708":
+                manager_messages.append(text)
+            else:
+                replies.append((to, text))
+            if manager_messages:
+                sent.set()
+            return True
+
+        def fake_append_order(order: CustomerOrder) -> bool:
+            captured_orders.append(order)
+            return True
+
+        app_chat_agent = __import__("app.webhooks.whatsapp", fromlist=["chat_agent"]).chat_agent
+        app_chat_agent.pending_orders["94770000000"] = CustomerOrder(
+            customer_phone="94770000000",
+            customer_message="Order Glow Serum qty 2",
+            lines=[OrderLine(name="Glow Serum", quantity=2, sku="GS-01", price="2500")],
+        )
+
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "type": "text",
+                                        "from": "94770000000",
+                                        "text": {"body": "confirm"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ],
+        }
+
+        with patch.object(app_chat_agent.order_sheet, "append_order", new=fake_append_order):
+            with patch("app.webhooks.whatsapp.whatsapp_api.send_message", new=fake_send_message):
+                response = await self.client.post("/webhook", json=payload)
+                self.assertEqual(response.status_code, 200)
+                await asyncio.wait_for(sent.wait(), timeout=1)
+
+        self.assertEqual(captured_orders[0].customer_phone, "94770000000")
+        self.assertIn("confirmed", replies[0][1].lower())
+        self.assertIn("New confirmed WhatsApp order", manager_messages[0])
+        self.assertIn("Glow Serum", manager_messages[0])
+
+    async def test_product_query_uses_catalog_matches(self):
+        agent = ChatAgent()
+
+        with patch.object(
+            agent.product_catalog,
+            "search",
+            return_value=[Product(name="Glow Serum", sku="GS-01", price="2500", stock="12")],
+        ):
+            result = await agent.process_message("Do you have glow serum price?", "94770000000")
+
+        self.assertIn("Glow Serum", result.reply)
+        self.assertIn("2500", result.reply)
+
+    async def test_order_sheet_appends_to_local_workbook_without_google_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent = ChatAgent()
+            agent.order_sheet.spreadsheet_id = ""
+            agent.order_sheet.local_path = os.path.join(temp_dir, "orders.xlsx")
+
+            written = agent.order_sheet.append_order(
+                CustomerOrder(
+                    customer_phone="94770000000",
+                    customer_message="Order French tips",
+                    lines=[OrderLine(name="French Tip Press-On Set", quantity=1, sku="NBA-FRENCH")],
+                )
+            )
+
+            self.assertTrue(written)
+
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(agent.order_sheet.local_path)
+            worksheet = workbook["Orders"]
+            self.assertEqual(worksheet.max_row, 2)
+            self.assertEqual(worksheet["C2"].value, "French Tip Press-On Set")
+
+    async def test_default_chat_agent_prompt_is_ayidaah_service_agent(self):
+        agent = ChatAgent()
+        prompt = agent._build_system_prompt()
+
+        self.assertIn("Ayidaah Beauty", prompt)
+        self.assertIn("Monday to Saturday, 9:00 am to 8:00 pm", prompt)
+        self.assertIn("closed on Sunday", prompt)
+        self.assertIn("You do not have access to live inventory", prompt)
+        self.assertIn("+94 77 167 9595", prompt)
 
     async def test_text_response_is_synthesized_and_buffered_for_whatsapp(self):
         pcm_bytes = b"\x01\x02" * 960
