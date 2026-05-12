@@ -85,7 +85,7 @@ uv run pytest -q
 - `WHATSAPP_ACCESS_TOKEN`: Meta WhatsApp Cloud API access token. `WHATSAPP_TOKEN` is also accepted for compatibility.
 - `PHONE_NUMBER_ID`: WhatsApp phone number ID used for outbound messages and call actions.
 - `GRAPH_API_VERSION`: Optional Meta Graph API version. Defaults to `v22.0`.
-- `CHAT_AGENT_MODEL`: Text chatbot model. Defaults to `gemini-2.5-flash-lite`.
+- `CHAT_AGENT_MODEL`: Text chatbot model. Defaults to `gemini-3-flash-preview`.
 - `CHAT_AGENT_BUSINESS_NAME`: Business name used by the WhatsApp text chatbot. Defaults to `Ayidaah Beauty`.
 - `CHAT_AGENT_BUSINESS_DESCRIPTION`: Store context used by the WhatsApp text chatbot, including address, hours, delivery, payment methods, and contact details.
 - `CHAT_AGENT_ESCALATION_MESSAGE`: Where the chatbot should send users when it cannot answer a business-specific question. Defaults to `call or WhatsApp +94 77 167 9595`.

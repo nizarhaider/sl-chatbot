@@ -32,7 +32,7 @@ class ChatAgentResult:
 class ChatAgent:
     def __init__(self):
         self._client = None
-        self.model = os.environ.get("CHAT_AGENT_MODEL", "gemini-2.5-flash-lite")
+        self.model = os.environ.get("CHAT_AGENT_MODEL", "gemini-3-flash-preview")
         self.product_catalog = ProductCatalog()
         self.business_info_provider = BusinessInfoProvider()
         self.order_sheet = OrderSheetClient()
