@@ -11,7 +11,8 @@ from app.services.product_catalog import Product, ProductCatalog
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CHAT_AGENT_MAX_OUTPUT_TOKENS = "512"
+DEFAULT_CHAT_AGENT_MAX_OUTPUT_TOKENS = "2048"
+DEFAULT_CHAT_AGENT_THINKING_BUDGET = "0"
 
 DEFAULT_BUSINESS_NAME = "Ayidaah Beauty"
 DEFAULT_BUSINESS_DESCRIPTION = (
@@ -62,9 +63,10 @@ class ChatAgent:
         if commerce_result:
             return commerce_result
 
-        tool_result = await self._get_model_tool_response(text, sender_id=sender_id)
-        if tool_result:
-            return tool_result
+        if self._should_use_commerce_tools(text):
+            tool_result = await self._get_model_tool_response(text, sender_id=sender_id)
+            if tool_result:
+                return tool_result
 
         try:
             business_info = self.business_info_provider.get_text(
@@ -80,6 +82,7 @@ class ChatAgent:
                     "system_instruction": self.system_prompt,
                     "max_output_tokens": _max_output_tokens(),
                     "temperature": float(os.environ.get("CHAT_AGENT_TEMPERATURE", "0.8")),
+                    "thinking_config": {"thinking_budget": _thinking_budget()},
                 },
             )
             _log_model_response("chat", response)
@@ -167,6 +170,7 @@ class ChatAgent:
                     "system_instruction": self._build_tool_system_prompt(),
                     "max_output_tokens": _max_output_tokens(),
                     "temperature": float(os.environ.get("CHAT_AGENT_TEMPERATURE", "0.3")),
+                    "thinking_config": {"thinking_budget": _thinking_budget()},
                     "tools": [
                         search_products,
                         create_pending_order,
@@ -183,11 +187,15 @@ class ChatAgent:
 
         if not response.text:
             return None
-            return ChatAgentResult(
+        return ChatAgentResult(
                 reply=response.text,
                 manager_message=manager_message,
                 image_urls=self._images_for_current_reply(sender_key, text),
             )
+
+    def _should_use_commerce_tools(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        return _is_product_query(normalized) or _is_order_request(normalized)
 
     def _build_system_prompt(self) -> str:
         business_name = os.environ.get("CHAT_AGENT_BUSINESS_NAME", DEFAULT_BUSINESS_NAME)
@@ -541,6 +549,10 @@ def _manager_order_message(order: CustomerOrder, order_written: bool) -> str:
 
 def _max_output_tokens() -> int:
     return int(os.environ.get("CHAT_AGENT_MAX_OUTPUT_TOKENS", DEFAULT_CHAT_AGENT_MAX_OUTPUT_TOKENS))
+
+
+def _thinking_budget() -> int:
+    return int(os.environ.get("CHAT_AGENT_THINKING_BUDGET", DEFAULT_CHAT_AGENT_THINKING_BUDGET))
 
 
 def _log_model_response(flow: str, response) -> None:
