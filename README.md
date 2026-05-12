@@ -90,7 +90,7 @@ uv run pytest -q
 - `CHAT_AGENT_BUSINESS_DESCRIPTION`: Store context used by the WhatsApp text chatbot, including address, hours, delivery, payment methods, and contact details.
 - `CHAT_AGENT_ESCALATION_MESSAGE`: Where the chatbot should send users when it cannot answer a business-specific question. Defaults to `call or WhatsApp +94 77 167 9595`.
 - `CHAT_AGENT_SYSTEM_PROMPT`: Optional full override for the chatbot system prompt.
-- `CHAT_AGENT_MAX_OUTPUT_TOKENS`: Optional chatbot response cap. Defaults to `150`.
+- `CHAT_AGENT_MAX_OUTPUT_TOKENS`: Optional chatbot response cap. Defaults to `512`.
 - `CHAT_AGENT_TEMPERATURE`: Optional chatbot temperature. Defaults to `0.8`.
 - `MANAGER_WHATSAPP_NUMBER`: Manager WhatsApp number for confirmed order notifications. Defaults to `94742530708`.
 - `PRODUCT_CATALOG_PATH`: Local product catalog spreadsheet. Supports `.xlsx` and `.csv`. Defaults to `data/products.xlsx`.

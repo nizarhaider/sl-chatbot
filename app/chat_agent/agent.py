@@ -11,6 +11,8 @@ from app.services.product_catalog import Product, ProductCatalog
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CHAT_AGENT_MAX_OUTPUT_TOKENS = "512"
+
 DEFAULT_BUSINESS_NAME = "Ayidaah Beauty"
 DEFAULT_BUSINESS_DESCRIPTION = (
     "Ayidaah Beauty is a Sri Lankan skincare and beauty brand founded in 2019. "
@@ -75,10 +77,11 @@ class ChatAgent:
                 ),
                 config={
                     "system_instruction": self.system_prompt,
-                    "max_output_tokens": int(os.environ.get("CHAT_AGENT_MAX_OUTPUT_TOKENS", "150")),
+                    "max_output_tokens": _max_output_tokens(),
                     "temperature": float(os.environ.get("CHAT_AGENT_TEMPERATURE", "0.8")),
                 },
             )
+            _log_model_response("chat", response)
             return ChatAgentResult(
                 response.text
                 or "Sorry, I could not process that right now. Please try again shortly."
@@ -161,7 +164,7 @@ class ChatAgent:
                 ),
                 config={
                     "system_instruction": self._build_tool_system_prompt(),
-                    "max_output_tokens": int(os.environ.get("CHAT_AGENT_MAX_OUTPUT_TOKENS", "180")),
+                    "max_output_tokens": _max_output_tokens(),
                     "temperature": float(os.environ.get("CHAT_AGENT_TEMPERATURE", "0.3")),
                     "tools": [
                         search_products,
@@ -172,6 +175,7 @@ class ChatAgent:
                     ],
                 },
             )
+            _log_model_response("commerce_tools", response)
         except Exception as exc:
             logger.error("Error getting model tool response from Gemini: %s", exc)
             return None
@@ -488,6 +492,38 @@ def _manager_order_message(order: CustomerOrder, order_written: bool) -> str:
         f"Original message: {order.customer_message}\n"
         f"{sheet_status}"
     )
+
+
+def _max_output_tokens() -> int:
+    return int(os.environ.get("CHAT_AGENT_MAX_OUTPUT_TOKENS", DEFAULT_CHAT_AGENT_MAX_OUTPUT_TOKENS))
+
+
+def _log_model_response(flow: str, response) -> None:
+    finish_reason = _response_finish_reason(response)
+    text_length = len(response.text or "")
+    if finish_reason:
+        logger.info(
+            "Gemini %s response finish_reason=%s text_chars=%s",
+            flow,
+            finish_reason,
+            text_length,
+        )
+    if str(finish_reason).upper().endswith("MAX_TOKENS"):
+        logger.warning(
+            "Gemini %s response may be partial because max output tokens were reached; text_chars=%s",
+            flow,
+            text_length,
+        )
+
+
+def _response_finish_reason(response) -> str | None:
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        return None
+    finish_reason = getattr(candidates[0], "finish_reason", None)
+    if finish_reason is None:
+        finish_reason = getattr(candidates[0], "finishReason", None)
+    return str(finish_reason) if finish_reason is not None else None
 
 
 chat_agent = ChatAgent()
