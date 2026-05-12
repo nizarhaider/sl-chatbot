@@ -56,6 +56,16 @@ class ProductCatalog:
         scored.sort(key=lambda item: item[0], reverse=True)
         return [product for _, product in scored[:limit]]
 
+    def get_by_sku(self, sku: str) -> Product | None:
+        normalized_sku = sku.strip().lower()
+        if not normalized_sku:
+            return None
+
+        for product in self.load():
+            if product.sku.strip().lower() == normalized_sku:
+                return product
+        return None
+
     def load(self) -> list[Product]:
         path = Path(self.path)
         if not path.exists():

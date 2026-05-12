@@ -124,6 +124,12 @@ class OrderSheetClient:
                 worksheet.tables["OrdersTable"].ref = table_ref
 
             workbook.save(path)
+            logger.info(
+                "Appended %s order line(s) to local workbook %s; rows=%s",
+                len(order.lines),
+                path,
+                worksheet.max_row,
+            )
             return True
         except Exception as exc:
             logger.error("Failed to append order to local workbook: %s", exc)

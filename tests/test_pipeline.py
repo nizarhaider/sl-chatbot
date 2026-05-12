@@ -207,6 +207,56 @@ class WebhookPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Glow Serum", result.reply)
         self.assertIn("2500", result.reply)
 
+    async def test_exact_order_request_creates_single_pending_line(self):
+        agent = ChatAgent()
+
+        with patch.object(
+            agent.product_catalog,
+            "search",
+            return_value=[
+                Product(name="Classic Nude Press-On Set", sku="NBA-NUDE", price="Confirm with store"),
+                Product(name="French Tip Press-On Set", sku="NBA-FRENCH", price="Confirm with store"),
+                Product(name="Nails By Ayidaah Press-On Nail Set", sku="NBA-PRESSON-24", price="1690"),
+            ],
+        ):
+            result = await agent.process_message(
+                "I want the classic nude press on set",
+                "94770000000",
+            )
+
+        self.assertIn("Classic Nude Press-On Set", result.reply)
+        self.assertIn("CONFIRM", result.reply)
+        self.assertEqual(len(agent.pending_orders["94770000000"].lines), 1)
+        self.assertEqual(agent.pending_orders["94770000000"].lines[0].sku, "NBA-NUDE")
+
+    async def test_generic_order_request_asks_customer_to_choose_one_item(self):
+        agent = ChatAgent()
+
+        with patch.object(
+            agent.product_catalog,
+            "search",
+            return_value=[
+                Product(name="Classic Nude Press-On Set", sku="NBA-NUDE", price="Confirm with store"),
+                Product(name="French Tip Press-On Set", sku="NBA-FRENCH", price="Confirm with store"),
+            ],
+        ):
+            result = await agent.process_message("I need to get nails", "94770000000")
+
+        self.assertIn("Please reply with the number or SKU", result.reply)
+        self.assertNotIn("94770000000", agent.pending_orders)
+
+    async def test_customer_can_select_last_search_result_by_number(self):
+        agent = ChatAgent()
+        agent.last_product_searches["94770000000"] = [
+            Product(name="Classic Nude Press-On Set", sku="NBA-NUDE", price="Confirm with store"),
+            Product(name="French Tip Press-On Set", sku="NBA-FRENCH", price="Confirm with store"),
+        ]
+
+        result = await agent.process_message("2", "94770000000")
+
+        self.assertIn("French Tip Press-On Set", result.reply)
+        self.assertEqual(agent.pending_orders["94770000000"].lines[0].sku, "NBA-FRENCH")
+
     async def test_order_sheet_appends_to_local_workbook_without_google_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             agent = ChatAgent()
