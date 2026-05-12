@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Request, HTTPException, Response, Header, status
 from pydantic import BaseModel
 from app.services.webrtc import webrtc_service
-from app.voice_agent.chat_agent import chat_agent
+from app.chat_agent import chat_agent
 from app.services.whatsapp_api import whatsapp_api
 
 logger = logging.getLogger(__name__)
@@ -124,5 +124,14 @@ async def send_whatsapp_message(
 
 
 async def handle_text_message(sender_id: str, text: str):
-    response_text = await chat_agent.get_response(text)
-    await whatsapp_api.send_message(sender_id, response_text)
+    try:
+        response_text = await chat_agent.get_response(text)
+        if not response_text:
+            logger.error("Chat agent returned an empty response for sender %s", sender_id)
+            response_text = "Sorry, I could not process that right now. Please try again shortly."
+
+        success = await whatsapp_api.send_message(sender_id, response_text)
+        if not success:
+            logger.error("Failed to send WhatsApp reply to %s", sender_id)
+    except Exception as e:
+        logger.error("Error handling text message from %s: %s", sender_id, e, exc_info=True)

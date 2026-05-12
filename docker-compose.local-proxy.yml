@@ -1,0 +1,15 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile
+      - caddy_local_data:/data
+      - caddy_local_config:/config
+
+volumes:
+  caddy_local_data:
+  caddy_local_config:

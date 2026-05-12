@@ -4,9 +4,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN")
-PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
-GRAPH_API_VERSION = "v22.0"
+GRAPH_API_VERSION = os.environ.get("GRAPH_API_VERSION", "v22.0")
+
+
+def _whatsapp_access_token() -> str | None:
+    return os.environ.get("WHATSAPP_ACCESS_TOKEN") or os.environ.get("WHATSAPP_TOKEN")
+
+
+def _phone_number_id() -> str | None:
+    return os.environ.get("PHONE_NUMBER_ID")
 
 class WhatsAppAPI:
     @staticmethod
@@ -14,14 +20,16 @@ class WhatsAppAPI:
         """
         Generic method to send a call action (pre_accept, accept, etc.) to WhatsApp.
         """
-        if not WHATSAPP_ACCESS_TOKEN or not PHONE_NUMBER_ID:
-            logger.error("WHATSAPP_ACCESS_TOKEN or PHONE_NUMBER_ID not set")
+        access_token = _whatsapp_access_token()
+        phone_number_id = _phone_number_id()
+        if not access_token or not phone_number_id:
+            logger.error("WHATSAPP_ACCESS_TOKEN/WHATSAPP_TOKEN or PHONE_NUMBER_ID not set")
             return False
 
-        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_NUMBER_ID}/calls"
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/calls"
         
         headers = {
-            "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
         
@@ -50,14 +58,16 @@ class WhatsAppAPI:
         """
         Sends a text message via WhatsApp Business API.
         """
-        if not WHATSAPP_ACCESS_TOKEN or not PHONE_NUMBER_ID:
-            logger.error("WHATSAPP_ACCESS_TOKEN or PHONE_NUMBER_ID not set")
+        access_token = _whatsapp_access_token()
+        phone_number_id = _phone_number_id()
+        if not access_token or not phone_number_id:
+            logger.error("WHATSAPP_ACCESS_TOKEN/WHATSAPP_TOKEN or PHONE_NUMBER_ID not set")
             return False
 
-        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
         
         headers = {
-            "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
         
@@ -87,12 +97,14 @@ class WhatsAppAPI:
         Uploads a file to the WhatsApp media endpoint.
         Returns the media_id string, or None on failure.
         """
-        if not WHATSAPP_ACCESS_TOKEN or not PHONE_NUMBER_ID:
-            logger.error("WHATSAPP_ACCESS_TOKEN or PHONE_NUMBER_ID not set")
+        access_token = _whatsapp_access_token()
+        phone_number_id = _phone_number_id()
+        if not access_token or not phone_number_id:
+            logger.error("WHATSAPP_ACCESS_TOKEN/WHATSAPP_TOKEN or PHONE_NUMBER_ID not set")
             return None
 
-        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_NUMBER_ID}/media"
-        headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/media"
+        headers = {"Authorization": f"Bearer {access_token}"}
 
         async with httpx.AsyncClient(timeout=60) as client:
             try:
@@ -117,13 +129,15 @@ class WhatsAppAPI:
         """
         Sends a document message via WhatsApp Business API using a previously uploaded media_id.
         """
-        if not WHATSAPP_ACCESS_TOKEN or not PHONE_NUMBER_ID:
-            logger.error("WHATSAPP_ACCESS_TOKEN or PHONE_NUMBER_ID not set")
+        access_token = _whatsapp_access_token()
+        phone_number_id = _phone_number_id()
+        if not access_token or not phone_number_id:
+            logger.error("WHATSAPP_ACCESS_TOKEN/WHATSAPP_TOKEN or PHONE_NUMBER_ID not set")
             return False
 
-        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
         headers = {
-            "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
         payload = {
@@ -152,4 +166,3 @@ class WhatsAppAPI:
 
 
 whatsapp_api = WhatsAppAPI()
-

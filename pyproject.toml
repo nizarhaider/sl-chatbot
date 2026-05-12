@@ -15,3 +15,11 @@ dependencies = [
     "google-adk>=1.26.0",
     "ddgs>=9.11.2",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

@@ -1,6 +1,10 @@
 import asyncio
 import logging
+import os
+import re
+import time
 from datetime import datetime
+from dataclasses import dataclass
 from fractions import Fraction
 from aiortc import MediaStreamTrack
 from av import AudioFrame
@@ -15,10 +19,53 @@ from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
 from app.services.tts import get_tts_service
+from app.voice_agent.gemini_turn_pipeline import GeminiTurnPipeline
 from app.voice_agent.tools import web_search, send_whatsapp_status
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+TTS_MAX_CHARS = int(os.environ.get("VOICE_TTS_MAX_CHARS", "160"))
+VOICE_INPUT_SAMPLE_RATE = 16000
+VOICE_INPUT_BYTES_PER_SAMPLE = 2
+VOICE_INPUT_CHUNK_MS = max(20, int(os.environ.get("VOICE_INPUT_CHUNK_MS", "20")))
+VOICE_INPUT_CHUNK_SIZE = (
+    VOICE_INPUT_SAMPLE_RATE * VOICE_INPUT_BYTES_PER_SAMPLE * VOICE_INPUT_CHUNK_MS
+) // 1000
+VOICE_SILENCE_THRESHOLD = int(os.environ.get("VOICE_SILENCE_THRESHOLD", "1000"))
+VOICE_END_SILENCE_CHUNKS = max(2, int(os.environ.get("VOICE_END_SILENCE_CHUNKS", "5")))
+GEMINI_LIVE_USE_AUTOMATIC_VAD = os.environ.get(
+    "GEMINI_LIVE_USE_AUTOMATIC_VAD",
+    "true",
+).strip().lower() in {"1", "true", "yes", "on"}
+GEMINI_LIVE_VAD_PREFIX_PADDING_MS = int(
+    os.environ.get("GEMINI_LIVE_VAD_PREFIX_PADDING_MS", "20")
+)
+GEMINI_LIVE_VAD_SILENCE_MS = int(os.environ.get("GEMINI_LIVE_VAD_SILENCE_MS", "100"))
+GEMINI_LIVE_ENABLE_INPUT_TRANSCRIPTION = os.environ.get(
+    "GEMINI_LIVE_ENABLE_INPUT_TRANSCRIPTION",
+    "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+GEMINI_LIVE_ENABLE_OUTPUT_TRANSCRIPTION = os.environ.get(
+    "GEMINI_LIVE_ENABLE_OUTPUT_TRANSCRIPTION",
+    "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+GEMINI_LIVE_ENABLE_TOOLS = os.environ.get(
+    "GEMINI_LIVE_ENABLE_TOOLS",
+    "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+GEMINI_LIVE_AUDIO_MODEL = os.environ.get(
+    "GEMINI_LIVE_AUDIO_MODEL",
+    "gemini-2.5-flash-native-audio-preview-12-2025",
+)
+GEMINI_LIVE_TEXT_MODEL = os.environ.get(
+    "GEMINI_LIVE_TEXT_MODEL",
+    "gemini-2.5-flash-native-audio-preview-12-2025",
+)
+GEMINI_LIVE_AUDIO_FALLBACK_FOR_CALLS = os.environ.get(
+    "GEMINI_LIVE_AUDIO_FALLBACK_FOR_CALLS",
+    "true",
+).strip().lower() in {"1", "true", "yes", "on"}
+VOICE_PIPELINE_MODE = os.environ.get("VOICE_PIPELINE_MODE", "live").strip().lower()
 
 SL_BOT_INSTRUCTION = (
     "**Persona:** You are Sam, a friendly senior SLT Mobitel agent. Speak fast with a fast Sri Lankan accent \n"
@@ -26,15 +73,41 @@ SL_BOT_INSTRUCTION = (
     '"සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English."\n'
     "Wait for the user to mention their preferred language.\n"
     "**Task 2 (Assistance):** Once the user selects a language, smoothly transition into a helpful, polite customer service agent in that chosen language for the rest of the call.\n"
-    "Keep responses short, helpful, and professional."
+    "Keep responses short, helpful, and professional.\n"
+    "For voice calls, default to one short sentence and keep most replies under 18 words unless the caller explicitly asks for more detail."
 )
 
 root_agent = LlmAgent(
     name="SL_Bot",
-    model="gemini-2.5-flash-native-audio-preview-09-2025",
+    model=GEMINI_LIVE_AUDIO_MODEL,
     instruction=SL_BOT_INSTRUCTION,
-    tools=[web_search, send_whatsapp_status],
+    tools=[web_search, send_whatsapp_status] if GEMINI_LIVE_ENABLE_TOOLS else [],
 )
+
+
+@dataclass
+class TurnLatencyTracker:
+    speech_started_at: float | None = None
+    speech_ended_at: float | None = None
+    response_started_at: float | None = None
+
+    def mark_speech_started(self) -> None:
+        self.speech_started_at = time.perf_counter()
+        self.response_started_at = None
+
+    def mark_speech_ended(self) -> None:
+        self.speech_ended_at = time.perf_counter()
+
+    def mark_response_started(self) -> float | None:
+        if self.speech_ended_at is None or self.response_started_at is not None:
+            return None
+        self.response_started_at = time.perf_counter()
+        return (self.response_started_at - self.speech_ended_at) * 1000.0
+
+    def reset(self) -> None:
+        self.speech_started_at = None
+        self.speech_ended_at = None
+        self.response_started_at = None
 
 
 class RealtimeAudioTrack(MediaStreamTrack):
@@ -105,7 +178,13 @@ class VoiceAgent:
         self.active_calls: dict[str, asyncio.Task] = {}
         self.greetings_sent: dict[str, bool] = {}
         self.playback_generation: dict[str, int] = {}
+        self.turn_latency: dict[str, TurnLatencyTracker] = {}
         self.tts_service = get_tts_service()
+        self.turn_pipeline = GeminiTurnPipeline(
+            tts_service=self.tts_service,
+            prepare_tts_text=self._prepare_tts_text,
+            interrupt_playback=self._interrupt_playback,
+        )
 
     async def process_audio(
         self,
@@ -126,12 +205,25 @@ class VoiceAgent:
 
         self.greetings_sent[call_id] = False
         self.playback_generation[call_id] = 0
+        self.turn_latency[call_id] = TurnLatencyTracker()
+        if VOICE_PIPELINE_MODE == "gemini_turn":
+            task = asyncio.create_task(
+                self._run_gemini_turn_pipeline(call_id, input_track, output_track),
+                name=f"call-{call_id}",
+            )
+            self.active_calls[call_id] = task
+            await task
+            return
+        use_gemini_audio_for_call = self._uses_gemini_audio_for_call()
+        live_model = (
+            GEMINI_LIVE_AUDIO_MODEL if use_gemini_audio_for_call else GEMINI_LIVE_TEXT_MODEL
+        )
         session_service = InMemorySessionService()
         call_agent = LlmAgent(
             name="SL_Bot",
-            model="gemini-2.5-flash-native-audio-preview-09-2025",
+            model=live_model,
             instruction=SL_BOT_INSTRUCTION,
-            tools=[web_search, send_whatsapp_status],
+            tools=[web_search, send_whatsapp_status] if GEMINI_LIVE_ENABLE_TOOLS else [],
         )
 
         runner = Runner(
@@ -143,13 +235,15 @@ class VoiceAgent:
 
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
-            response_modalities=(
-                ["AUDIO"] if self.tts_service.uses_gemini_audio() else ["TEXT"]
+            response_modalities=(["AUDIO"] if use_gemini_audio_for_call else ["TEXT"]),
+            input_audio_transcription=(
+                types.AudioTranscriptionConfig()
+                if GEMINI_LIVE_ENABLE_INPUT_TRANSCRIPTION
+                else None
             ),
-            input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=(
                 types.AudioTranscriptionConfig()
-                if self.tts_service.uses_gemini_audio()
+                if use_gemini_audio_for_call and GEMINI_LIVE_ENABLE_OUTPUT_TRANSCRIPTION
                 else None
             ),
             speech_config=(
@@ -160,7 +254,7 @@ class VoiceAgent:
                         )
                     )
                 )
-                if self.tts_service.uses_gemini_audio()
+                if use_gemini_audio_for_call
                 else None
             ),
             context_window_compression=types.ContextWindowCompressionConfig(
@@ -169,7 +263,11 @@ class VoiceAgent:
             ),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
-                    disabled=True
+                    disabled=not GEMINI_LIVE_USE_AUTOMATIC_VAD,
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                    prefix_padding_ms=GEMINI_LIVE_VAD_PREFIX_PADDING_MS,
+                    silence_duration_ms=GEMINI_LIVE_VAD_SILENCE_MS,
                 )
             ),
         )
@@ -202,7 +300,7 @@ class VoiceAgent:
                         self._gemini_audio_to_whatsapp(
                             runner, call_id, live_request_queue, run_config, output_track
                         )
-                        if self.tts_service.uses_gemini_audio()
+                        if use_gemini_audio_for_call
                         else self._gemini_text_to_whatsapp(
                             runner, call_id, live_request_queue, run_config, output_track
                         )
@@ -217,6 +315,7 @@ class VoiceAgent:
                 self.active_calls.pop(call_id, None)
                 self.greetings_sent.pop(call_id, None)
                 self.playback_generation.pop(call_id, None)
+                self.turn_latency.pop(call_id, None)
                 logger.info(f"Cleaned up session for {call_id}")
 
         task = asyncio.create_task(_run_call(), name=f"call-{call_id}")
@@ -232,14 +331,10 @@ class VoiceAgent:
     ):
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         buffer = bytearray()
-        # 16kHz * 2 bytes/sample (16-bit) * 0.1 seconds = 3200 bytes
-        CHUNK_SIZE = 3200  
-        
         is_speaking = False
-        silence_threshold = 1000  # RMS threshold
         silence_duration_chunks = 0
-        MAX_SILENCE_CHUNKS = 8  # ~800ms of silence to trigger end
-        
+        tracker = self.turn_latency.setdefault(call_id, TurnLatencyTracker())
+
         try:
             while True:
                 frame = await track.recv()
@@ -248,30 +343,34 @@ class VoiceAgent:
                     audio_bytes = resampled.to_ndarray().tobytes()
                     if audio_bytes:
                         buffer.extend(audio_bytes)
-                        while len(buffer) >= CHUNK_SIZE:
-                            chunk = bytes(buffer[:CHUNK_SIZE])
-                            del buffer[:CHUNK_SIZE]
-                            
+                        while len(buffer) >= VOICE_INPUT_CHUNK_SIZE:
+                            chunk = bytes(buffer[:VOICE_INPUT_CHUNK_SIZE])
+                            del buffer[:VOICE_INPUT_CHUNK_SIZE]
+
                             # Simple VAD using RMS
                             audio_np = np.frombuffer(chunk, dtype=np.int16)
-                            rms = np.sqrt(np.mean(audio_np.astype(np.float64)**2))
-                            
-                            if rms > silence_threshold:
+                            rms = np.sqrt(np.mean(audio_np.astype(np.float64) ** 2))
+
+                            if rms > VOICE_SILENCE_THRESHOLD:
                                 if not is_speaking:
                                     logger.info("VAD: Speech started")
                                     is_speaking = True
+                                    tracker.mark_speech_started()
                                     self._interrupt_playback(call_id, output_track)
-                                    live_request_queue.send_activity_start()
+                                    if not GEMINI_LIVE_USE_AUTOMATIC_VAD:
+                                        live_request_queue.send_activity_start()
                                 silence_duration_chunks = 0
                             else:
                                 if is_speaking:
                                     silence_duration_chunks += 1
-                                    if silence_duration_chunks >= MAX_SILENCE_CHUNKS:
+                                    if silence_duration_chunks >= VOICE_END_SILENCE_CHUNKS:
                                         logger.info("VAD: Speech ended")
                                         is_speaking = False
                                         silence_duration_chunks = 0
-                                        live_request_queue.send_activity_end()
-                            
+                                        tracker.mark_speech_ended()
+                                        if not GEMINI_LIVE_USE_AUTOMATIC_VAD:
+                                            live_request_queue.send_activity_end()
+
                             blob = types.Blob(
                                 mime_type="audio/pcm;rate=16000", data=chunk
                             )
@@ -306,6 +405,10 @@ class VoiceAgent:
                     )
 
                 if event.output_transcription and event.output_transcription.text:
+                    self._note_turn_response_start(
+                        call_id,
+                        source="model transcript",
+                    )
                     time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                     logger.info(
                         f"[{time_str}] Model Transcribed: {event.output_transcription.text}"
@@ -314,6 +417,10 @@ class VoiceAgent:
                 if event.content and event.content.parts:
                     for part in event.content.parts:
                         if part.inline_data and part.inline_data.data:
+                            self._note_turn_response_start(
+                                call_id,
+                                source="model audio",
+                            )
                             # Send each audio chunk immediately
                             output_track.add_audio(part.inline_data.data)
 
@@ -354,6 +461,10 @@ class VoiceAgent:
                     ]
                     if text_parts and not event.partial:
                         latest_response_text = " ".join(text_parts)
+                        self._note_turn_response_start(
+                            call_id,
+                            source="model text",
+                        )
                         time_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                         logger.info(
                             f"[{time_str}] Model Text: {latest_response_text}"
@@ -382,7 +493,10 @@ class VoiceAgent:
         output_track: RealtimeAudioTrack,
     ):
         generation_id = self.playback_generation.get(call_id, 0)
-        synthesized = await self.tts_service.synthesize(text)
+        prepared_text = self._prepare_tts_text(text)
+        if not prepared_text:
+            return
+        synthesized = await self.tts_service.synthesize(prepared_text)
         if self.playback_generation.get(call_id, 0) != generation_id:
             logger.info("Discarding stale TTS output for %s", call_id)
             return
@@ -403,6 +517,55 @@ class VoiceAgent:
             self.playback_generation[call_id] = self.playback_generation.get(call_id, 0) + 1
         if output_track is not None:
             output_track.clear_buffer()
+
+    def _note_turn_response_start(self, call_id: str, source: str) -> None:
+        tracker = self.turn_latency.get(call_id)
+        if tracker is None:
+            return
+        latency_ms = tracker.mark_response_started()
+        if latency_ms is None:
+            return
+        logger.info(
+            "Turn latency for %s: first %s in %.0f ms after speech end",
+            call_id,
+            source,
+            latency_ms,
+        )
+
+    def _prepare_tts_text(self, text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        if not cleaned:
+            return ""
+
+        sentences = re.split(r"(?<=[.!?।])\s+", cleaned)
+        shortened = " ".join(sentence for sentence in sentences[:2] if sentence)
+        if len(shortened) <= TTS_MAX_CHARS:
+            return shortened
+
+        truncated = shortened[:TTS_MAX_CHARS].rsplit(" ", 1)[0].strip()
+        return truncated or shortened[:TTS_MAX_CHARS].strip()
+
+    def _uses_gemini_audio_for_call(self) -> bool:
+        return self.tts_service.uses_gemini_audio() or GEMINI_LIVE_AUDIO_FALLBACK_FOR_CALLS
+
+    async def _run_gemini_turn_pipeline(self, call_id, input_track, output_track):
+        try:
+            await self.turn_pipeline.run(
+                call_id=call_id,
+                input_track=input_track,
+                output_track=output_track,
+                playback_generation=self.playback_generation,
+            )
+        except asyncio.CancelledError:
+            logger.info("Gemini turn pipeline cancelled for %s", call_id)
+        except Exception as exc:
+            logger.error("Gemini turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
+        finally:
+            self.active_calls.pop(call_id, None)
+            self.greetings_sent.pop(call_id, None)
+            self.playback_generation.pop(call_id, None)
+            self.turn_latency.pop(call_id, None)
+            logger.info(f"Cleaned up session for {call_id}")
 
 
 voice_agent = VoiceAgent()
