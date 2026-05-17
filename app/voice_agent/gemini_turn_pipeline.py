@@ -5,6 +5,7 @@ import time
 import wave
 from io import BytesIO
 
+import httpx
 import numpy as np
 from aiortc import MediaStreamTrack
 from av.audio.resampler import AudioResampler
@@ -15,19 +16,44 @@ logger = logging.getLogger(__name__)
 
 GEMINI_STT_MODEL = os.environ.get("GEMINI_STT_MODEL", "gemini-2.5-flash")
 GEMINI_LLM_MODEL = os.environ.get("GEMINI_LLM_MODEL", "gemini-2.5-flash")
+GEMINI_THINKING_LEVEL = os.environ.get("GEMINI_THINKING_LEVEL", "").strip().lower()
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").strip().lower()
+LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8081/v1").rstrip("/")
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "local")
+LOCAL_LLM_TIMEOUT_SECONDS = float(os.environ.get("LOCAL_LLM_TIMEOUT_SECONDS", "10"))
+LOCAL_LLM_MAX_TOKENS = max(8, int(os.environ.get("LOCAL_LLM_MAX_TOKENS", "40")))
 TURN_INPUT_CHUNK_MS = max(20, int(os.environ.get("TURN_INPUT_CHUNK_MS", "40")))
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
 TURN_SILENCE_THRESHOLD = int(os.environ.get("TURN_SILENCE_THRESHOLD", "1000"))
-TURN_END_SILENCE_CHUNKS = max(2, int(os.environ.get("TURN_END_SILENCE_CHUNKS", "5")))
-GEMINI_TURN_GREETING = (
-    'සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். '
-    "For English, please say English."
+TURN_END_SILENCE_CHUNKS = max(2, int(os.environ.get("TURN_END_SILENCE_CHUNKS", "20")))
+TURN_MIN_TRANSCRIPT_WORDS = max(1, int(os.environ.get("TURN_MIN_TRANSCRIPT_WORDS", "3")))
+TURN_MIN_TRANSCRIPT_CHARS = max(1, int(os.environ.get("TURN_MIN_TRANSCRIPT_CHARS", "12")))
+TURN_GREETING_DELAY_SECONDS = max(
+    0.0,
+    float(os.environ.get("TURN_GREETING_DELAY_SECONDS", "1.2")),
 )
-GEMINI_TURN_SYSTEM_PROMPT = (
-    "You are Sam, a friendly senior SLT Mobitel agent. "
-    "Help the caller in the language they choose. "
-    "Keep replies short, helpful, and professional. "
-    "For voice calls, default to one short sentence and keep most replies under 18 words unless the caller explicitly asks for more detail."
+GEMINI_TURN_GREETING = os.environ.get(
+    "GEMINI_TURN_GREETING",
+    "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English.",
+)
+HOMELANDS_PROPERTIES = (
+    "1. Horizon Residencies, Malabe: two-bedroom apartments from LKR 28 million, near schools and supermarkets. "
+    "2. Lakeview Villas, Piliyandala: three-bedroom villas from LKR 48 million, garden, parking, and lake access. "
+    "3. Green Acres, Kurunegala: ten-perch residential land from LKR 9.5 million, clear title, bank loans supported. "
+    "4. Ocean Breeze Apartments, Dehiwala: one and two-bedroom units from LKR 32 million, sea view, ready soon."
+)
+HOMELANDS_SYSTEM_PROMPT = (
+    "You are a call center agent for Homelands, a Sri Lankan property business. "
+    "At the beginning of the call, ask the customer exactly: "
+    '"සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English." '
+    "This exact language menu is already spoken as the first assistant message; do not repeat it after the customer answers. "
+    "After the customer chooses English, Sinhala, or Tamil, continue naturally in that language. "
+    "If they only say a language name, briefly acknowledge and ask what property type, location, or budget they prefer. "
+    "Help with property inquiries using these mock properties only: "
+    f"{HOMELANDS_PROPERTIES} "
+    "When the customer asks about properties, recommend a suitable option and tell them you have scheduled "
+    "an appointment with a Homelands consultant for tomorrow at 10 AM. "
+    "Keep each response brief and natural for a phone call, usually one short sentence."
 )
 
 
@@ -46,12 +72,25 @@ class GeminiTurnPipeline:
         return self._client
 
     async def run(self, call_id, input_track, output_track, playback_generation):
-        await self._speak(call_id, GEMINI_TURN_GREETING, output_track, playback_generation)
+        if TURN_GREETING_DELAY_SECONDS:
+            await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
+        greeting_seconds = await self._speak(
+            call_id,
+            GEMINI_TURN_GREETING,
+            output_track,
+            playback_generation,
+        )
+        if greeting_seconds:
+            logger.info(
+                "Protecting Homelands language prompt for %.2f seconds before VAD",
+                greeting_seconds,
+            )
+            await self._discard_input_audio(input_track, greeting_seconds + 0.25)
 
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
         utterance_buffer = bytearray()
-        transcript_history: list[tuple[str, str]] = []
+        transcript_history: list[tuple[str, str]] = [("assistant", GEMINI_TURN_GREETING)]
         silence_chunks = 0
         is_speaking = False
         turn_started_at = None
@@ -130,6 +169,7 @@ class GeminiTurnPipeline:
         response_text = await self._respond(transcript_history)
         llm_ms = (time.perf_counter() - llm_started_at) * 1000.0
         if not response_text:
+            logger.info("Turn LLM returned empty response for %s in %.0f ms", call_id, llm_ms)
             return
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
 
@@ -179,7 +219,27 @@ class GeminiTurnPipeline:
         )
         return (response.text or "").strip()
 
+    async def _discard_input_audio(self, input_track, duration_seconds: float) -> None:
+        deadline = time.perf_counter() + max(0.0, duration_seconds)
+        discarded_frames = 0
+        while time.perf_counter() < deadline:
+            try:
+                timeout = max(0.01, deadline - time.perf_counter())
+                await asyncio.wait_for(input_track.recv(), timeout=timeout)
+                discarded_frames += 1
+            except asyncio.TimeoutError:
+                break
+            except Exception as exc:
+                logger.info("Protected prompt input drain ended: %s", exc)
+                break
+        logger.info("Discarded %s inbound frames during protected prompt", discarded_frames)
+
     async def _respond(self, transcript_history: list[tuple[str, str]]) -> str:
+        if LLM_PROVIDER in {"local", "openai", "openai_compatible"}:
+            return await self._respond_local_llm(transcript_history)
+        return await self._respond_gemini(transcript_history)
+
+    async def _respond_gemini(self, transcript_history: list[tuple[str, str]]) -> str:
         conversation_lines = []
         for role, text in transcript_history[-10:]:
             prefix = "Caller" if role == "user" else "Agent"
@@ -188,32 +248,86 @@ class GeminiTurnPipeline:
 
         response = await self.client.aio.models.generate_content(
             model=GEMINI_LLM_MODEL,
-            contents=prompt or "The call has just connected. Start with the language menu.",
-            config={
-                "system_instruction": GEMINI_TURN_SYSTEM_PROMPT,
-                "temperature": 0.6,
-                "max_output_tokens": 120,
-            },
+            contents=(
+                "Reply to the latest caller message using the Homelands instructions.\n"
+                f"{prompt}"
+            ),
+            config=types.GenerateContentConfig(
+                system_instruction=HOMELANDS_SYSTEM_PROMPT,
+                temperature=0,
+                max_output_tokens=160,
+                thinking_config=(
+                    types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL)
+                    if GEMINI_THINKING_LEVEL
+                    else None
+                ),
+            ),
         )
         return (response.text or "").strip()
+
+    async def _respond_local_llm(self, transcript_history: list[tuple[str, str]]) -> str:
+        messages = [{"role": "system", "content": HOMELANDS_SYSTEM_PROMPT}]
+        for role, text in transcript_history[-10:]:
+            messages.append(
+                {
+                    "role": "assistant" if role == "assistant" else "user",
+                    "content": text,
+                }
+            )
+        messages.append(
+            {
+                "role": "user",
+                "content": "Reply to the latest caller message using the Homelands instructions.",
+            }
+        )
+
+        payload = {
+            "model": LOCAL_LLM_MODEL,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": max(LOCAL_LLM_MAX_TOKENS, 160),
+            "stream": False,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=LOCAL_LLM_TIMEOUT_SECONDS) as client:
+                response = await client.post(
+                    f"{LOCAL_LLM_BASE_URL}/chat/completions",
+                    json=payload,
+                )
+                response.raise_for_status()
+        except Exception:
+            logger.exception("Local LLM request failed")
+            return ""
+
+        data = response.json()
+        choices = data.get("choices") or []
+        if not choices:
+            logger.warning("Local LLM returned no choices: %s", data)
+            return ""
+        message = choices[0].get("message") or {}
+        return (message.get("content") or "").strip()
 
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)
         if not prepared:
-            return
+            return 0.0
 
         generation_id = playback_generation.get(call_id, 0)
         synthesized = await self.tts_service.synthesize(prepared)
         if playback_generation.get(call_id, 0) != generation_id:
             logger.info("Discarding stale turn TTS output for %s", call_id)
-            return
+            return 0.0
 
-        frame_size = output_track.frame_size_bytes
-        for offset in range(0, len(synthesized.pcm), frame_size):
-            if playback_generation.get(call_id, 0) != generation_id:
-                logger.info("Stopping interrupted turn TTS playback for %s", call_id)
-                return
-            output_track.add_audio(synthesized.pcm[offset:offset + frame_size])
+        if playback_generation.get(call_id, 0) != generation_id:
+            logger.info("Stopping interrupted turn TTS playback for %s", call_id)
+            return 0.0
+        output_track.add_pcm_audio(synthesized.pcm, synthesized.sample_rate)
+        return self._audio_duration_seconds(synthesized.pcm, synthesized.sample_rate)
+
+    def _audio_duration_seconds(self, pcm: bytes, sample_rate: int) -> float:
+        if not pcm or sample_rate <= 0:
+            return 0.0
+        return (len(pcm) / 2) / sample_rate
 
     def _pcm_to_wav(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         buf = BytesIO()
