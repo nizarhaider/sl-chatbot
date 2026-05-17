@@ -19,12 +19,13 @@ from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
 from app.services.tts import get_tts_service
+from app.voice_agent.gemma_audio_turn_pipeline import GemmaAudioTurnPipeline
 from app.voice_agent.gemini_turn_pipeline import GeminiTurnPipeline
+from app.voice_agent.realtime_turn_pipeline import RealtimeTurnPipeline
 from app.voice_agent.tools import web_search, send_whatsapp_status
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-TTS_MAX_CHARS = int(os.environ.get("VOICE_TTS_MAX_CHARS", "160"))
 VOICE_INPUT_SAMPLE_RATE = 16000
 VOICE_INPUT_BYTES_PER_SAMPLE = 2
 VOICE_INPUT_CHUNK_MS = max(20, int(os.environ.get("VOICE_INPUT_CHUNK_MS", "20")))
@@ -68,13 +69,18 @@ GEMINI_LIVE_AUDIO_FALLBACK_FOR_CALLS = os.environ.get(
 VOICE_PIPELINE_MODE = os.environ.get("VOICE_PIPELINE_MODE", "live").strip().lower()
 
 SL_BOT_INSTRUCTION = (
-    "**Persona:** You are Sam, a friendly senior SLT Mobitel agent. Speak fast with a fast Sri Lankan accent \n"
-    "**Task 1 (Language Selection):** At the beginning of the call, ask the user to mention their preferred language. You must say exactly:\n"
-    '"සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English."\n'
-    "Wait for the user to mention their preferred language.\n"
-    "**Task 2 (Assistance):** Once the user selects a language, smoothly transition into a helpful, polite customer service agent in that chosen language for the rest of the call.\n"
-    "Keep responses short, helpful, and professional.\n"
-    "For voice calls, default to one short sentence and keep most replies under 18 words unless the caller explicitly asks for more detail."
+    "You are a call center agent for Homelands, a Sri Lankan property business. "
+    "At the beginning of the call, ask the customer exactly: "
+    '"සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English." '
+    "After the customer chooses English, Sinhala, or Tamil, continue naturally in that language. "
+    "Help with property inquiries using these mock properties only: "
+    "Horizon Residencies, Malabe: two-bedroom apartments from LKR 28 million. "
+    "Lakeview Villas, Piliyandala: three-bedroom villas from LKR 48 million. "
+    "Green Acres, Kurunegala: ten-perch residential land from LKR 9.5 million. "
+    "Ocean Breeze Apartments, Dehiwala: one and two-bedroom units from LKR 32 million. "
+    "When the customer asks about properties, recommend a suitable option and tell them you have scheduled "
+    "an appointment with a Homelands consultant for tomorrow at 10 AM. "
+    "Keep responses brief and natural for a phone call."
 )
 
 root_agent = LlmAgent(
@@ -113,15 +119,18 @@ class TurnLatencyTracker:
 class RealtimeAudioTrack(MediaStreamTrack):
     kind = "audio"
 
-    def __init__(self, sample_rate=24000):
+    def __init__(self, sample_rate=48000):
         super().__init__()
         self.queue = asyncio.Queue()
         self._pts = 0
         self._sample_rate = sample_rate
+        self._channels = 2
+        self._layout = "stereo"
         self._time_base = Fraction(1, self._sample_rate)
-        self._samples_per_frame = 480
+        self._samples_per_frame = self._sample_rate // 50
         self._buffer = b""
         self._start_time = None
+        self._logged_non_silent_frames = 0
 
     @property
     def sample_rate(self) -> int:
@@ -129,7 +138,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
 
     @property
     def frame_size_bytes(self) -> int:
-        return self._samples_per_frame * 2
+        return self._samples_per_frame * self._channels * 2
 
     def clear_buffer(self):
         while not self.queue.empty():
@@ -142,6 +151,51 @@ class RealtimeAudioTrack(MediaStreamTrack):
     def add_audio(self, data: bytes):
         self.queue.put_nowait(data)
 
+    def add_pcm_audio(self, pcm: bytes, sample_rate: int):
+        if not pcm:
+            return
+        output_pcm = pcm
+        input_audio = np.frombuffer(pcm, dtype=np.int16)
+        input_rms = float(np.sqrt(np.mean(input_audio.astype(np.float64) ** 2))) if input_audio.size else 0.0
+
+        if sample_rate != self._sample_rate:
+            input_array = input_audio.reshape(1, -1)
+            frame = AudioFrame.from_ndarray(
+                input_array,
+                format="s16",
+                layout="mono",
+            )
+            frame.sample_rate = sample_rate
+            frame.time_base = Fraction(1, sample_rate)
+
+            resampler = AudioResampler(
+                format="s16",
+                layout="mono",
+                rate=self._sample_rate,
+            )
+            chunks = []
+            for resampled in resampler.resample(frame):
+                chunks.append(resampled.to_ndarray().tobytes())
+            for resampled in resampler.resample(None):
+                chunks.append(resampled.to_ndarray().tobytes())
+            output_pcm = b"".join(chunks)
+
+        mono = np.frombuffer(output_pcm, dtype=np.int16)
+        stereo = np.repeat(mono[:, None], self._channels, axis=1)
+        output_bytes = stereo.astype(np.int16).tobytes()
+        output_rms = float(np.sqrt(np.mean(mono.astype(np.float64) ** 2))) if mono.size else 0.0
+        logger.info(
+            "Queued outbound PCM: input_rate=%s input_bytes=%s input_rms=%.1f output_rate=%s layout=%s output_bytes=%s output_rms=%.1f",
+            sample_rate,
+            len(pcm),
+            input_rms,
+            self._sample_rate,
+            self._layout,
+            len(output_bytes),
+            output_rms,
+        )
+        self.add_audio(output_bytes)
+
     async def recv(self):
         if self._start_time is None:
             self._start_time = asyncio.get_event_loop().time()
@@ -150,7 +204,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         if next_frame_time > now:
             await asyncio.sleep(next_frame_time - now)
 
-        target_size = self._samples_per_frame * 2
+        target_size = self.frame_size_bytes
 
         while not self.queue.empty():
             try:
@@ -164,8 +218,26 @@ class RealtimeAudioTrack(MediaStreamTrack):
         else:
             data_to_send = b"\x00" * target_size
 
-        frame = AudioFrame(format="s16", layout="mono", samples=self._samples_per_frame)
-        frame.planes[0].update(data_to_send)
+        if self._logged_non_silent_frames < 5 and data_to_send.strip(b"\x00"):
+            audio = np.frombuffer(data_to_send, dtype=np.int16)
+            rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2))) if audio.size else 0.0
+            logger.info(
+                "Emitting outbound audio frame: rate=%s layout=%s bytes=%s rms=%.1f buffered=%s queued_chunks=%s",
+                self._sample_rate,
+                self._layout,
+                len(data_to_send),
+                rms,
+                len(self._buffer),
+                self.queue.qsize(),
+            )
+            self._logged_non_silent_frames += 1
+
+        audio = np.frombuffer(data_to_send, dtype=np.int16).reshape(1, -1)
+        frame = AudioFrame.from_ndarray(
+            audio,
+            format="s16",
+            layout=self._layout,
+        )
         frame.pts = self._pts
         frame.sample_rate = self._sample_rate
         frame.time_base = self._time_base
@@ -182,6 +254,15 @@ class VoiceAgent:
         self.tts_service = get_tts_service()
         self.turn_pipeline = GeminiTurnPipeline(
             tts_service=self.tts_service,
+            prepare_tts_text=self._prepare_tts_text,
+            interrupt_playback=self._interrupt_playback,
+        )
+        self.gemma_audio_pipeline = GemmaAudioTurnPipeline(
+            tts_service=self.tts_service,
+            prepare_tts_text=self._prepare_tts_text,
+            interrupt_playback=self._interrupt_playback,
+        )
+        self.realtime_turn_pipeline = RealtimeTurnPipeline(
             prepare_tts_text=self._prepare_tts_text,
             interrupt_playback=self._interrupt_playback,
         )
@@ -209,6 +290,22 @@ class VoiceAgent:
         if VOICE_PIPELINE_MODE == "gemini_turn":
             task = asyncio.create_task(
                 self._run_gemini_turn_pipeline(call_id, input_track, output_track),
+                name=f"call-{call_id}",
+            )
+            self.active_calls[call_id] = task
+            await task
+            return
+        if VOICE_PIPELINE_MODE == "gemma_audio_turn":
+            task = asyncio.create_task(
+                self._run_gemma_audio_turn_pipeline(call_id, input_track, output_track),
+                name=f"call-{call_id}",
+            )
+            self.active_calls[call_id] = task
+            await task
+            return
+        if VOICE_PIPELINE_MODE == "realtime_turn":
+            task = asyncio.create_task(
+                self._run_realtime_turn_pipeline(call_id, input_track, output_track),
                 name=f"call-{call_id}",
             )
             self.active_calls[call_id] = task
@@ -421,8 +518,10 @@ class VoiceAgent:
                                 call_id,
                                 source="model audio",
                             )
-                            # Send each audio chunk immediately
-                            output_track.add_audio(part.inline_data.data)
+                            output_track.add_pcm_audio(
+                                part.inline_data.data,
+                                sample_rate=24000,
+                            )
 
                 if event.interrupted:
                     self._interrupt_playback(call_id, output_track)
@@ -501,12 +600,10 @@ class VoiceAgent:
             logger.info("Discarding stale TTS output for %s", call_id)
             return
 
-        frame_size = output_track.frame_size_bytes
-        for offset in range(0, len(synthesized.pcm), frame_size):
-            if self.playback_generation.get(call_id, 0) != generation_id:
-                logger.info("Stopping interrupted TTS playback for %s", call_id)
-                return
-            output_track.add_audio(synthesized.pcm[offset:offset + frame_size])
+        if self.playback_generation.get(call_id, 0) != generation_id:
+            logger.info("Stopping interrupted TTS playback for %s", call_id)
+            return
+        output_track.add_pcm_audio(synthesized.pcm, synthesized.sample_rate)
 
     def _interrupt_playback(
         self,
@@ -534,16 +631,7 @@ class VoiceAgent:
 
     def _prepare_tts_text(self, text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
-        if not cleaned:
-            return ""
-
-        sentences = re.split(r"(?<=[.!?।])\s+", cleaned)
-        shortened = " ".join(sentence for sentence in sentences[:2] if sentence)
-        if len(shortened) <= TTS_MAX_CHARS:
-            return shortened
-
-        truncated = shortened[:TTS_MAX_CHARS].rsplit(" ", 1)[0].strip()
-        return truncated or shortened[:TTS_MAX_CHARS].strip()
+        return cleaned.rstrip(",;:").strip()
 
     def _uses_gemini_audio_for_call(self) -> bool:
         return self.tts_service.uses_gemini_audio() or GEMINI_LIVE_AUDIO_FALLBACK_FOR_CALLS
@@ -560,6 +648,44 @@ class VoiceAgent:
             logger.info("Gemini turn pipeline cancelled for %s", call_id)
         except Exception as exc:
             logger.error("Gemini turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
+        finally:
+            self.active_calls.pop(call_id, None)
+            self.greetings_sent.pop(call_id, None)
+            self.playback_generation.pop(call_id, None)
+            self.turn_latency.pop(call_id, None)
+            logger.info(f"Cleaned up session for {call_id}")
+
+    async def _run_gemma_audio_turn_pipeline(self, call_id, input_track, output_track):
+        try:
+            await self.gemma_audio_pipeline.run(
+                call_id=call_id,
+                input_track=input_track,
+                output_track=output_track,
+                playback_generation=self.playback_generation,
+            )
+        except asyncio.CancelledError:
+            logger.info("Gemma audio turn pipeline cancelled for %s", call_id)
+        except Exception as exc:
+            logger.error("Gemma audio turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
+        finally:
+            self.active_calls.pop(call_id, None)
+            self.greetings_sent.pop(call_id, None)
+            self.playback_generation.pop(call_id, None)
+            self.turn_latency.pop(call_id, None)
+            logger.info(f"Cleaned up session for {call_id}")
+
+    async def _run_realtime_turn_pipeline(self, call_id, input_track, output_track):
+        try:
+            await self.realtime_turn_pipeline.run(
+                call_id=call_id,
+                input_track=input_track,
+                output_track=output_track,
+                playback_generation=self.playback_generation,
+            )
+        except asyncio.CancelledError:
+            logger.info("Realtime turn pipeline cancelled for %s", call_id)
+        except Exception as exc:
+            logger.error("Realtime turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
         finally:
             self.active_calls.pop(call_id, None)
             self.greetings_sent.pop(call_id, None)
