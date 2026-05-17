@@ -2,6 +2,11 @@ import logging
 import os
 import asyncio
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Load environment variables first
+load_dotenv()
+
 from fastapi import FastAPI
 from app.services.tts import get_tts_service
 from app.webhooks.whatsapp import router as whatsapp_router
