@@ -227,6 +227,9 @@ class RealtimeTurnPipeline:
         elif REALTIME_TTS_ENGINE == "openai":
             from RealtimeTTS import OpenAIEngine
             engine = OpenAIEngine(voice=REALTIME_TTS_VOICE if REALTIME_TTS_VOICE else "nova")
+        elif REALTIME_TTS_ENGINE == "edge":
+            from RealtimeTTS import EdgeEngine
+            engine = EdgeEngine(voice=REALTIME_TTS_VOICE if REALTIME_TTS_VOICE else "en-US-AriaNeural")
         else:
             raise RuntimeError(f"Unsupported REALTIME_TTS_ENGINE={REALTIME_TTS_ENGINE}")
 
