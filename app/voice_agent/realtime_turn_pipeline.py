@@ -224,23 +224,9 @@ class RealtimeTurnPipeline:
         elif REALTIME_TTS_ENGINE == "coqui":
             from RealtimeTTS import CoquiEngine
             engine = CoquiEngine(voice=REALTIME_TTS_VOICE if REALTIME_TTS_VOICE else "")
-        elif REALTIME_TTS_ENGINE == "omnivoice":
-            from RealtimeTTS import OmniVoiceEngine, OmniVoiceVoice
-            import torch
-            voice = OmniVoiceVoice(
-                name="homelands-si",
-                ref_audio=REALTIME_TTS_REF_AUDIO,
-                ref_text=REALTIME_TTS_REF_TEXT,
-                language=REALTIME_TTS_REF_LANGUAGE,
-            )
-            steps = [int(part.strip()) for part in REALTIME_TTS_NUM_STEPS.split(",") if part.strip()]
-            engine = OmniVoiceEngine(
-                voice=voice,
-                device_map=os.environ.get("REALTIME_TTS_DEVICE", "cuda:0"),
-                dtype=getattr(torch, os.environ.get("REALTIME_TTS_DTYPE", "float16")),
-                num_steps_schedule=steps or [12, 12],
-                debug=os.environ.get("REALTIME_TTS_DEBUG", "false").lower() in {"1", "true", "yes", "on"},
-            )
+        elif REALTIME_TTS_ENGINE == "openai":
+            from RealtimeTTS import OpenAIEngine
+            engine = OpenAIEngine(voice=REALTIME_TTS_VOICE if REALTIME_TTS_VOICE else "nova")
         else:
             raise RuntimeError(f"Unsupported REALTIME_TTS_ENGINE={REALTIME_TTS_ENGINE}")
 
