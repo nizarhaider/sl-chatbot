@@ -11,4 +11,4 @@ export OMNIVOICE_SPEED="${OMNIVOICE_SPEED:-1.18}"
 export VOICE_TTS_MAX_CHARS="${VOICE_TTS_MAX_CHARS:-160}"
 export TTS_CACHE_SIZE="${TTS_CACHE_SIZE:-64}"
 
-exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
+exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
