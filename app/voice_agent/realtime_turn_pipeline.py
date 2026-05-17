@@ -27,11 +27,13 @@ REALTIME_STT_MIN_RECORDING_SECONDS = float(os.environ.get("REALTIME_STT_MIN_RECO
 
 REALTIME_TTS_ENGINE = os.environ.get("REALTIME_TTS_ENGINE", "system").strip().lower()
 REALTIME_TTS_VOICE = os.environ.get("REALTIME_TTS_VOICE", "")
+REALTIME_TTS_REF_AUDIO = os.environ.get("REALTIME_TTS_REF_AUDIO", "app/voices/sample_si_lk.mp3")
 REALTIME_TTS_REF_TEXT = os.environ.get(
     "REALTIME_TTS_REF_TEXT",
     "ආයුබෝවන්, හෝම්ලෑන්ඩ්ස් වෙත ඔබව සාදරයෙන් පිළිගන්නවා.",
 )
 REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
+REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
 REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
 
 
