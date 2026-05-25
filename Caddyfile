@@ -1,6 +1,0 @@
-# This Caddyfile automatically secures your domain with HTTPS (Let's Encrypt)
-# and redirects all HTTP traffic to HTTPS. Let's Encrypt requires a valid domain name.
-
-webhook.hervestudio.lk {
-    reverse_proxy whatsapp-webhook:8000
-}
