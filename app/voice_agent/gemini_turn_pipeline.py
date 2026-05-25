@@ -5,36 +5,33 @@ import time
 import wave
 from io import BytesIO
 
-import httpx
 import numpy as np
-from aiortc import MediaStreamTrack
 from av.audio.resampler import AudioResampler
 from google import genai
 from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-GEMINI_STT_MODEL = os.environ.get("GEMINI_STT_MODEL", "gemini-2.5-flash")
-GEMINI_LLM_MODEL = os.environ.get("GEMINI_LLM_MODEL", "gemini-2.5-flash")
+GEMINI_STT_MODEL = os.environ.get("GEMINI_STT_MODEL", "gemini-2.5-flash-lite")
+GEMINI_LLM_MODEL = os.environ.get("GEMINI_LLM_MODEL", "gemini-2.5-flash-lite")
 GEMINI_THINKING_LEVEL = os.environ.get("GEMINI_THINKING_LEVEL", "").strip().lower()
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").strip().lower()
-LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8081/v1").rstrip("/")
-LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "local")
-LOCAL_LLM_TIMEOUT_SECONDS = float(os.environ.get("LOCAL_LLM_TIMEOUT_SECONDS", "10"))
-LOCAL_LLM_MAX_TOKENS = max(8, int(os.environ.get("LOCAL_LLM_MAX_TOKENS", "40")))
+
 TURN_INPUT_CHUNK_MS = max(20, int(os.environ.get("TURN_INPUT_CHUNK_MS", "40")))
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
 TURN_SILENCE_THRESHOLD = int(os.environ.get("TURN_SILENCE_THRESHOLD", "1000"))
 TURN_END_SILENCE_CHUNKS = max(2, int(os.environ.get("TURN_END_SILENCE_CHUNKS", "20")))
-TURN_MIN_TRANSCRIPT_WORDS = max(1, int(os.environ.get("TURN_MIN_TRANSCRIPT_WORDS", "3")))
-TURN_MIN_TRANSCRIPT_CHARS = max(1, int(os.environ.get("TURN_MIN_TRANSCRIPT_CHARS", "12")))
 TURN_GREETING_DELAY_SECONDS = max(
     0.0,
     float(os.environ.get("TURN_GREETING_DELAY_SECONDS", "1.2")),
 )
+TURN_GREETING_PROTECTION_MAX_SECONDS = max(
+    0.0,
+    float(os.environ.get("TURN_GREETING_PROTECTION_MAX_SECONDS", "1.5")),
+)
+
 GEMINI_TURN_GREETING = os.environ.get(
     "GEMINI_TURN_GREETING",
-    "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English.",
+    "Hello, this is Homelands. Please say Sinhala, Tamil, or English.",
 )
 HOMELANDS_PROPERTIES = (
     "1. Horizon Residencies, Malabe: two-bedroom apartments from LKR 28 million, near schools and supermarkets. "
@@ -44,25 +41,112 @@ HOMELANDS_PROPERTIES = (
 )
 HOMELANDS_SYSTEM_PROMPT = (
     "You are a call center agent for Homelands, a Sri Lankan property business. "
-    "At the beginning of the call, ask the customer exactly: "
-    '"සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழ் பேசுவதற்கு தமிழ் என்று கூறவும். For English, please say English." '
-    "This exact language menu is already spoken as the first assistant message; do not repeat it after the customer answers. "
+    "The first assistant message has already asked the caller to choose Sinhala, Tamil, or English; do not repeat it. "
     "After the customer chooses English, Sinhala, or Tamil, continue naturally in that language. "
     "If they only say a language name, briefly acknowledge and ask what property type, location, or budget they prefer. "
-    "Help with property inquiries using these mock properties only: "
-    f"{HOMELANDS_PROPERTIES} "
+    f"Help with property inquiries using these mock properties only: {HOMELANDS_PROPERTIES} "
     "When the customer asks about properties, recommend a suitable option and tell them you have scheduled "
     "an appointment with a Homelands consultant for tomorrow at 10 AM. "
     "Keep each response brief and natural for a phone call, usually one short sentence."
 )
 
+REALTIME_TTS_REF_AUDIO = os.environ.get(
+    "REALTIME_TTS_REF_AUDIO",
+    "app/voices/sample_si_lk.mp3",
+)
+REALTIME_TTS_REF_TEXT = os.environ.get(
+    "REALTIME_TTS_REF_TEXT",
+    "ආයුබෝවන්, හෝම්ලෑන්ඩ්ස් වෙත ඔබව සාදරයෙන් පිළිගන්නවා.",
+)
+REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
+REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
+REALTIME_TTS_DEVICE = os.environ.get("REALTIME_TTS_DEVICE", "cuda:0")
+REALTIME_TTS_DTYPE = os.environ.get("REALTIME_TTS_DTYPE", "float16")
+REALTIME_TTS_DEBUG = os.environ.get("REALTIME_TTS_DEBUG", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+class RealtimeOmniVoiceTTS:
+    def __init__(self) -> None:
+        self._stream = None
+        self._sample_rate = 24000
+        self._lock = asyncio.Lock()
+
+    async def prewarm(self) -> None:
+        await asyncio.to_thread(self._get_stream)
+
+    async def speak(self, text: str, on_audio_chunk) -> float:
+        async with self._lock:
+            chunks: list[bytes] = []
+
+            def collect_and_forward(chunk: bytes) -> None:
+                chunks.append(chunk)
+                on_audio_chunk(chunk, self._sample_rate)
+
+            started = time.perf_counter()
+            await asyncio.to_thread(self._play, text, collect_and_forward)
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            audio_bytes = sum(len(chunk) for chunk in chunks)
+            audio_seconds = self._audio_duration_seconds(audio_bytes)
+            logger.info(
+                "RealtimeTTS complete: elapsed_ms=%.0f chars=%s audio_ms=%.0f chunks=%s",
+                elapsed_ms,
+                len(text),
+                audio_seconds * 1000.0,
+                len(chunks),
+            )
+            return audio_seconds
+
+    def _play(self, text: str, on_audio_chunk) -> None:
+        stream = self._get_stream()
+        stream.feed(text)
+        stream.play(muted=True, on_audio_chunk=on_audio_chunk)
+
+    def _get_stream(self):
+        if self._stream is not None:
+            return self._stream
+
+        from RealtimeTTS import OmniVoiceEngine, OmniVoiceVoice, TextToAudioStream
+        import torch
+
+        steps = [
+            int(part.strip())
+            for part in REALTIME_TTS_NUM_STEPS.split(",")
+            if part.strip()
+        ]
+        voice = OmniVoiceVoice(
+            name="homelands",
+            ref_audio=REALTIME_TTS_REF_AUDIO,
+            ref_text=REALTIME_TTS_REF_TEXT,
+            language=REALTIME_TTS_REF_LANGUAGE,
+        )
+        engine = OmniVoiceEngine(
+            voice=voice,
+            device_map=REALTIME_TTS_DEVICE,
+            dtype=getattr(torch, REALTIME_TTS_DTYPE),
+            num_steps_schedule=steps or [12, 12],
+            debug=REALTIME_TTS_DEBUG,
+        )
+        _, _, self._sample_rate = engine.get_stream_info()
+        self._stream = TextToAudioStream(engine, muted=True)
+        return self._stream
+
+    def _audio_duration_seconds(self, audio_bytes: int) -> float:
+        if audio_bytes <= 0 or self._sample_rate <= 0:
+            return 0.0
+        return (audio_bytes / 2) / self._sample_rate
+
 
 class GeminiTurnPipeline:
-    def __init__(self, tts_service, prepare_tts_text, interrupt_playback):
-        self.tts_service = tts_service
+    def __init__(self, prepare_tts_text, interrupt_playback, tts: RealtimeOmniVoiceTTS | None = None):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
         self._client = None
+        self._tts = tts or RealtimeOmniVoiceTTS()
 
     @property
     def client(self):
@@ -70,6 +154,9 @@ class GeminiTurnPipeline:
             api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
             self._client = genai.Client(api_key=api_key)
         return self._client
+
+    async def prewarm_tts(self) -> None:
+        await self._tts.prewarm()
 
     async def run(self, call_id, input_track, output_track, playback_generation):
         if TURN_GREETING_DELAY_SECONDS:
@@ -81,11 +168,16 @@ class GeminiTurnPipeline:
             playback_generation,
         )
         if greeting_seconds:
+            protected_seconds = min(
+                greeting_seconds + 0.25,
+                TURN_GREETING_PROTECTION_MAX_SECONDS,
+            )
             logger.info(
-                "Protecting Homelands language prompt for %.2f seconds before VAD",
+                "Protecting Homelands language prompt for %.2f seconds before VAD; audio was %.2f seconds",
+                protected_seconds,
                 greeting_seconds,
             )
-            await self._discard_input_audio(input_track, greeting_seconds + 0.25)
+            await self._discard_input_audio(input_track, protected_seconds)
 
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
@@ -219,27 +311,7 @@ class GeminiTurnPipeline:
         )
         return (response.text or "").strip()
 
-    async def _discard_input_audio(self, input_track, duration_seconds: float) -> None:
-        deadline = time.perf_counter() + max(0.0, duration_seconds)
-        discarded_frames = 0
-        while time.perf_counter() < deadline:
-            try:
-                timeout = max(0.01, deadline - time.perf_counter())
-                await asyncio.wait_for(input_track.recv(), timeout=timeout)
-                discarded_frames += 1
-            except asyncio.TimeoutError:
-                break
-            except Exception as exc:
-                logger.info("Protected prompt input drain ended: %s", exc)
-                break
-        logger.info("Discarded %s inbound frames during protected prompt", discarded_frames)
-
     async def _respond(self, transcript_history: list[tuple[str, str]]) -> str:
-        if LLM_PROVIDER in {"local", "openai", "openai_compatible"}:
-            return await self._respond_local_llm(transcript_history)
-        return await self._respond_gemini(transcript_history)
-
-    async def _respond_gemini(self, transcript_history: list[tuple[str, str]]) -> str:
         conversation_lines = []
         for role, text in transcript_history[-10:]:
             prefix = "Caller" if role == "user" else "Agent"
@@ -265,69 +337,40 @@ class GeminiTurnPipeline:
         )
         return (response.text or "").strip()
 
-    async def _respond_local_llm(self, transcript_history: list[tuple[str, str]]) -> str:
-        messages = [{"role": "system", "content": HOMELANDS_SYSTEM_PROMPT}]
-        for role, text in transcript_history[-10:]:
-            messages.append(
-                {
-                    "role": "assistant" if role == "assistant" else "user",
-                    "content": text,
-                }
-            )
-        messages.append(
-            {
-                "role": "user",
-                "content": "Reply to the latest caller message using the Homelands instructions.",
-            }
-        )
-
-        payload = {
-            "model": LOCAL_LLM_MODEL,
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": max(LOCAL_LLM_MAX_TOKENS, 160),
-            "stream": False,
-        }
-        try:
-            async with httpx.AsyncClient(timeout=LOCAL_LLM_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    f"{LOCAL_LLM_BASE_URL}/chat/completions",
-                    json=payload,
-                )
-                response.raise_for_status()
-        except Exception:
-            logger.exception("Local LLM request failed")
-            return ""
-
-        data = response.json()
-        choices = data.get("choices") or []
-        if not choices:
-            logger.warning("Local LLM returned no choices: %s", data)
-            return ""
-        message = choices[0].get("message") or {}
-        return (message.get("content") or "").strip()
-
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)
         if not prepared:
             return 0.0
 
         generation_id = playback_generation.get(call_id, 0)
-        synthesized = await self.tts_service.synthesize(prepared)
-        if playback_generation.get(call_id, 0) != generation_id:
-            logger.info("Discarding stale turn TTS output for %s", call_id)
-            return 0.0
+        loop = asyncio.get_running_loop()
 
-        if playback_generation.get(call_id, 0) != generation_id:
-            logger.info("Stopping interrupted turn TTS playback for %s", call_id)
-            return 0.0
-        output_track.add_pcm_audio(synthesized.pcm, synthesized.sample_rate)
-        return self._audio_duration_seconds(synthesized.pcm, synthesized.sample_rate)
+        def on_audio_chunk(chunk: bytes, sample_rate: int) -> None:
+            if playback_generation.get(call_id, 0) != generation_id:
+                return
+            loop.call_soon_threadsafe(output_track.add_pcm_audio, chunk, sample_rate)
 
-    def _audio_duration_seconds(self, pcm: bytes, sample_rate: int) -> float:
-        if not pcm or sample_rate <= 0:
+        audio_seconds = await self._tts.speak(prepared, on_audio_chunk)
+        await asyncio.sleep(0)
+        if playback_generation.get(call_id, 0) != generation_id:
+            logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
             return 0.0
-        return (len(pcm) / 2) / sample_rate
+        return audio_seconds
+
+    async def _discard_input_audio(self, input_track, duration_seconds: float) -> None:
+        deadline = time.perf_counter() + max(0.0, duration_seconds)
+        discarded_frames = 0
+        while time.perf_counter() < deadline:
+            try:
+                timeout = max(0.01, deadline - time.perf_counter())
+                await asyncio.wait_for(input_track.recv(), timeout=timeout)
+                discarded_frames += 1
+            except asyncio.TimeoutError:
+                break
+            except Exception as exc:
+                logger.info("Protected prompt input drain ended: %s", exc)
+                break
+        logger.info("Discarded %s inbound frames during protected prompt", discarded_frames)
 
     def _pcm_to_wav(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         buf = BytesIO()

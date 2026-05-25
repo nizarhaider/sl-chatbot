@@ -6,3 +6,8 @@ __pycache__
 *.log
 .DS_Store
 training_custom_tts/datasets/
+tts_debug_latest/
+debug_*.wav
+official_*.wav
+realtimetts_*_smoke.wav
+*.pid

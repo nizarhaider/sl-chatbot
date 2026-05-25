@@ -73,6 +73,7 @@ class WebRTCService:
 
         # Set Remote Description
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")
+        logger.info("Incoming audio SDP for %s: %s", call_id, self._summarize_audio_sdp(sdp_offer))
         await pc.setRemoteDescription(offer)
 
         # Create Answer
@@ -81,6 +82,7 @@ class WebRTCService:
 
         # Refine SDP for WhatsApp compatibility
         refined_sdp = self._refine_sdp(call_id, pc.localDescription.sdp)
+        logger.info("Answer audio SDP for %s: %s", call_id, self._summarize_audio_sdp(refined_sdp))
 
         # Signaling Flow
         session = {"sdp": refined_sdp, "sdp_type": "answer"}
@@ -126,5 +128,20 @@ class WebRTCService:
             refined_lines.append(line)
 
         return "\r\n".join(refined_lines) + "\r\n"
+
+    def _summarize_audio_sdp(self, sdp: str) -> list[str]:
+        audio_lines = []
+        in_audio = False
+        for line in sdp.splitlines():
+            if line.startswith("m="):
+                in_audio = line.startswith("m=audio")
+                if in_audio:
+                    audio_lines.append(line)
+                continue
+            if not in_audio:
+                continue
+            if line.startswith(("a=rtpmap:", "a=fmtp:", "a=ptime:", "a=maxptime:", "a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive")):
+                audio_lines.append(line)
+        return audio_lines
 
 webrtc_service = WebRTCService()
