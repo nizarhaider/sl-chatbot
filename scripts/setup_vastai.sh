@@ -1,35 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup_vastai.sh  —  One-shot setup for a fresh Vast.ai GPU box
-#
-# Usage (run from your LOCAL repo root):
-#   ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
-#
-# Example:
-#   ./scripts/setup_vastai.sh 42609 143.55.45.86
-#
-# What it does:
-#   1. Checks machine basics (GPU, uv, git)
-#   2. Clones the repo on the remote if missing
-#   3. Copies .env to the remote host
-#   4. Installs portaudio19-dev and cloudflared
-#   5. Optionally installs cloudflared tunnel service
-#   6. Runs uv sync
-#   7. Compile-checks all Python modules
-#   8. Starts the webhook in a tmux session
-#   9. Runs a local health check
-#  10. Verifies the public webhook endpoint via Cloudflare
+# setup_vastai.sh — One-shot setup for a fresh Vast.ai GPU box
+# Uses a temporary Cloudflare trycloudflare.com tunnel by default.
 # =============================================================================
 
 set -euo pipefail
 
 SSH_PORT="${1:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 HOST_IP="${2:?Usage: $0 <SSH_PORT> <HOST_IP>}"
+
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
-APP_PORT=8081
-PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-https://webhook.hervestudio.lk/webhook}"
+APP_PORT="${APP_PORT:-8081}"
+
+PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
 USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
 CLOUDFLARED_TUNNEL_TOKEN="${CLOUDFLARED_TUNNEL_TOKEN:-}"
 
@@ -38,11 +23,9 @@ SCP="scp -P ${SSH_PORT} -i ${SSH_KEY}"
 
 log() { echo "▶ $*"; }
 
-# ── 1. Machine check ──────────────────────────────────────────────────────────
 log "Checking machine..."
 $SSH "uname -a && nvidia-smi --query-gpu=name --format=csv,noheader && which uv git python3"
 
-# ── 2. Clone or sync repo ────────────────────────────────────────────────────
 log "Preparing remote repo..."
 $SSH "
   if [ ! -d ${REMOTE_DIR}/.git ]; then
@@ -54,7 +37,6 @@ $SSH "
   mkdir -p ${REMOTE_DIR}/run_logs
 "
 
-# ── 3. Sync local environment ─────────────────────────────────────────────────
 log ".env sync..."
 if [ -f .env ]; then
   $SCP .env ${REMOTE}:${REMOTE_DIR}/
@@ -62,30 +44,22 @@ else
   echo 'WARNING: .env not found locally; skipping .env copy.'
 fi
 
-log "Files synced."
+log "Installing system packages..."
+$SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
-# ── 4. System packages ────────────────────────────────────────────────────────
-log "Installing portaudio19-dev..."
-$SSH "apt-get update -qq && apt-get install -y portaudio19-dev"
-
-# ── 4.1 Install cloudflared ─────────────────────────────────────────────────────
 log "Installing cloudflared..."
-$SSH "apt-get update -qq && apt-get install -y curl gnupg && \
-  curl -L -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && \
+$SSH "curl -L -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && \
   dpkg -i /tmp/cloudflared.deb || apt-get install -f -y && \
   rm -f /tmp/cloudflared.deb"
+
 if [ -n "${CLOUDFLARED_TUNNEL_TOKEN}" ]; then
   log "Installing cloudflared connector service..."
   $SSH "cloudflared service install '${CLOUDFLARED_TUNNEL_TOKEN}' && service cloudflared restart && service cloudflared status"
-else
-  log "CLOUDFLARED_TUNNEL_TOKEN is not set; cloudflared installed but tunnel service is not configured."
 fi
 
-# ── 5. Python deps ────────────────────────────────────────────────────────────
-log "Running uv sync (this takes a few minutes)..."
+log "Running uv sync..."
 $SSH "cd ${REMOTE_DIR} && uv sync"
 
-# ── 6. Compile check ──────────────────────────────────────────────────────────
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
   app/main.py \
@@ -95,11 +69,11 @@ $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
   app/voice_agent/agent.py \
   app/voice_agent/gemini_turn_pipeline.py && echo 'COMPILE OK'"
 
-# ── 7. Start webhook ──────────────────────────────────────────────────────────
 log "Starting webhook in tmux..."
-$SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; tmux new-session -d -s sl-webhook 'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env'"
+$SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
+  tmux new-session -d -s sl-webhook \
+  'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env'"
 
-# ── 8. Health check ───────────────────────────────────────────────────────────
 log "Waiting for server to boot..."
 sleep 10
 
@@ -117,9 +91,7 @@ $SSH "
 
   if ! ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
     echo 'WARNING: port not listening yet'
-    echo 'REMOTE DEBUG: tmux sessions:'
     tmux ls || true
-    echo 'REMOTE DEBUG: recent webhook log:'
     tail -n 40 ${REMOTE_DIR}/run_logs/webhook.log || true
     exit 1
   fi
@@ -129,9 +101,42 @@ $SSH "
   echo ''
 "
 
-# ── 9. Public webhook check ───────────────────────────────────────────────────
+if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
+  log "Starting temporary Cloudflare tunnel..."
+
+  $SSH "
+    tmux kill-session -t sl-tunnel 2>/dev/null || true
+    rm -f /tmp/cloudflared.log
+    tmux new-session -d -s sl-tunnel \
+      'cloudflared tunnel --url http://localhost:${APP_PORT} > /tmp/cloudflared.log 2>&1'
+  "
+
+  sleep 10
+
+  TMP_TUNNEL_URL="$(
+    $SSH "grep -o 'https://[-a-zA-Z0-9]*\.trycloudflare.com' /tmp/cloudflared.log | head -n1" || true
+  )"
+
+  if [ -z "${TMP_TUNNEL_URL}" ]; then
+    echo "ERROR: Failed to obtain temporary Cloudflare tunnel URL."
+    echo "Remote tunnel log:"
+    $SSH "cat /tmp/cloudflared.log || true"
+    exit 1
+  fi
+
+  PUBLIC_WEBHOOK_URL="${TMP_TUNNEL_URL}/webhook"
+  log "Temporary webhook URL: ${PUBLIC_WEBHOOK_URL}"
+fi
+
+if [ -z "${PUBLIC_WEBHOOK_URL}" ]; then
+  echo "ERROR: PUBLIC_WEBHOOK_URL is empty."
+  echo "Set PUBLIC_WEBHOOK_URL or enable USE_TEMP_TUNNEL=true."
+  exit 1
+fi
+
 log "Checking public webhook URL..."
-public_response=$(curl -sS -m 15 "${PUBLIC_WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345" || true)
+public_response="$(curl -sS -m 15 "${PUBLIC_WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345" || true)"
+
 if [ "${public_response}" = "12345" ]; then
   log "Public webhook URL verified: ${PUBLIC_WEBHOOK_URL}"
 else
@@ -143,7 +148,12 @@ fi
 
 log "✅ Setup complete! Webhook running on ${HOST_IP}:${APP_PORT}"
 log ""
+log "Webhook URL:"
+log "  ${PUBLIC_WEBHOOK_URL}"
+log ""
 log "Useful commands:"
 log "  Attach to webhook:  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-webhook'"
+log "  Attach to tunnel:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-tunnel'"
+log "  Watch tunnel log:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f /tmp/cloudflared.log'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"
