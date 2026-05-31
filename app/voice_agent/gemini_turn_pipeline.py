@@ -68,14 +68,9 @@ HOMELANDS_LIVE_SYSTEM_PROMPT = (
     "Keep each response brief, natural, and suitable for a phone call."
 )
 
-REALTIME_TTS_REF_AUDIO = os.environ.get(
-    "REALTIME_TTS_REF_AUDIO",
-    "app/voices/sample_si_lk.mp3",
-)
-REALTIME_TTS_REF_TEXT = os.environ.get(
-    "REALTIME_TTS_REF_TEXT",
-    "ආයුබෝවන්, හෝම්ලෑන්ඩ්ස් වෙත ඔබව සාදරයෙන් පිළිගන්නවා.",
-)
+REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/sin_2241_0914770956.wav"
+REALTIME_TTS_REF_TEXT = "ඔයාගේ නැටුම්වලට මධුරි ඩික්සිත් පරදනවා කියලා විහිළු කරනවා.",
+
 REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
 REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
 REALTIME_TTS_DEVICE = os.environ.get("REALTIME_TTS_DEVICE", "cuda:0")
