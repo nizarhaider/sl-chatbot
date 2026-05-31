@@ -30,6 +30,7 @@ REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT=8081
 PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-https://webhook.hervestudio.lk/webhook}"
+USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
 CLOUDFLARED_TUNNEL_TOKEN="${CLOUDFLARED_TUNNEL_TOKEN:-}"
 
 SSH="ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
@@ -69,6 +70,7 @@ $SSH "apt-get update -qq && apt-get install -y portaudio19-dev"
 
 # ── 4.1 Install cloudflared ─────────────────────────────────────────────────────
 log "Installing cloudflared..."
+$SSH "apt-get update -qq && apt-get install -y cloudflared"
 if [ -n "${CLOUDFLARED_TUNNEL_TOKEN}" ]; then
   log "Installing cloudflared connector service..."
   $SSH "cloudflared service install '${CLOUDFLARED_TUNNEL_TOKEN}' && service cloudflared restart && service cloudflared status"
