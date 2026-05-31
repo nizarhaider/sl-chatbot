@@ -204,9 +204,9 @@ class VoiceAgent:
                 playback_generation=self.playback_generation,
             )
         except asyncio.CancelledError:
-            logger.info("Gemini STT turn pipeline cancelled for %s", call_id)
+            logger.info("Gemini Live turn pipeline cancelled for %s", call_id)
         except Exception as exc:
-            logger.error("Gemini STT turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
+            logger.error("Gemini Live turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
         finally:
             self.active_calls.pop(call_id, None)
             self.playback_generation.pop(call_id, None)

@@ -4,7 +4,6 @@ import logging
 from fastapi import APIRouter, Request, HTTPException, Response, Header, status
 from pydantic import BaseModel
 from app.services.webrtc import webrtc_service
-from app.chat_agent import chat_agent
 from app.services.whatsapp_api import whatsapp_api
 
 logger = logging.getLogger(__name__)
@@ -12,6 +11,11 @@ router = APIRouter()
 
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_verify_token_123")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
+
+try:
+    from app.chat_agent import chat_agent
+except ImportError:
+    chat_agent = None
 
 
 class SendWhatsAppMessageRequest(BaseModel):
@@ -125,6 +129,14 @@ async def send_whatsapp_message(
 
 async def handle_text_message(sender_id: str, text: str):
     try:
+        if chat_agent is None:
+            logger.warning("Text message received for %s but chat agent is not installed", sender_id)
+            await whatsapp_api.send_message(
+                sender_id,
+                "Text chat is not configured on this deployment. Please call us to continue.",
+            )
+            return
+
         result = await chat_agent.process_message(text, sender_id=sender_id)
         response_text = result.reply
         if not response_text:

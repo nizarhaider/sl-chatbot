@@ -6,7 +6,7 @@ The voice stack is intentionally narrow:
 
 ```text
 WhatsApp Cloud webhook -> FastAPI webhook
-WhatsApp WebRTC audio -> Gemini STT -> Gemini LLM -> RealtimeTTS OmniVoice -> WhatsApp WebRTC audio
+WhatsApp WebRTC audio -> Gemini Live session -> text response -> RealtimeTTS OmniVoice -> WhatsApp WebRTC audio
 ```
 
 ## Local Development
@@ -32,9 +32,9 @@ Main files:
 - [app/webhooks/whatsapp.py](/Users/nizar/Documents/Projects/sl_chatbot/app/webhooks/whatsapp.py:1): webhook parsing and dispatch.
 - [app/services/webrtc.py](/Users/nizar/Documents/Projects/sl_chatbot/app/services/webrtc.py:1): WhatsApp SDP/WebRTC handling.
 - [app/voice_agent/agent.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/agent.py:1): call task lifecycle and outbound audio track.
-- [app/voice_agent/gemini_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/gemini_turn_pipeline.py:1): Gemini STT, Gemini LLM, VAD, and RealtimeTTS OmniVoice playback.
+- [app/voice_agent/gemini_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/gemini_turn_pipeline.py:1): Gemini Live session, local VAD, and RealtimeTTS OmniVoice playback.
 
-The pipeline uses simple RMS-based voice activity detection, sends each completed caller utterance to Gemini for transcription, sends the transcript history to the LLM, and streams OmniVoice audio chunks back into the WhatsApp WebRTC output track.
+The pipeline uses simple RMS-based voice activity detection locally, streams caller audio into a single Gemini Live session with explicit activity boundaries, receives text responses from the Live session, and streams OmniVoice audio chunks back into the WhatsApp WebRTC output track.
 
 ## Text Chat Flow
 
@@ -51,8 +51,8 @@ Required:
 
 Voice:
 
-- `GEMINI_STT_MODEL`: defaults to `gemini-2.5-flash-lite`.
-- `GEMINI_LLM_MODEL`: defaults to `gemini-2.5-flash-lite`.
+- `GEMINI_LIVE_MODEL`: defaults to `gemini-live-2.5-flash-preview`.
+- `GEMINI_LIVE_API_VERSION`: defaults to `v1beta`.
 - `REALTIME_TTS_REF_AUDIO`: defaults to `app/voices/sample_si_lk.mp3`.
 - `REALTIME_TTS_REF_TEXT`: reference text for OmniVoice cloning.
 - `REALTIME_TTS_REF_LANGUAGE`: defaults to `si`.
@@ -60,6 +60,8 @@ Voice:
 - `REALTIME_TTS_DTYPE`: defaults to `float16`.
 - `REALTIME_TTS_NUM_STEPS`: defaults to `12,12`.
 - `REALTIME_TTS_PREWARM`: defaults to `true`.
+- `TURN_INPUT_CHUNK_MS`, `TURN_SILENCE_THRESHOLD`, `TURN_END_SILENCE_CHUNKS`: local VAD tuning.
+- `TURN_GREETING_DELAY_SECONDS`, `TURN_GREETING_PROTECTION_MAX_SECONDS`: greeting timing controls.
 - `IMPORTANT_LOG_PATH`: defaults to `run_logs/important.log`.
 
 Text commerce:
@@ -76,4 +78,3 @@ Text commerce:
 ```bash
 uv run pytest -q
 ```
-
