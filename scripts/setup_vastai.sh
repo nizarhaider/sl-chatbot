@@ -69,8 +69,6 @@ $SSH "apt-get update -qq && apt-get install -y portaudio19-dev"
 
 # ── 4.1 Install cloudflared ─────────────────────────────────────────────────────
 log "Installing cloudflared..."
-$SSH "apt-get update -qq && apt-get install -y cloudflared"
-
 if [ -n "${CLOUDFLARED_TUNNEL_TOKEN}" ]; then
   log "Installing cloudflared connector service..."
   $SSH "cloudflared service install '${CLOUDFLARED_TUNNEL_TOKEN}' && service cloudflared restart && service cloudflared status"
@@ -102,7 +100,25 @@ sleep 10
 
 log "Health check..."
 $SSH "
-  ss -ltnp | grep ${APP_PORT} || echo 'WARNING: port not listening yet'
+  attempt=0
+  until [ \$attempt -ge 5 ]; do
+    if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
+      break
+    fi
+    attempt=\$((attempt + 1))
+    echo 'Waiting for port ${APP_PORT} to open... attempt' \$attempt
+    sleep 2
+  done
+
+  if ! ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
+    echo 'WARNING: port not listening yet'
+    echo 'REMOTE DEBUG: tmux sessions:'
+    tmux ls || true
+    echo 'REMOTE DEBUG: recent webhook log:'
+    tail -n 40 ${REMOTE_DIR}/run_logs/webhook.log || true
+    exit 1
+  fi
+
   curl -sS http://127.0.0.1:${APP_PORT}/ && echo ''
   curl -sS 'http://127.0.0.1:${APP_PORT}/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
   echo ''
