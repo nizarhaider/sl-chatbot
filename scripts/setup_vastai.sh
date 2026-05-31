@@ -26,7 +26,7 @@ HOST_IP="${2:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
-APP_PORT=8080
+APP_PORT=8081
 
 SSH="ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
 SCP="scp -P ${SSH_PORT} -i ${SSH_KEY}"
