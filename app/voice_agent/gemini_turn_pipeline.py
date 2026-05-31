@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 GEMINI_LIVE_MODEL = os.environ.get(
     "GEMINI_LIVE_MODEL",
-    "gemini-live-2.5-flash-preview",
+    "gemini-2.5-flash-native-audio-preview-12-2025",
 )
 GEMINI_LIVE_API_VERSION = os.environ.get("GEMINI_LIVE_API_VERSION", "v1beta").strip()
 GEMINI_THINKING_LEVEL = os.environ.get("GEMINI_THINKING_LEVEL", "").strip().lower()
