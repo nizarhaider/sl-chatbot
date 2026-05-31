@@ -10,8 +10,8 @@
 #
 # What it does:
 #   1. Checks machine basics (GPU, uv, git)
-#   2. Clones the repo if not already present
-#   3. Syncs all local source files to the correct paths
+#   2. Clones the repo on the remote if missing
+#   3. Copies .env to the remote host
 #   4. Installs portaudio19-dev
 #   5. Runs uv sync
 #   6. Compile-checks all Python modules
@@ -37,8 +37,8 @@ log() { echo "▶ $*"; }
 log "Checking machine..."
 $SSH "uname -a && nvidia-smi --query-gpu=name --format=csv,noheader && which uv git python3"
 
-# ── 2. Clone repo if missing ──────────────────────────────────────────────────
-log "Cloning repo (if needed)..."
+# ── 2. Clone or sync repo ────────────────────────────────────────────────────
+log "Preparing remote repo..."
 $SSH "
   if [ ! -d ${REMOTE_DIR}/.git ]; then
     mkdir -p /workspace
@@ -46,24 +46,16 @@ $SSH "
   else
     echo 'Repo already exists, skipping clone'
   fi
-  mkdir -p ${REMOTE_DIR}/app/services ${REMOTE_DIR}/scripts ${REMOTE_DIR}/run_logs
+  mkdir -p ${REMOTE_DIR}/run_logs
 "
 
-# ── 3. Sync local files ───────────────────────────────────────────────────────
-log "Syncing source files..."
-
-# Top-level files
-$SCP .env pyproject.toml uv.lock README.md AGENTS.md \
-  ${REMOTE}:${REMOTE_DIR}/
-
-# App subdirectories (each needs its own destination path)
-$SCP app/main.py                          ${REMOTE}:${REMOTE_DIR}/app/main.py
-$SCP app/webhooks/whatsapp.py             ${REMOTE}:${REMOTE_DIR}/app/webhooks/whatsapp.py
-$SCP app/voice_agent/agent.py \
-     app/voice_agent/gemini_turn_pipeline.py \
-                                          ${REMOTE}:${REMOTE_DIR}/app/voice_agent/
-$SCP app/services/webrtc.py \
-     app/services/whatsapp_api.py         ${REMOTE}:${REMOTE_DIR}/app/services/
+# ── 3. Sync local environment ─────────────────────────────────────────────────
+log ".env sync..."
+if [ -f .env ]; then
+  $SCP .env ${REMOTE}:${REMOTE_DIR}/
+else
+  echo 'WARNING: .env not found locally; skipping .env copy.'
+fi
 
 log "Files synced."
 
