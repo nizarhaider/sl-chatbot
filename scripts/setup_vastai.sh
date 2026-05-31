@@ -64,7 +64,6 @@ $SCP app/voice_agent/agent.py \
                                           ${REMOTE}:${REMOTE_DIR}/app/voice_agent/
 $SCP app/services/webrtc.py \
      app/services/whatsapp_api.py         ${REMOTE}:${REMOTE_DIR}/app/services/
-$SCP scripts/start_webhook.sh             ${REMOTE}:${REMOTE_DIR}/scripts/start_webhook.sh
 
 log "Files synced."
 
@@ -88,7 +87,7 @@ $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
 
 # ── 7. Start webhook ──────────────────────────────────────────────────────────
 log "Starting webhook in tmux..."
-$SSH "bash ${REMOTE_DIR}/scripts/start_webhook.sh"
+$SSH "tmux new-session -d -s sl-webhook 'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env'"
 
 # ── 8. Health check ───────────────────────────────────────────────────────────
 log "Waiting for server to boot..."
