@@ -92,7 +92,7 @@ $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
 
 # ── 7. Start webhook ──────────────────────────────────────────────────────────
 log "Starting webhook in tmux..."
-$SSH "tmux new-session -d -s sl-webhook 'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env'"
+$SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; tmux new-session -d -s sl-webhook 'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env'"
 
 # ── 8. Health check ───────────────────────────────────────────────────────────
 log "Waiting for server to boot..."
