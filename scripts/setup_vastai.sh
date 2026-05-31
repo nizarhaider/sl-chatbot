@@ -69,10 +69,7 @@ $SSH "apt-get update -qq && apt-get install -y portaudio19-dev"
 
 # ── 4.1 Install cloudflared ─────────────────────────────────────────────────────
 log "Installing cloudflared..."
-$SSH "mkdir -p --mode=0755 /usr/share/keyrings && \
-  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null && \
-  echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list && \
-  apt-get update -qq && apt-get install -y cloudflared"
+$SSH "apt-get update -qq && apt-get install -y cloudflared"
 
 if [ -n "${CLOUDFLARED_TUNNEL_TOKEN}" ]; then
   log "Installing cloudflared connector service..."
