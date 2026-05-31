@@ -1,26 +1,34 @@
 import asyncio
+import io
 import logging
 import os
 import time
+import wave
 
 import numpy as np
 from av.audio.resampler import AudioResampler
 from google import genai
 from google.genai import types
+from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-GEMINI_LIVE_MODEL = os.environ.get(
-    "GEMINI_LIVE_MODEL",
-    "gemini-2.5-flash-native-audio-preview-12-2025",
-)
-GEMINI_LIVE_API_VERSION = os.environ.get("GEMINI_LIVE_API_VERSION", "v1beta").strip()
-GEMINI_THINKING_LEVEL = os.environ.get("GEMINI_THINKING_LEVEL", "").strip().lower()
+GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+GEMINI_API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta").strip()
+
+OPENAI_STT_MODEL = os.environ.get("OPENAI_STT_MODEL", "gpt-4o-transcribe")
+OPENAI_STT_LANGUAGE = os.environ.get("OPENAI_STT_LANGUAGE", "").strip() or None
+OPENAI_STT_PROMPT = os.environ.get(
+    "OPENAI_STT_PROMPT",
+    "The caller may speak English, Sinhala, or Tamil. Homelands Properties real estate call.",
+).strip()
 
 TURN_INPUT_CHUNK_MS = max(20, int(os.environ.get("TURN_INPUT_CHUNK_MS", "40")))
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
 TURN_SILENCE_THRESHOLD = int(os.environ.get("TURN_SILENCE_THRESHOLD", "1000"))
 TURN_END_SILENCE_CHUNKS = max(2, int(os.environ.get("TURN_END_SILENCE_CHUNKS", "50")))
+TURN_MIN_AUDIO_MS = max(200, int(os.environ.get("TURN_MIN_AUDIO_MS", "500")))
+
 TURN_GREETING_DELAY_SECONDS = max(
     0.0,
     float(os.environ.get("TURN_GREETING_DELAY_SECONDS", "1.2")),
@@ -38,12 +46,14 @@ GEMINI_TURN_GREETING = os.environ.get(
         "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
     ),
 )
+
 HOMELANDS_PROPERTIES = (
     "1. Horizon Residencies, Malabe: two-bedroom apartments from LKR 28 million, near schools and supermarkets. "
     "2. Lakeview Villas, Piliyandala: three-bedroom villas from LKR 48 million, garden, parking, and lake access. "
     "3. Green Acres, Kurunegala: ten-perch residential land from LKR 9.5 million, clear title, bank loans supported. "
     "4. Ocean Breeze Apartments, Dehiwala: one and two-bedroom units from LKR 32 million, sea view, ready soon."
 )
+
 HOMELANDS_LIVE_SYSTEM_PROMPT = (
     "You are a friendly assistant working for Homelands Properties. "
     "Help the customer with their property-related queries. "
@@ -149,7 +159,9 @@ class RealtimeOmniVoiceTTS:
                             torch.cuda.synchronize()
 
                     waveform = _normalize_omnivoice_waveform(audio)
-                    audio_int16 = (np.clip(waveform, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                    audio_int16 = (
+                        np.clip(waveform, -1.0, 1.0) * 32767
+                    ).astype(np.int16).tobytes()
                     self.queue.put(audio_int16)
                     return True
                 except Exception:
@@ -161,12 +173,14 @@ class RealtimeOmniVoiceTTS:
             for part in REALTIME_TTS_NUM_STEPS.split(",")
             if part.strip()
         ]
+
         voice = OmniVoiceVoice(
             name="homelands",
             ref_audio=REALTIME_TTS_REF_AUDIO,
             ref_text=REALTIME_TTS_REF_TEXT,
             language=REALTIME_TTS_REF_LANGUAGE,
         )
+
         engine = PatchedOmniVoiceEngine(
             voice=voice,
             device_map=REALTIME_TTS_DEVICE,
@@ -174,6 +188,7 @@ class RealtimeOmniVoiceTTS:
             num_steps_schedule=steps or [12, 12],
             debug=REALTIME_TTS_DEBUG,
         )
+
         _, _, self._sample_rate = engine.get_stream_info()
         self._stream = TextToAudioStream(engine, muted=True)
         return self._stream
@@ -198,24 +213,42 @@ def _normalize_omnivoice_waveform(audio) -> np.ndarray:
     return waveform.astype(np.float32, copy=False)
 
 
+def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 16000) -> bytes:
+    wav_io = io.BytesIO()
+    with wave.open(wav_io, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm)
+    return wav_io.getvalue()
+
+
 class GeminiTurnPipeline:
-    def __init__(self, prepare_tts_text, interrupt_playback, tts: RealtimeOmniVoiceTTS | None = None):
+    def __init__(
+        self,
+        prepare_tts_text,
+        interrupt_playback,
+        tts: RealtimeOmniVoiceTTS | None = None,
+    ):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
-        self._client = None
+        self._gemini_client = None
+        self._openai_client = None
         self._tts = tts or RealtimeOmniVoiceTTS()
 
     @property
-    def client(self):
-        if self._client is None:
+    def gemini_client(self):
+        if self._gemini_client is None:
             api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-            http_options = (
-                {"api_version": GEMINI_LIVE_API_VERSION}
-                if GEMINI_LIVE_API_VERSION
-                else None
-            )
-            self._client = genai.Client(api_key=api_key, http_options=http_options)
-        return self._client
+            http_options = {"api_version": GEMINI_API_VERSION} if GEMINI_API_VERSION else None
+            self._gemini_client = genai.Client(api_key=api_key, http_options=http_options)
+        return self._gemini_client
+
+    @property
+    def openai_client(self):
+        if self._openai_client is None:
+            self._openai_client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        return self._openai_client
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -223,6 +256,7 @@ class GeminiTurnPipeline:
     async def run(self, call_id, input_track, output_track, playback_generation):
         if TURN_GREETING_DELAY_SECONDS:
             await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
+
         greeting_started_at = time.perf_counter()
         greeting_seconds = await self._speak(
             call_id,
@@ -230,13 +264,14 @@ class GeminiTurnPipeline:
             output_track,
             playback_generation,
         )
-        greeting_elapsed_ms = (time.perf_counter() - greeting_started_at) * 1000.0
+
         logger.info(
             "Greeting timings for %s: tts_wall=%.0f ms tts_audio=%.0f ms",
             call_id,
-            greeting_elapsed_ms,
+            (time.perf_counter() - greeting_started_at) * 1000.0,
             greeting_seconds * 1000.0,
         )
+
         if greeting_seconds:
             protected_seconds = min(
                 greeting_seconds + 0.25,
@@ -249,53 +284,39 @@ class GeminiTurnPipeline:
             )
             await self._discard_input_audio(input_track, protected_seconds)
 
-        config = self._live_config()
-        async with self.client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=config) as session:
-            await self._run_live_session(
-                call_id=call_id,
-                input_track=input_track,
-                output_track=output_track,
-                playback_generation=playback_generation,
-                session=session,
-            )
-
-    def _live_config(self) -> types.LiveConnectConfig:
-        return types.LiveConnectConfig(
-            response_modalities=[types.Modality.TEXT],
-            system_instruction=HOMELANDS_LIVE_SYSTEM_PROMPT,
-            temperature=0,
-            max_output_tokens=160,
-            realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(disabled=True),
-            ),
+        await self._run_turn_loop(
+            call_id=call_id,
+            input_track=input_track,
+            output_track=output_track,
+            playback_generation=playback_generation,
         )
 
-    async def _run_live_session(
+    async def _run_turn_loop(
         self,
         call_id,
         input_track,
         output_track,
         playback_generation,
-        session,
     ) -> None:
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
+        utterance_buffer = bytearray()
         silence_chunks = 0
         is_speaking = False
         turn_started_at = None
-        utterance_audio_bytes = 0
 
         while True:
             try:
                 frame = await input_track.recv()
             except Exception as exc:
-                logger.info("Gemini live input ended for %s: %s", call_id, exc)
+                logger.info("Input ended for %s: %s", call_id, exc)
                 return
 
             for resampled in resampler.resample(frame):
                 audio_bytes = resampled.to_ndarray().tobytes()
                 if not audio_bytes:
                     continue
+
                 chunk_buffer.extend(audio_bytes)
 
                 while len(chunk_buffer) >= TURN_INPUT_CHUNK_SIZE:
@@ -303,131 +324,140 @@ class GeminiTurnPipeline:
                     del chunk_buffer[:TURN_INPUT_CHUNK_SIZE]
 
                     audio_np = np.frombuffer(chunk, dtype=np.int16)
-                    rms = np.sqrt(np.mean(audio_np.astype(np.float64) ** 2))
+                    rms = float(np.sqrt(np.mean(audio_np.astype(np.float64) ** 2)))
 
                     if rms > TURN_SILENCE_THRESHOLD:
                         if not is_speaking:
                             logger.info("Turn VAD: Speech started")
                             is_speaking = True
                             turn_started_at = time.perf_counter()
-                            utterance_audio_bytes = 0
+                            utterance_buffer.clear()
                             silence_chunks = 0
                             self._interrupt_playback(call_id, output_track)
-                            await session.send_realtime_input(activity_start=types.ActivityStart())
 
-                        utterance_audio_bytes += len(chunk)
-                        await session.send_realtime_input(
-                            audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000"),
-                        )
+                        utterance_buffer.extend(chunk)
                         silence_chunks = 0
+
                     elif is_speaking:
+                        utterance_buffer.extend(chunk)
                         silence_chunks += 1
+
                         if silence_chunks >= TURN_END_SILENCE_CHUNKS:
                             logger.info("Turn VAD: Speech ended")
                             is_speaking = False
                             silence_chunks = 0
                             turn_end_at = time.perf_counter()
-                            await session.send_realtime_input(activity_end=types.ActivityEnd())
-                            await self._handle_live_turn(
+
+                            utterance_pcm = bytes(utterance_buffer)
+                            utterance_buffer.clear()
+
+                            await self._handle_turn(
                                 call_id=call_id,
                                 output_track=output_track,
                                 playback_generation=playback_generation,
-                                session=session,
                                 turn_started_at=turn_started_at,
                                 turn_end_at=turn_end_at,
-                                utterance_audio_bytes=utterance_audio_bytes,
+                                utterance_pcm=utterance_pcm,
                             )
-                            turn_started_at = None
-                            utterance_audio_bytes = 0
 
-    async def _handle_live_turn(
+                            turn_started_at = None
+
+    async def _handle_turn(
         self,
         call_id,
         output_track,
         playback_generation,
-        session,
         turn_started_at: float | None,
         turn_end_at: float,
-        utterance_audio_bytes: int,
+        utterance_pcm: bytes,
     ) -> None:
-        transcript_text = ""
-        transcript_logged_at = None
-        response_parts: list[str] = []
-        response_first_at = None
-        receive_started_at = time.perf_counter()
-
-        async for message in session.receive():
-            server_content = message.server_content
-            if server_content and server_content.input_transcription:
-                text = (server_content.input_transcription.text or "").strip()
-                if text:
-                    transcript_text = text
-                    if transcript_logged_at is None:
-                        transcript_logged_at = time.perf_counter()
-
-            text = message.text or ""
-            if text:
-                response_parts.append(text)
-                if response_first_at is None:
-                    response_first_at = time.perf_counter()
-
-        if not transcript_text:
-            transcript_text = f"<no transcription; audio_bytes={utterance_audio_bytes}>"
-            transcript_logged_at = transcript_logged_at or time.perf_counter()
-        transcript_ms = (transcript_logged_at - turn_end_at) * 1000.0
-        logger.info("Turn transcript for %s in %.0f ms: %s", call_id, transcript_ms, transcript_text)
-
-        response_text = "".join(response_parts).strip()
-        if not response_text:
-            logger.info(
-                "Gemini live returned empty response for %s in %.0f ms",
-                call_id,
-                (time.perf_counter() - receive_started_at) * 1000.0,
-            )
+        audio_ms = (len(utterance_pcm) / 2) / 16000 * 1000.0
+        if audio_ms < TURN_MIN_AUDIO_MS:
+            logger.info("Skipping short utterance for %s: %.0f ms", call_id, audio_ms)
             return
 
-        response_first_at = response_first_at or time.perf_counter()
-        llm_ms = (response_first_at - (transcript_logged_at or turn_end_at)) * 1000.0
+        stt_started_at = time.perf_counter()
+        transcript_text = await self._transcribe_pcm16(utterance_pcm)
+        transcript_ms = (time.perf_counter() - stt_started_at) * 1000.0
+
+        if not transcript_text:
+            logger.info("Empty transcript for %s in %.0f ms", call_id, transcript_ms)
+            return
+
+        logger.info(
+            "Turn transcript for %s in %.0f ms: %s",
+            call_id,
+            transcript_ms,
+            transcript_text,
+        )
+
+        llm_started_at = time.perf_counter()
+        response_text = await self._generate_response(transcript_text)
+        llm_ms = (time.perf_counter() - llm_started_at) * 1000.0
+
+        if not response_text:
+            logger.info("Empty Gemini response for %s in %.0f ms", call_id, llm_ms)
+            return
+
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
 
         tts_started_at = time.perf_counter()
-        tts_audio_seconds = await self._speak(call_id, response_text, output_track, playback_generation)
+        tts_audio_seconds = await self._speak(
+            call_id,
+            response_text,
+            output_track,
+            playback_generation,
+        )
         tts_ms = (time.perf_counter() - tts_started_at) * 1000.0
 
         after_vad_ms = (time.perf_counter() - turn_end_at) * 1000.0
         total_turn_ms = (
             (time.perf_counter() - turn_started_at) * 1000.0
             if turn_started_at is not None
-            else None
+            else after_vad_ms
         )
-        if total_turn_ms is None:
-            logger.info(
-                "Turn timings for %s: post-VAD=%.0f ms stt=%.0f ms llm=%.0f ms tts=%.0f ms",
-                call_id,
-                after_vad_ms,
-                transcript_ms,
-                llm_ms,
-                tts_ms,
-            )
-        else:
-            logger.info(
-                "Turn timings for %s: total=%.0f ms post-VAD=%.0f ms stt=%.0f ms llm=%.0f ms tts=%.0f ms",
-                call_id,
-                total_turn_ms,
-                after_vad_ms,
-                transcript_ms,
-                llm_ms,
-                tts_ms,
-            )
+
         logger.info(
-            "Turn stages for %s: stt=%.0f ms llm=%.0f ms tts_wall=%.0f ms tts_audio=%.0f ms total=%.0f ms",
+            "Turn stages for %s: stt=%.0f ms llm=%.0f ms tts_wall=%.0f ms tts_audio=%.0f ms post_vad=%.0f ms total=%.0f ms",
             call_id,
             transcript_ms,
             llm_ms,
             tts_ms,
             tts_audio_seconds * 1000.0,
-            total_turn_ms if total_turn_ms is not None else after_vad_ms,
+            after_vad_ms,
+            total_turn_ms,
         )
+
+    async def _transcribe_pcm16(self, pcm: bytes) -> str:
+        wav_bytes = _pcm16_to_wav_bytes(pcm, sample_rate=16000)
+        audio_file = io.BytesIO(wav_bytes)
+        audio_file.name = "utterance.wav"
+
+        kwargs = {
+            "model": OPENAI_STT_MODEL,
+            "file": audio_file,
+        }
+
+        if OPENAI_STT_LANGUAGE:
+            kwargs["language"] = OPENAI_STT_LANGUAGE
+
+        if OPENAI_STT_PROMPT:
+            kwargs["prompt"] = OPENAI_STT_PROMPT
+
+        result = await self.openai_client.audio.transcriptions.create(**kwargs)
+        return (getattr(result, "text", None) or "").strip()
+
+    async def _generate_response(self, transcript_text: str) -> str:
+        response = await self.gemini_client.aio.models.generate_content(
+            model=GEMINI_TEXT_MODEL,
+            contents=transcript_text,
+            config=types.GenerateContentConfig(
+                system_instruction=HOMELANDS_LIVE_SYSTEM_PROMPT,
+                temperature=0,
+                max_output_tokens=160,
+            ),
+        )
+        return (response.text or "").strip()
 
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)
@@ -444,14 +474,17 @@ class GeminiTurnPipeline:
 
         audio_seconds = await self._tts.speak(prepared, on_audio_chunk)
         await asyncio.sleep(0)
+
         if playback_generation.get(call_id, 0) != generation_id:
             logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
             return 0.0
+
         return audio_seconds
 
     async def _discard_input_audio(self, input_track, duration_seconds: float) -> None:
         deadline = time.perf_counter() + max(0.0, duration_seconds)
         discarded_frames = 0
+
         while time.perf_counter() < deadline:
             try:
                 timeout = max(0.01, deadline - time.perf_counter())
@@ -462,4 +495,5 @@ class GeminiTurnPipeline:
             except Exception as exc:
                 logger.info("Protected prompt input drain ended: %s", exc)
                 break
+
         logger.info("Discarded %s inbound frames during protected prompt", discarded_frames)
