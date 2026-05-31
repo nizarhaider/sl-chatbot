@@ -134,17 +134,23 @@ if [ -z "${PUBLIC_WEBHOOK_URL}" ]; then
   exit 1
 fi
 
-log "Checking public webhook URL..."
-public_response="$(curl -sS -m 15 "${PUBLIC_WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345" || true)"
+# ── Wait for WhatsApp verification ──────────────────────────────────────────
+log "Waiting for WhatsApp webhook verification..."
+log "Use this callback URL in WhatsApp:"
+log "  ${PUBLIC_WEBHOOK_URL}"
+log ""
 
-if [ "${public_response}" = "12345" ]; then
-  log "Public webhook URL verified: ${PUBLIC_WEBHOOK_URL}"
-else
-  echo "WARNING: public webhook URL did not return expected challenge."
-  echo "URL: ${PUBLIC_WEBHOOK_URL}"
-  echo "Response: ${public_response}"
-  exit 1
-fi
+while true; do
+  public_response="$(curl -sS -m 15 "${PUBLIC_WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345" || true)"
+
+  if [ "${public_response}" = "12345" ]; then
+    log "✅ WhatsApp webhook verification is working: ${PUBLIC_WEBHOOK_URL}"
+    break
+  fi
+
+  echo "Waiting for verification to work... response: ${public_response:-<empty>}"
+  sleep 5
+done
 
 log "✅ Setup complete! Webhook running on ${HOST_IP}:${APP_PORT}"
 log ""
