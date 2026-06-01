@@ -60,6 +60,11 @@ fi
 log "Running uv sync..."
 $SSH "cd ${REMOTE_DIR} && uv sync"
 
+log "Ensuring OpenAI dependency is installed..."
+$SSH "cd ${REMOTE_DIR} && .venv/bin/python - <<'PY' || uv add openai
+import openai
+PY"
+
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
   app/main.py \
@@ -71,8 +76,9 @@ $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
 
 log "Starting webhook in tmux..."
 $SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
+  mkdir -p ${REMOTE_DIR}/run_logs; \
   tmux new-session -d -s sl-webhook \
-  'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env'"
+  'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env > run_logs/webhook.log 2>&1'"
 
 log "Waiting for server to boot..."
 sleep 10
@@ -90,9 +96,16 @@ $SSH "
   done
 
   if ! ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
-    echo 'WARNING: port not listening yet'
+    echo 'ERROR: port ${APP_PORT} is not listening.'
+    echo ''
+    echo 'tmux sessions:'
     tmux ls || true
-    tail -n 40 ${REMOTE_DIR}/run_logs/webhook.log || true
+    echo ''
+    echo 'sl-webhook pane:'
+    tmux capture-pane -t sl-webhook -p 2>/dev/null | tail -n 80 || true
+    echo ''
+    echo 'webhook.log:'
+    tail -n 120 ${REMOTE_DIR}/run_logs/webhook.log || true
     exit 1
   fi
 
@@ -134,7 +147,6 @@ if [ -z "${PUBLIC_WEBHOOK_URL}" ]; then
   exit 1
 fi
 
-# ── Wait for WhatsApp verification ──────────────────────────────────────────
 log "Waiting for WhatsApp webhook verification..."
 log "Use this callback URL in WhatsApp:"
 log "  ${PUBLIC_WEBHOOK_URL}"
