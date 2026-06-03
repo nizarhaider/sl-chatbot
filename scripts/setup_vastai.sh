@@ -16,7 +16,6 @@ APP_PORT="${APP_PORT:-8081}"
 
 PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
 USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
-CLOUDFLARED_TUNNEL_TOKEN="${CLOUDFLARED_TUNNEL_TOKEN:-}"
 
 SSH="ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
 SCP="scp -P ${SSH_PORT} -i ${SSH_KEY}"
@@ -47,15 +46,15 @@ fi
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
-log "Installing cloudflared..."
-$SSH "curl -L -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && \
-  dpkg -i /tmp/cloudflared.deb || apt-get install -f -y && \
-  rm -f /tmp/cloudflared.deb"
-
-if [ -n "${CLOUDFLARED_TUNNEL_TOKEN}" ]; then
-  log "Installing cloudflared connector service..."
-  $SSH "cloudflared service install '${CLOUDFLARED_TUNNEL_TOKEN}' && service cloudflared restart && service cloudflared status"
-fi
+log "Installing ngrok..."
+# Download and install ngrok (stable) on remote host if not present
+$SSH "if ! command -v ngrok >/dev/null 2>&1; then \
+    curl -sSLo /tmp/ngrok.tgz https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.tgz && \
+    tar -xzf /tmp/ngrok.tgz -C /tmp && \
+    mv /tmp/ngrok /usr/local/bin/ngrok && \
+    chmod +x /usr/local/bin/ngrok && \
+    rm -f /tmp/ngrok.tgz; \
+  else echo 'ngrok already installed'; fi"
 
 log "Running uv sync..."
 $SSH "cd ${REMOTE_DIR} && uv sync"
@@ -115,28 +114,29 @@ $SSH "
 "
 
 if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
-  log "Starting temporary Cloudflare tunnel..."
+  log "Starting temporary ngrok tunnel..."
 
   $SSH "
     tmux kill-session -t sl-tunnel 2>/dev/null || true
-    rm -f /tmp/cloudflared.log
+    rm -f /tmp/ngrok.log || true
     tmux new-session -d -s sl-tunnel \
-      'cloudflared tunnel --url http://localhost:${APP_PORT} > /tmp/cloudflared.log 2>&1'
+      'ngrok http ${APP_PORT} --log=stdout > /tmp/ngrok.log 2>&1'
   "
 
-  sleep 10
+  sleep 5
 
-  TMP_TUNNEL_URL="$(
-    $SSH "grep -o 'https://[-a-zA-Z0-9]*\.trycloudflare.com' /tmp/cloudflared.log | head -n1" || true
+  TMP_TUNNEL_URL="$ (
+    $SSH "curl -sS http://127.0.0.1:4040/api/tunnels | python3 -c 'import sys,json;obj=json.load(sys.stdin);print(obj.get(\"tunnels\")[0].get(\"public_url\"))' || true"
   )"
 
   if [ -z "${TMP_TUNNEL_URL}" ]; then
-    echo "ERROR: Failed to obtain temporary Cloudflare tunnel URL."
+    echo "ERROR: Failed to obtain temporary ngrok tunnel URL."
     echo "Remote tunnel log:"
-    $SSH "cat /tmp/cloudflared.log || true"
+    $SSH "cat /tmp/ngrok.log || true"
     exit 1
   fi
 
+  # ngrok returns https://something.ngrok.io — use that plus /webhook
   PUBLIC_WEBHOOK_URL="${TMP_TUNNEL_URL}/webhook"
   log "Temporary webhook URL: ${PUBLIC_WEBHOOK_URL}"
 fi
@@ -172,6 +172,6 @@ log ""
 log "Useful commands:"
 log "  Attach to webhook:  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-webhook'"
 log "  Attach to tunnel:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-tunnel'"
-log "  Watch tunnel log:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f /tmp/cloudflared.log'"
+ log "  Watch tunnel log:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f /tmp/ngrok.log'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"

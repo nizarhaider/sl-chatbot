@@ -18,6 +18,12 @@ bash scripts/run_local_host.sh
 
 The app listens on `http://localhost:8000` by default.
 
+## Ngrok temporary tunnel
+
+When you need a temporary public URL for WhatsApp webhook verification (for example during remote setup), the `scripts/setup_vastai.sh` helper can start an `ngrok` tunnel on the remote host and print the public `https://*.ngrok.io` callback URL. Set `USE_TEMP_TUNNEL=true` (default) to enable this behavior.
+
+Use the printed URL plus `/webhook` as the webhook callback in the WhatsApp dashboard for verification.
+
 ## Webhook Endpoints
 
 - `GET /webhook`: Meta webhook verification.
