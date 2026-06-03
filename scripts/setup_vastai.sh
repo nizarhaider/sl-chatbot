@@ -8,7 +8,7 @@ set -euo pipefail
 SSH_PORT="${1:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 HOST_IP="${2:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 
-if [ -f /.env ]; then
+if [ -f .env ]; then
   # shellcheck source=/dev/null
   set -a
   source .env
