@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — One-shot setup for a fresh Vast.ai GPU box
-# Uses a temporary Cloudflare trycloudflare.com tunnel by default.
 # =============================================================================
 
 set -euo pipefail
 
 SSH_PORT="${1:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 HOST_IP="${2:?Usage: $0 <SSH_PORT> <HOST_IP>}"
+
+if [ -f .env ]; then
+  # shellcheck source=/dev/null
+  set -a
+  source .env
+  set +a
+fi
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
