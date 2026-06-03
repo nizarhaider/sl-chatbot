@@ -19,7 +19,7 @@ dependencies = [
     "omnivoice>=0.1.5",
     "torchaudio>=2.5.1,<2.6",
     "torch>=2.5.1,<2.6",
-    "openai"
+    "openai-whisper>=20250101"
 ]
 
 [dependency-groups]

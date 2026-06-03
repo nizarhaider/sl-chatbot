@@ -6,22 +6,18 @@ import time
 import wave
 
 import numpy as np
+import whisper
 from av.audio.resampler import AudioResampler
 from google import genai
 from google.genai import types
-from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
 GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
 GEMINI_API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta").strip()
 
-OPENAI_STT_MODEL = os.environ.get("OPENAI_STT_MODEL", "gpt-4o-transcribe")
-OPENAI_STT_LANGUAGE = os.environ.get("OPENAI_STT_LANGUAGE", "").strip() or None
-OPENAI_STT_PROMPT = os.environ.get(
-    "OPENAI_STT_PROMPT",
-    "The caller may speak English, Sinhala, or Tamil. Homelands Properties real estate call.",
-).strip()
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "turbo")
+WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 
 TURN_INPUT_CHUNK_MS = max(20, int(os.environ.get("TURN_INPUT_CHUNK_MS", "40")))
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
@@ -228,7 +224,7 @@ class GeminiTurnPipeline:
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
         self._gemini_client = None
-        self._openai_client = None
+        self._whisper_model = None
         self._tts = tts or RealtimeOmniVoiceTTS()
 
     @property
@@ -240,10 +236,11 @@ class GeminiTurnPipeline:
         return self._gemini_client
 
     @property
-    def openai_client(self):
-        if self._openai_client is None:
-            self._openai_client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        return self._openai_client
+    def whisper_model(self):
+        if self._whisper_model is None:
+            logger.info("Loading Whisper model: %s (device: %s)", WHISPER_MODEL, WHISPER_DEVICE)
+            self._whisper_model = whisper.load_model(WHISPER_MODEL, device=WHISPER_DEVICE)
+        return self._whisper_model
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -424,23 +421,25 @@ class GeminiTurnPipeline:
         )
 
     async def _transcribe_pcm16(self, pcm: bytes) -> str:
-        wav_bytes = _pcm16_to_wav_bytes(pcm, sample_rate=16000)
-        audio_file = io.BytesIO(wav_bytes)
-        audio_file.name = "utterance.wav"
-
-        kwargs = {
-            "model": OPENAI_STT_MODEL,
-            "file": audio_file,
-        }
-
-        if OPENAI_STT_LANGUAGE:
-            kwargs["language"] = OPENAI_STT_LANGUAGE
-
-        if OPENAI_STT_PROMPT:
-            kwargs["prompt"] = OPENAI_STT_PROMPT
-
-        result = await self.openai_client.audio.transcriptions.create(**kwargs)
-        return (getattr(result, "text", None) or "").strip()
+        """Transcribe 16kHz PCM audio using local Whisper model."""
+        # Convert PCM bytes to numpy array
+        pcm_array = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        
+        # Run Whisper transcription in thread to avoid blocking
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self.whisper_model.transcribe(
+                pcm_array,
+                language=None,  # Auto-detect language
+                fp16=True,
+            ),
+        )
+        
+        text = result.get("text", "").strip()
+        if not text:
+            logger.warning("Whisper returned empty transcription")
+        return text
 
     async def _generate_response(self, transcript_text: str) -> str:
         response = await self.gemini_client.aio.models.generate_content(

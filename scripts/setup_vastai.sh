@@ -86,9 +86,9 @@ sleep 3
 log "Running uv sync..."
 $SSH "cd ${REMOTE_DIR} && uv sync"
 
-log "Ensuring OpenAI dependency is installed..."
-$SSH "cd ${REMOTE_DIR} && .venv/bin/python - <<'PY' || uv add openai
-import openai
+log "Ensuring Whisper dependency is installed..."
+$SSH "cd ${REMOTE_DIR} && .venv/bin/python - <<'PY' || uv add openai-whisper
+import whisper
 PY"
 
 log "Compile-checking Python modules..."
