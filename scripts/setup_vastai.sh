@@ -124,7 +124,14 @@ $SSH "
       break
     fi
     attempt=\$((attempt + 1))
-    echo 'Waiting for port ${APP_PORT} to open... attempt' \$attempt '(/workspace/sl-chatbot startup may still be completing)' 
+    echo 'Waiting for port ${APP_PORT} to open... attempt' \$attempt '(/workspace/sl-chatbot startup may still be completing)'
+    if [ -f ${REMOTE_DIR}/run_logs/webhook.log ]; then
+      echo '--- latest webhook startup log ---'
+      tail -n 8 ${REMOTE_DIR}/run_logs/webhook.log | sed 's/^/    /'
+      if tail -n 20 ${REMOTE_DIR}/run_logs/webhook.log | grep -qE 'Fetching [0-9]+ files|Downloading|download|Prewarming|Initializing NLTK Tokenizer|model'; then
+        echo '  [progress] model download or startup prewarm activity detected'
+      fi
+    fi
     sleep 2
   done
 
