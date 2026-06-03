@@ -13,6 +13,7 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
+NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN:-}"
 
 PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
 USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
@@ -48,13 +49,34 @@ $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
 log "Installing ngrok..."
 # Download and install ngrok (stable) on remote host if not present
+if [ -z "${NGROK_AUTH_TOKEN}" ]; then
+  echo 'WARNING: NGROK_AUTH_TOKEN not set; ngrok will run in demo mode (limited tunnel time).'
+fi
 $SSH "if ! command -v ngrok >/dev/null 2>&1; then \
-    curl -sSLo /tmp/ngrok.tgz https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.tgz && \
-    tar -xzf /tmp/ngrok.tgz -C /tmp && \
-    mv /tmp/ngrok /usr/local/bin/ngrok && \
-    chmod +x /usr/local/bin/ngrok && \
-    rm -f /tmp/ngrok.tgz; \
+    curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
+  && echo 'deb https://ngrok-agent.s3.amazonaws.com bookworm main' \
+  | tee /etc/apt/sources.list.d/ngrok.list \
+  && apt-get update -qq \
+  && apt-get install -y ngrok; \
   else echo 'ngrok already installed'; fi"
+
+if [ -n "${NGROK_AUTH_TOKEN}" ]; then
+  log "Configuring ngrok auth token on remote..."
+  $SSH "ngrok config add-authtoken '${NGROK_AUTH_TOKEN}'"
+fi
+
+log "Setting up ngrok service..."
+# Create local ngrok.yml with substituted APP_PORT
+LOCAL_NGROK_YML="/tmp/ngrok_${APP_PORT}.yml"
+sed "s/APP_PORT_PLACEHOLDER/${APP_PORT}/g" ngrok.yml > "${LOCAL_NGROK_YML}"
+$SCP "${LOCAL_NGROK_YML}" ${REMOTE}:${REMOTE_DIR}/ngrok.yml
+rm -f "${LOCAL_NGROK_YML}"
+
+log "Installing and starting ngrok service..."
+$SSH "cd ${REMOTE_DIR} && ngrok service install --config ./ngrok.yml && ngrok service start"
+
+sleep 3
 
 log "Running uv sync..."
 $SSH "cd ${REMOTE_DIR} && uv sync"
@@ -114,25 +136,22 @@ $SSH "
 "
 
 if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
-  log "Starting temporary ngrok tunnel..."
+  log "Retrieving ngrok tunnel URL from service..."
 
-  $SSH "
-    tmux kill-session -t sl-tunnel 2>/dev/null || true
-    rm -f /tmp/ngrok.log || true
-    tmux new-session -d -s sl-tunnel \
-      'ngrok http ${APP_PORT} --log=stdout > /tmp/ngrok.log 2>&1'
-  "
+  sleep 2
 
-  sleep 5
-
-  TMP_TUNNEL_URL="$ (
+  TMP_TUNNEL_URL="$(
     $SSH "curl -sS http://127.0.0.1:4040/api/tunnels | python3 -c 'import sys,json;obj=json.load(sys.stdin);print(obj.get(\"tunnels\")[0].get(\"public_url\"))' || true"
   )"
 
   if [ -z "${TMP_TUNNEL_URL}" ]; then
-    echo "ERROR: Failed to obtain temporary ngrok tunnel URL."
-    echo "Remote tunnel log:"
-    $SSH "cat /tmp/ngrok.log || true"
+    echo "ERROR: Failed to obtain ngrok tunnel URL from service."
+    echo "Checking ngrok service status:"
+    $SSH "ngrok service status || echo 'ngrok service may not be running'"
+    echo ""
+    echo "Try manually:"
+    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ngrok service status'"
+    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'curl http://127.0.0.1:4040/api/tunnels | jq'"
     exit 1
   fi
 
@@ -171,7 +190,7 @@ log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 log "Useful commands:"
 log "  Attach to webhook:  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-webhook'"
-log "  Attach to tunnel:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-tunnel'"
- log "  Watch tunnel log:   ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f /tmp/ngrok.log'"
+log "  Check ngrok service: ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ngrok service status'"
+log "  Get ngrok URL:      ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'curl http://127.0.0.1:4040/api/tunnels | jq .tunnels[0].public_url'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"

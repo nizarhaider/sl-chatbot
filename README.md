@@ -20,9 +20,35 @@ The app listens on `http://localhost:8000` by default.
 
 ## Ngrok temporary tunnel
 
-When you need a temporary public URL for WhatsApp webhook verification (for example during remote setup), the `scripts/setup_vastai.sh` helper can start an `ngrok` tunnel on the remote host and print the public `https://*.ngrok.io` callback URL. Set `USE_TEMP_TUNNEL=true` (default) to enable this behavior.
+When you need a temporary public URL for WhatsApp webhook verification (for example during remote setup), the `scripts/setup_vastai.sh` helper can install and start an `ngrok` service on the remote host and print the public `https://*.ngrok.io` callback URL. Set `USE_TEMP_TUNNEL=true` (default) to enable this behavior.
 
-Use the printed URL plus `/webhook` as the webhook callback in the WhatsApp dashboard for verification.
+**Setup:**
+1. Add your ngrok auth token to `.env`:
+   ```bash
+   NGROK_AUTH_TOKEN=your_ngrok_token_here
+   ```
+2. Run the setup script as usual (it will install ngrok, configure the auth token, set up the service, and print the public URL).
+
+**How it works:**
+- The setup script generates `ngrok.yml` from the template in the repo, substituting your `APP_PORT`
+- It copies the config to the remote host and installs the ngrok service
+- The ngrok service runs as a persistent daemon, forwarding traffic to your webhook server
+- Use the printed URL plus `/webhook` as the webhook callback in the WhatsApp dashboard for verification
+
+**Useful commands:**
+```bash
+# Check ngrok service status
+ssh -i ~/.ssh/vastai_ssh_file -p <PORT> root@<HOST> 'ngrok service status'
+
+# Get the current public URL
+ssh -i ~/.ssh/vastai_ssh_file -p <PORT> root@<HOST> 'curl http://127.0.0.1:4040/api/tunnels | jq .tunnels[0].public_url'
+
+# Stop the service (if needed)
+ssh -i ~/.ssh/vastai_ssh_file -p <PORT> root@<HOST> 'ngrok service stop'
+
+# Start it again
+ssh -i ~/.ssh/vastai_ssh_file -p <PORT> root@<HOST> 'ngrok service start'
+```
 
 ## Webhook Endpoints
 
