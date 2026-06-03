@@ -74,18 +74,11 @@ if [ -n "${NGROK_AUTH_TOKEN}" ]; then
   $SSH "ngrok config add-authtoken '${NGROK_AUTH_TOKEN}'"
 fi
 
-log "Setting up ngrok tunnel..."
-# Create local ngrok.yml with substituted APP_PORT
-LOCAL_NGROK_YML="/tmp/ngrok_${APP_PORT}.yml"
-sed "s/APP_PORT_PLACEHOLDER/${APP_PORT}/g" ngrok.yml > "${LOCAL_NGROK_YML}"
-$SCP "${LOCAL_NGROK_YML}" ${REMOTE}:${REMOTE_DIR}/ngrok.yml
-rm -f "${LOCAL_NGROK_YML}"
-
 log "Starting ngrok in tmux..."
 $SSH "
   tmux kill-session -t sl-ngrok 2>/dev/null || true
   tmux new-session -d -s sl-ngrok \
-    'bash -lc \"set -a && source ${REMOTE_DIR}/.env && set +a && cd ${REMOTE_DIR} && ngrok start --config ./ngrok.yml > /tmp/ngrok.log 2>&1\"'
+    'cd ${REMOTE_DIR} && ngrok http ${APP_PORT} --log=stdout > /tmp/ngrok.log 2>&1'
 "
 
 sleep 3
@@ -111,7 +104,7 @@ log "Starting webhook in tmux..."
 $SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
   mkdir -p ${REMOTE_DIR}/run_logs; \
   tmux new-session -d -s sl-webhook \
-  'bash -lc \"set -a && source ${REMOTE_DIR}/.env && set +a && cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env > run_logs/webhook.log 2>&1\"'"
+  'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env > run_logs/webhook.log 2>&1'"
 
 log "Waiting for server to boot..."
 sleep 10
@@ -150,17 +143,23 @@ $SSH "
 if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
   log "Retrieving ngrok tunnel URL..."
 
-  sleep 2
-
-  TMP_TUNNEL_URL="$(
-    $SSH "curl -sS http://127.0.0.1:4040/api/tunnels | python3 -c 'import sys,json;obj=json.load(sys.stdin);print(obj.get(\"tunnels\")[0].get(\"public_url\"))' || true"
-  )"
+  TMP_TUNNEL_URL=""
+  for i in 1 2 3 4 5; do
+    TMP_TUNNEL_URL="$(
+      $SSH "curl -sS http://127.0.0.1:4040/api/tunnels | python3 -c 'import sys,json;obj=json.load(sys.stdin);print(obj.get(\"tunnels\")[0].get(\"public_url\"))' || true"
+    )"
+    if [ -n "${TMP_TUNNEL_URL}" ]; then
+      break
+    fi
+    echo "Waiting for ngrok API to become available... attempt ${i}"
+    sleep 2
+  done
 
   if [ -z "${TMP_TUNNEL_URL}" ]; then
     echo "ERROR: Failed to obtain ngrok tunnel URL."
     echo "Check ngrok status on remote host:"
     echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ps aux | grep ngrok'"
-    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'curl http://127.0.0.1:4040/api/tunnels | jq'"
+    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'cat /tmp/ngrok.log'"
     exit 1
   fi
 
