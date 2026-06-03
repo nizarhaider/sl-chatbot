@@ -119,7 +119,7 @@ sleep 10
 log "Health check..."
 $SSH "
   attempt=0
-  until [ \$attempt -ge 5 ]; do
+  until [ \$attempt -ge 20 ]; do
     if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
       break
     fi
