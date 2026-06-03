@@ -8,13 +8,6 @@ set -euo pipefail
 SSH_PORT="${1:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 HOST_IP="${2:?Usage: $0 <SSH_PORT> <HOST_IP>}"
 
-if [ -f .env ]; then
-  # shellcheck source=/dev/null
-  set -a
-  source .env
-  set +a
-fi
-
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
@@ -49,6 +42,15 @@ if [ -f .env ]; then
 else
   echo 'WARNING: .env not found locally; skipping .env copy.'
 fi
+
+# Source env vars (combine later into one statement)
+if [ -f .env ]; then
+  # shellcheck source=/dev/null
+  set -a
+  source .env
+  set +a
+fi
+
 
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
