@@ -65,7 +65,7 @@ HOMELANDS_LIVE_SYSTEM_PROMPT = (
 )
 
 REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/sin_2241_0914770956.wav"
-REALTIME_TTS_REF_TEXT = "ඔයාගේ නැටුම්වලට මධුරි ඩික්සිත් පරදනවා කියලා විහිළු කරනවා.",
+REALTIME_TTS_REF_TEXT = "ඔයාගේ නැටුම්වලට මධුරි ඩික්සිත් පරදනවා කියලා විහිළු කරනවා."
 
 REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
 REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
