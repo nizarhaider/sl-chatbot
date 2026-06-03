@@ -119,12 +119,12 @@ sleep 10
 log "Health check..."
 $SSH "
   attempt=0
-  until [ \$attempt -ge 20 ]; do
+  until [ \$attempt -ge 120 ]; do
     if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
       break
     fi
     attempt=\$((attempt + 1))
-    echo 'Waiting for port ${APP_PORT} to open... attempt' \$attempt
+    echo 'Waiting for port ${APP_PORT} to open... attempt' \$attempt '(/workspace/sl-chatbot startup may still be completing)' 
     sleep 2
   done
 
