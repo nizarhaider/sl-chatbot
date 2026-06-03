@@ -76,7 +76,14 @@ fi
 
 log "Starting ngrok in tmux..."
 $SSH "
-  tmux kill-session -t sl-ngrok 2>/dev/null || true
+  if tmux has-session -t sl-ngrok 2>/dev/null; then
+    if curl -sS http://127.0.0.1:4040/api/tunnels >/dev/null 2>&1; then
+      echo 'ngrok is already running and healthy; skipping startup'
+      exit 0
+    fi
+    echo 'Found existing sl-ngrok session but ngrok API is unavailable; restarting'
+    tmux kill-session -t sl-ngrok 2>/dev/null || true
+  fi
   tmux new-session -d -s sl-ngrok \
     'cd ${REMOTE_DIR} && ngrok http ${APP_PORT} --log=stdout > /tmp/ngrok.log 2>&1'
 "
