@@ -77,7 +77,7 @@ log "Starting ngrok in tmux..."
 $SSH "
   tmux kill-session -t sl-ngrok 2>/dev/null || true
   tmux new-session -d -s sl-ngrok \
-    'cd ${REMOTE_DIR} && ngrok start --config ./ngrok.yml > /tmp/ngrok.log 2>&1'
+    'bash -lc \"set -a && source ${REMOTE_DIR}/.env && set +a && cd ${REMOTE_DIR} && ngrok start --config ./ngrok.yml > /tmp/ngrok.log 2>&1\"'
 "
 
 sleep 3
@@ -103,7 +103,7 @@ log "Starting webhook in tmux..."
 $SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
   mkdir -p ${REMOTE_DIR}/run_logs; \
   tmux new-session -d -s sl-webhook \
-  'cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env > run_logs/webhook.log 2>&1'"
+  'bash -lc \"set -a && source ${REMOTE_DIR}/.env && set +a && cd ${REMOTE_DIR} && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env > run_logs/webhook.log 2>&1\"'"
 
 log "Waiting for server to boot..."
 sleep 10
@@ -140,7 +140,7 @@ $SSH "
 "
 
 if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
-  log "Retrieving ngrok tunnel URL from service..."
+  log "Retrieving ngrok tunnel URL..."
 
   sleep 2
 
@@ -149,12 +149,9 @@ if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
   )"
 
   if [ -z "${TMP_TUNNEL_URL}" ]; then
-    echo "ERROR: Failed to obtain ngrok tunnel URL from service."
-    echo "Checking ngrok service status:"
-    $SSH "ngrok service status || echo 'ngrok service may not be running'"
-    echo ""
-    echo "Try manually:"
-    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ngrok service status'"
+    echo "ERROR: Failed to obtain ngrok tunnel URL."
+    echo "Check ngrok status on remote host:"
+    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ps aux | grep ngrok'"
     echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'curl http://127.0.0.1:4040/api/tunnels | jq'"
     exit 1
   fi
