@@ -66,15 +66,19 @@ if [ -n "${NGROK_AUTH_TOKEN}" ]; then
   $SSH "ngrok config add-authtoken '${NGROK_AUTH_TOKEN}'"
 fi
 
-log "Setting up ngrok service..."
+log "Setting up ngrok tunnel..."
 # Create local ngrok.yml with substituted APP_PORT
 LOCAL_NGROK_YML="/tmp/ngrok_${APP_PORT}.yml"
 sed "s/APP_PORT_PLACEHOLDER/${APP_PORT}/g" ngrok.yml > "${LOCAL_NGROK_YML}"
 $SCP "${LOCAL_NGROK_YML}" ${REMOTE}:${REMOTE_DIR}/ngrok.yml
 rm -f "${LOCAL_NGROK_YML}"
 
-log "Installing and starting ngrok service..."
-$SSH "cd ${REMOTE_DIR} && ngrok service install --config ./ngrok.yml && ngrok service start"
+log "Starting ngrok in tmux..."
+$SSH "
+  tmux kill-session -t sl-ngrok 2>/dev/null || true
+  tmux new-session -d -s sl-ngrok \
+    'cd ${REMOTE_DIR} && ngrok start --config ./ngrok.yml > /tmp/ngrok.log 2>&1'
+"
 
 sleep 3
 
@@ -190,7 +194,7 @@ log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 log "Useful commands:"
 log "  Attach to webhook:  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-webhook'"
-log "  Check ngrok service: ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ngrok service status'"
+log "  Attach to ngrok:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-ngrok'"
 log "  Get ngrok URL:      ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'curl http://127.0.0.1:4040/api/tunnels | jq .tunnels[0].public_url'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"
