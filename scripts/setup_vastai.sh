@@ -95,11 +95,6 @@ $SSH "cd ${REMOTE_DIR} && \
   CMAKE_ARGS='-DGGML_CUDA=on' FORCE_CMAKE=1 \
   uv sync --no-binary-package llama-cpp-python --reinstall-package llama-cpp-python"
 
-log "Ensuring Whisper dependency is installed..."
-$SSH "cd ${REMOTE_DIR} && .venv/bin/python - <<'PY' || uv add openai-whisper
-import whisper
-PY"
-
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
   app/main.py \
@@ -107,7 +102,7 @@ $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
   app/services/webrtc.py \
   app/services/whatsapp_api.py \
   app/voice_agent/agent.py \
-  app/voice_agent/gemini_turn_pipeline.py && echo 'COMPILE OK'"
+  app/voice_agent/local_gemma_turn_pipeline.py && echo 'COMPILE OK'"
 
 log "Starting webhook in tmux..."
 $SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \

@@ -20,7 +20,8 @@ dependencies = [
     "omnivoice>=0.1.5",
     "torchaudio>=2.5.1,<2.6",
     "torch>=2.5.1,<2.6",
-    "openai-whisper>=20250101"
+    "accelerate>=1.12.0",
+    "transformers>=4.57.0"
 ]
 
 [dependency-groups]

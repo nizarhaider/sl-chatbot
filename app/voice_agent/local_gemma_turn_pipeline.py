@@ -4,7 +4,6 @@ import os
 import time
 
 import numpy as np
-import whisper
 from av.audio.resampler import AudioResampler
 
 logger = logging.getLogger(__name__)
@@ -29,8 +28,10 @@ GEMMA_PREWARM = os.environ.get("GEMMA_PREWARM", "true").strip().lower() in {
     "on",
 }
 
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "turbo")
+WHISPER_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "sinhala").strip() or None
+WHISPER_TASK = os.environ.get("WHISPER_TASK", "transcribe").strip()
 
 TURN_INPUT_CHUNK_MS = max(20, int(os.environ.get("TURN_INPUT_CHUNK_MS", "40")))
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
@@ -80,8 +81,8 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = os.environ.get(
     ),
 )
 
-REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/sin_2241_0914770956.wav"
-REALTIME_TTS_REF_TEXT = "ඔයාගේ නැටුම්වලට මධුරි ඩික්සිත් පරදනවා කියලා විහිළු කරනවා."
+REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/chandeera-female-sample.ogg"
+REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet  connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි."
 
 REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
 REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
@@ -311,6 +312,82 @@ class LocalGemmaLLM:
         return hf_hub_download(**kwargs)
 
 
+def _is_noise_text(text: str) -> bool:
+    cleaned = text.strip()
+    return bool(cleaned) and all(char in "_- .,\n\t" for char in cleaned)
+
+
+class LocalWhisperASR:
+    def __init__(self) -> None:
+        self._processor = None
+        self._model = None
+        self._device = None
+
+    def prewarm(self) -> None:
+        self._get_model()
+
+    def transcribe(self, pcm_array: np.ndarray) -> str:
+        text = self._transcribe(pcm_array)
+        if _is_noise_text(text):
+            logger.info("Dropping noise-only transcript: %r", text)
+            return ""
+        return text
+
+    def _transcribe(self, pcm_array: np.ndarray) -> str:
+        processor, model, device = self._get_model()
+        inputs = processor(
+            pcm_array,
+            sampling_rate=16000,
+            return_attention_mask=True,
+            return_tensors="pt",
+        )
+        model_dtype = next(model.parameters()).dtype
+        input_features = inputs.input_features.to(device, dtype=model_dtype)
+        attention_mask = getattr(inputs, "attention_mask", None)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
+
+        generate_kwargs = {"task": WHISPER_TASK}
+        if WHISPER_LANGUAGE:
+            generate_kwargs["language"] = WHISPER_LANGUAGE
+
+        import torch
+
+        with torch.no_grad():
+            generated_ids = model.generate(
+                input_features,
+                attention_mask=attention_mask,
+                **generate_kwargs,
+            )
+        return processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+
+    def _get_model(self):
+        if self._model is not None:
+            return self._processor, self._model, self._device
+
+        import torch
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+
+        device = torch.device(WHISPER_DEVICE)
+        dtype = torch.float16 if WHISPER_DEVICE.startswith("cuda") else torch.float32
+        logger.info(
+            "Loading Hugging Face Whisper ASR model: %s (device: %s dtype: %s)",
+            WHISPER_MODEL,
+            device,
+            dtype,
+        )
+        self._processor = AutoProcessor.from_pretrained(WHISPER_MODEL)
+        self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            WHISPER_MODEL,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+        ).to(device)
+        self._model.eval()
+        self._device = device
+        return self._processor, self._model, self._device
+
+
 class LocalGemmaTurnPipeline:
     def __init__(
         self,
@@ -320,21 +397,15 @@ class LocalGemmaTurnPipeline:
     ):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
-        self._whisper_model = None
+        self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
         self._llm = LocalGemmaLLM()
-
-    @property
-    def whisper_model(self):
-        if self._whisper_model is None:
-            logger.info("Loading Whisper model: %s (device: %s)", WHISPER_MODEL, WHISPER_DEVICE)
-            self._whisper_model = whisper.load_model(WHISPER_MODEL, device=WHISPER_DEVICE)
-        return self._whisper_model
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
 
     async def prewarm_models(self) -> None:
+        await asyncio.to_thread(self._asr.prewarm)
         if GEMMA_PREWARM:
             await self._llm.prewarm()
         if REALTIME_TTS_PREWARM:
@@ -485,6 +556,9 @@ class LocalGemmaTurnPipeline:
         if not response_text:
             logger.info("Empty Gemma response for %s in %.0f ms", call_id, llm_ms)
             return
+        if _is_noise_text(response_text):
+            logger.info("Dropping noise-only Gemma response for %s: %r", call_id, response_text)
+            return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
 
@@ -517,21 +591,9 @@ class LocalGemmaTurnPipeline:
 
     async def _transcribe_pcm16(self, pcm: bytes) -> str:
         """Transcribe 16kHz PCM audio using local Whisper model."""
-        # Convert PCM bytes to numpy array
         pcm_array = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-        
-        # Run Whisper transcription in thread to avoid blocking
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self.whisper_model.transcribe(
-                pcm_array,
-                language=None,  # Auto-detect language
-                fp16=True,
-            ),
-        )
-        
-        text = result.get("text", "").strip()
+        text = await loop.run_in_executor(None, lambda: self._asr.transcribe(pcm_array))
         if not text:
             logger.warning("Whisper returned empty transcription")
         return text

@@ -54,7 +54,7 @@ Main files:
 - [app/webhooks/whatsapp.py](/Users/nizar/Documents/Projects/sl_chatbot/app/webhooks/whatsapp.py:1): webhook parsing and dispatch.
 - [app/services/webrtc.py](/Users/nizar/Documents/Projects/sl_chatbot/app/services/webrtc.py:1): WhatsApp SDP/WebRTC handling.
 - [app/voice_agent/agent.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/agent.py:1): call task lifecycle and outbound audio track.
-- [app/voice_agent/gemini_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/gemini_turn_pipeline.py:1): local VAD, Whisper STT, Gemma response generation, and RealtimeTTS OmniVoice playback.
+- [app/voice_agent/local_gemma_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/local_gemma_turn_pipeline.py:1): local VAD, Whisper STT, Gemma response generation, and RealtimeTTS OmniVoice playback.
 
 The pipeline uses simple RMS-based voice activity detection locally, transcribes each completed caller turn with Whisper, generates the assistant response with a local Gemma 4 12B Q4 GGUF model, and streams OmniVoice audio chunks back into the WhatsApp WebRTC output track.
 
@@ -80,7 +80,7 @@ Voice:
 - `GEMMA_CONTEXT_TOKENS`: defaults to `4096`.
 - `GEMMA_MAX_OUTPUT_TOKENS`: defaults to `160`.
 - `GEMMA_PREWARM`: defaults to `true` in the app so the model is loaded at startup. Startup fails if model prewarm fails.
-- `WHISPER_MODEL`: defaults to `turbo`.
+- ASR model is fixed to `SPEAK-ASR/whisper-medium-si-merged`.
 - `WHISPER_DEVICE`: defaults to `cuda`.
 - `REALTIME_TTS_REF_AUDIO`: defaults to `app/voices/sample_si_lk.mp3`.
 - `REALTIME_TTS_REF_TEXT`: reference text for OmniVoice cloning.

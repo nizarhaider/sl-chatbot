@@ -19,7 +19,6 @@ PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
 USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 
-WHISPER_MODEL_OVERRIDE="${WHISPER_MODEL_OVERRIDE:-SPEAK-ASR/whisper-medium-si-merged}"
 WHISPER_DEVICE_OVERRIDE="${WHISPER_DEVICE_OVERRIDE:-cuda}"
 GEMMA_MODEL_REPO_OVERRIDE="${GEMMA_MODEL_REPO_OVERRIDE:-google/gemma-4-12B-it-qat-q4_0-gguf}"
 GEMMA_N_GPU_LAYERS_OVERRIDE="${GEMMA_N_GPU_LAYERS_OVERRIDE:--1}"
@@ -82,7 +81,7 @@ $SSH "cd ${REMOTE_DIR} && .venv/bin/python -m py_compile \
   app/services/webrtc.py \
   app/services/whatsapp_api.py \
   app/voice_agent/agent.py \
-  app/voice_agent/gemini_turn_pipeline.py && echo 'COMPILE OK'"
+  app/voice_agent/local_gemma_turn_pipeline.py && echo 'COMPILE OK'"
 
 log "Installing ngrok..."
 if [ -z "${NGROK_AUTH_TOKEN}" ]; then
@@ -123,7 +122,6 @@ $SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
   mkdir -p ${REMOTE_DIR}/run_logs; \
   tmux new-session -d -s sl-webhook \
   'cd ${REMOTE_DIR} && \
-   export WHISPER_MODEL=${WHISPER_MODEL_OVERRIDE} && \
    export WHISPER_DEVICE=${WHISPER_DEVICE_OVERRIDE} && \
    export GEMMA_MODEL_REPO=${GEMMA_MODEL_REPO_OVERRIDE} && \
    export GEMMA_N_GPU_LAYERS=${GEMMA_N_GPU_LAYERS_OVERRIDE} && \

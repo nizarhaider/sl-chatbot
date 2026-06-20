@@ -8,7 +8,7 @@ from aiortc import MediaStreamTrack
 from av import AudioFrame
 from av.audio.resampler import AudioResampler
 
-from app.voice_agent.gemini_turn_pipeline import LocalGemmaTurnPipeline
+from app.voice_agent.local_gemma_turn_pipeline import LocalGemmaTurnPipeline
 
 logger = logging.getLogger(__name__)
 
