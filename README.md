@@ -6,7 +6,7 @@ The voice stack is intentionally narrow:
 
 ```text
 WhatsApp Cloud webhook -> FastAPI webhook
-WhatsApp WebRTC audio -> Gemini Live session -> text response -> RealtimeTTS OmniVoice -> WhatsApp WebRTC audio
+WhatsApp WebRTC audio -> local Whisper STT -> local Gemma 4 12B Q4 -> RealtimeTTS OmniVoice -> WhatsApp WebRTC audio
 ```
 
 ## Local Development
@@ -54,9 +54,9 @@ Main files:
 - [app/webhooks/whatsapp.py](/Users/nizar/Documents/Projects/sl_chatbot/app/webhooks/whatsapp.py:1): webhook parsing and dispatch.
 - [app/services/webrtc.py](/Users/nizar/Documents/Projects/sl_chatbot/app/services/webrtc.py:1): WhatsApp SDP/WebRTC handling.
 - [app/voice_agent/agent.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/agent.py:1): call task lifecycle and outbound audio track.
-- [app/voice_agent/gemini_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/gemini_turn_pipeline.py:1): Gemini Live session, local VAD, and RealtimeTTS OmniVoice playback.
+- [app/voice_agent/gemini_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/gemini_turn_pipeline.py:1): local VAD, Whisper STT, Gemma response generation, and RealtimeTTS OmniVoice playback.
 
-The pipeline uses simple RMS-based voice activity detection locally, streams caller audio into a single Gemini Live session with explicit activity boundaries, receives text responses from the Live session, and streams OmniVoice audio chunks back into the WhatsApp WebRTC output track.
+The pipeline uses simple RMS-based voice activity detection locally, transcribes each completed caller turn with Whisper, generates the assistant response with a local Gemma 4 12B Q4 GGUF model, and streams OmniVoice audio chunks back into the WhatsApp WebRTC output track.
 
 ## Text Chat Flow
 
@@ -66,15 +66,22 @@ Incoming WhatsApp text messages still use [app/chat_agent](/Users/nizar/Document
 
 Required:
 
-- `GOOGLE_API_KEY` or `GEMINI_API_KEY`
 - `WHATSAPP_ACCESS_TOKEN` or `WHATSAPP_TOKEN`
 - `PHONE_NUMBER_ID`
 - `VERIFY_TOKEN`
 
 Voice:
 
-- `GEMINI_LIVE_MODEL`: defaults to `gemini-live-2.5-flash-preview`.
-- `GEMINI_LIVE_API_VERSION`: defaults to `v1beta`.
+- `GEMMA_MODEL_PATH`: optional local `.gguf` file path. If omitted, the app downloads from Hugging Face.
+- `GEMMA_MODEL_REPO`: defaults to `google/gemma-4-12B-it-qat-q4_0-gguf`.
+- `GEMMA_MODEL_FILENAME`: optional exact `.gguf` filename inside `GEMMA_MODEL_REPO`.
+- `GEMMA_MODEL_DIR`: optional local download directory.
+- `GEMMA_N_GPU_LAYERS`: defaults to `-1`, which asks llama.cpp to load all supported layers into VRAM.
+- `GEMMA_CONTEXT_TOKENS`: defaults to `4096`.
+- `GEMMA_MAX_OUTPUT_TOKENS`: defaults to `160`.
+- `GEMMA_PREWARM`: defaults to `true` in the app so the model is loaded at startup. Startup fails if model prewarm fails.
+- `WHISPER_MODEL`: defaults to `turbo`.
+- `WHISPER_DEVICE`: defaults to `cuda`.
 - `REALTIME_TTS_REF_AUDIO`: defaults to `app/voices/sample_si_lk.mp3`.
 - `REALTIME_TTS_REF_TEXT`: reference text for OmniVoice cloning.
 - `REALTIME_TTS_REF_LANGUAGE`: defaults to `si`.
@@ -85,6 +92,15 @@ Voice:
 - `TURN_INPUT_CHUNK_MS`, `TURN_SILENCE_THRESHOLD`, `TURN_END_SILENCE_CHUNKS`: local VAD tuning.
 - `TURN_GREETING_DELAY_SECONDS`, `TURN_GREETING_PROTECTION_MAX_SECONDS`: greeting timing controls.
 - `IMPORTANT_LOG_PATH`: defaults to `run_logs/important.log`.
+
+For Vast.ai GPU installs, `scripts/setup_vastai.sh` builds `llama-cpp-python` from source with CUDA:
+
+```bash
+CMAKE_ARGS='-DGGML_CUDA=on' FORCE_CMAKE=1 \
+  uv sync --no-binary-package llama-cpp-python --reinstall-package llama-cpp-python
+```
+
+Gemma 4 12B Q4 needs about 6.7 GB for weights before KV cache and runtime overhead. Budget more VRAM for Whisper, OmniVoice, and context.
 
 Text commerce:
 

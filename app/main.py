@@ -16,7 +16,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     force=True,
 )
-for noisy_logger in ("aioice", "google_genai", "httpx"):
+for noisy_logger in ("aioice", "httpx", "llama_cpp"):
     logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,8 @@ class ImportantEventFilter(logging.Filter):
         "Turn transcript",
         "Turn dropped",
         "Turn response",
-        "Gemini response",
+        "Gemma response",
+        "Local Gemma model",
         "RealtimeTTS complete",
         "Greeting timings",
         "Turn timings",
@@ -71,28 +72,21 @@ def configure_important_log() -> None:
 configure_important_log()
 
 
-async def prewarm_tts() -> None:
-    if os.environ.get("REALTIME_TTS_PREWARM", "true").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return
-
+async def prewarm_voice_models() -> None:
     from app.voice_agent.agent import voice_agent
 
     try:
-        logger.info("Prewarming RealtimeTTS OmniVoice engine")
-        await voice_agent.prewarm_tts()
-        logger.info("RealtimeTTS OmniVoice prewarm complete")
+        logger.info("Prewarming local voice models")
+        await voice_agent.prewarm_models()
+        logger.info("Local voice model prewarm complete")
     except Exception:
-        logger.exception("RealtimeTTS OmniVoice prewarm failed; continuing startup")
+        logger.exception("Local voice model prewarm failed")
+        raise
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await prewarm_tts()
+    await prewarm_voice_models()
     yield
 
 

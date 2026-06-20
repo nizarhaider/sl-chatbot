@@ -1,20 +1,33 @@
 import asyncio
-import io
 import logging
 import os
 import time
-import wave
 
 import numpy as np
 import whisper
 from av.audio.resampler import AudioResampler
-from google import genai
-from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-GEMINI_API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta").strip()
+GEMMA_MODEL_PATH = os.environ.get("GEMMA_MODEL_PATH", "").strip()
+GEMMA_MODEL_REPO = os.environ.get(
+    "GEMMA_MODEL_REPO",
+    "google/gemma-4-12B-it-qat-q4_0-gguf",
+).strip()
+GEMMA_MODEL_FILENAME = os.environ.get("GEMMA_MODEL_FILENAME", "").strip()
+GEMMA_MODEL_DIR = os.environ.get("GEMMA_MODEL_DIR", "").strip()
+GEMMA_N_GPU_LAYERS = int(os.environ.get("GEMMA_N_GPU_LAYERS", "-1"))
+GEMMA_CONTEXT_TOKENS = int(os.environ.get("GEMMA_CONTEXT_TOKENS", "4096"))
+GEMMA_BATCH_TOKENS = int(os.environ.get("GEMMA_BATCH_TOKENS", "512"))
+GEMMA_THREADS = int(os.environ.get("GEMMA_THREADS", "8"))
+GEMMA_TEMPERATURE = float(os.environ.get("GEMMA_TEMPERATURE", "0.2"))
+GEMMA_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMMA_MAX_OUTPUT_TOKENS", "160"))
+GEMMA_PREWARM = os.environ.get("GEMMA_PREWARM", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "turbo")
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
@@ -34,8 +47,8 @@ TURN_GREETING_PROTECTION_MAX_SECONDS = max(
     float(os.environ.get("TURN_GREETING_PROTECTION_MAX_SECONDS", "1.5")),
 )
 
-GEMINI_TURN_GREETING = os.environ.get(
-    "GEMINI_TURN_GREETING",
+LOCAL_TURN_GREETING = os.environ.get(
+    "LOCAL_TURN_GREETING",
     (
         "To speak in English, please say English. "
         "සිංහලෙන් කතා කිරීමට කරුණාකර සිංහල කියන්න. "
@@ -50,18 +63,21 @@ HOMELANDS_PROPERTIES = (
     "4. Ocean Breeze Apartments, Dehiwala: one and two-bedroom units from LKR 32 million, sea view, ready soon."
 )
 
-HOMELANDS_LIVE_SYSTEM_PROMPT = (
-    "You are a friendly assistant working for Homelands Properties. "
-    "Help the customer with their property-related queries. "
-    f"Use these mock properties only: {HOMELANDS_PROPERTIES} "
-    "The caller has already heard a language-selection greeting asking them to say English, Sinhala, or Tamil. "
-    "If the caller only picks a language, greet them briefly in that language and ask how you can help. "
-    "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "
-    "If the caller message is unclear, garbled, partial, or you do not understand it, briefly say that you did not understand and ask them to repeat it. "
-    "Do not repeat the language-selection greeting unless the caller is clearly starting over. "
-    "Do not recommend a property, make up requirements, or schedule anything unless the caller actually asked about a property. "
-    "When the customer asks about properties, recommend a suitable option and say that a Homelands consultant appointment has been scheduled for tomorrow at 10 AM. "
-    "Keep each response brief, natural, and suitable for a phone call."
+HOMELANDS_LOCAL_SYSTEM_PROMPT = os.environ.get(
+    "HOMELANDS_LOCAL_SYSTEM_PROMPT",
+    (
+        "You are a friendly assistant working for Homelands Properties. "
+        "Help the customer with their property-related queries. "
+        f"Use these mock properties only: {HOMELANDS_PROPERTIES} "
+        "The caller has already heard a language-selection greeting asking them to say English, Sinhala, or Tamil. "
+        "If the caller only picks a language, greet them briefly in that language and ask how you can help. "
+        "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "
+        "If the caller message is unclear, garbled, partial, or you do not understand it, briefly say that you did not understand and ask them to repeat it. "
+        "Do not repeat the language-selection greeting unless the caller is clearly starting over. "
+        "Do not recommend a property, make up requirements, or schedule anything unless the caller actually asked about a property. "
+        "When the customer asks about properties, recommend a suitable option and say that a Homelands consultant appointment has been scheduled for tomorrow at 10 AM. "
+        "Keep each response brief, natural, and suitable for a phone call."
+    ),
 )
 
 REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/sin_2241_0914770956.wav"
@@ -72,6 +88,12 @@ REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
 REALTIME_TTS_DEVICE = os.environ.get("REALTIME_TTS_DEVICE", "cuda:0")
 REALTIME_TTS_DTYPE = os.environ.get("REALTIME_TTS_DTYPE", "float16")
 REALTIME_TTS_DEBUG = os.environ.get("REALTIME_TTS_DEBUG", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+REALTIME_TTS_PREWARM = os.environ.get("REALTIME_TTS_PREWARM", "true").strip().lower() in {
     "1",
     "true",
     "yes",
@@ -204,17 +226,92 @@ def _normalize_omnivoice_waveform(audio) -> np.ndarray:
     return waveform.astype(np.float32, copy=False)
 
 
-def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 16000) -> bytes:
-    wav_io = io.BytesIO()
-    with wave.open(wav_io, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(pcm)
-    return wav_io.getvalue()
+class LocalGemmaLLM:
+    def __init__(self) -> None:
+        self._llm = None
+        self._lock = asyncio.Lock()
+
+    async def prewarm(self) -> None:
+        await asyncio.to_thread(self._get_llm)
+
+    async def generate(self, transcript_text: str) -> str:
+        async with self._lock:
+            return await asyncio.to_thread(self._generate_sync, transcript_text)
+
+    def _generate_sync(self, transcript_text: str) -> str:
+        llm = self._get_llm()
+        response = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": HOMELANDS_LOCAL_SYSTEM_PROMPT},
+                {"role": "user", "content": transcript_text},
+            ],
+            temperature=GEMMA_TEMPERATURE,
+            max_tokens=GEMMA_MAX_OUTPUT_TOKENS,
+        )
+        return (
+            response.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+
+    def _get_llm(self):
+        if self._llm is not None:
+            return self._llm
+
+        from llama_cpp import Llama
+
+        model_path = self._resolve_model_path()
+        logger.info(
+            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s",
+            model_path,
+            GEMMA_N_GPU_LAYERS,
+            GEMMA_CONTEXT_TOKENS,
+            GEMMA_BATCH_TOKENS,
+        )
+        started = time.perf_counter()
+        self._llm = Llama(
+            model_path=model_path,
+            n_gpu_layers=GEMMA_N_GPU_LAYERS,
+            n_ctx=GEMMA_CONTEXT_TOKENS,
+            n_batch=GEMMA_BATCH_TOKENS,
+            n_threads=GEMMA_THREADS,
+            verbose=False,
+        )
+        logger.info(
+            "Local Gemma model loaded in %.0f ms",
+            (time.perf_counter() - started) * 1000.0,
+        )
+        return self._llm
+
+    def _resolve_model_path(self) -> str:
+        if GEMMA_MODEL_PATH:
+            return GEMMA_MODEL_PATH
+
+        from huggingface_hub import HfApi, hf_hub_download
+
+        filename = GEMMA_MODEL_FILENAME
+        if not filename:
+            files = HfApi().list_repo_files(GEMMA_MODEL_REPO)
+            q4_files = [
+                path
+                for path in files
+                if path.lower().endswith(".gguf") and "q4_0" in path.lower()
+            ]
+            if not q4_files:
+                raise RuntimeError(
+                    f"No Q4_0 GGUF file found in Hugging Face repo {GEMMA_MODEL_REPO!r}; "
+                    "set GEMMA_MODEL_FILENAME or GEMMA_MODEL_PATH."
+                )
+            filename = sorted(q4_files)[0]
+
+        kwargs = {"repo_id": GEMMA_MODEL_REPO, "filename": filename}
+        if GEMMA_MODEL_DIR:
+            kwargs["local_dir"] = GEMMA_MODEL_DIR
+        return hf_hub_download(**kwargs)
 
 
-class GeminiTurnPipeline:
+class LocalGemmaTurnPipeline:
     def __init__(
         self,
         prepare_tts_text,
@@ -223,17 +320,9 @@ class GeminiTurnPipeline:
     ):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
-        self._gemini_client = None
         self._whisper_model = None
         self._tts = tts or RealtimeOmniVoiceTTS()
-
-    @property
-    def gemini_client(self):
-        if self._gemini_client is None:
-            api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-            http_options = {"api_version": GEMINI_API_VERSION} if GEMINI_API_VERSION else None
-            self._gemini_client = genai.Client(api_key=api_key, http_options=http_options)
-        return self._gemini_client
+        self._llm = LocalGemmaLLM()
 
     @property
     def whisper_model(self):
@@ -245,6 +334,12 @@ class GeminiTurnPipeline:
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
 
+    async def prewarm_models(self) -> None:
+        if GEMMA_PREWARM:
+            await self._llm.prewarm()
+        if REALTIME_TTS_PREWARM:
+            await self._tts.prewarm()
+
     async def run(self, call_id, input_track, output_track, playback_generation):
         if TURN_GREETING_DELAY_SECONDS:
             await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
@@ -252,7 +347,7 @@ class GeminiTurnPipeline:
         greeting_started_at = time.perf_counter()
         greeting_seconds = await self._speak(
             call_id,
-            GEMINI_TURN_GREETING,
+            LOCAL_TURN_GREETING,
             output_track,
             playback_generation,
         )
@@ -388,7 +483,7 @@ class GeminiTurnPipeline:
         llm_ms = (time.perf_counter() - llm_started_at) * 1000.0
 
         if not response_text:
-            logger.info("Empty Gemini response for %s in %.0f ms", call_id, llm_ms)
+            logger.info("Empty Gemma response for %s in %.0f ms", call_id, llm_ms)
             return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
@@ -442,16 +537,7 @@ class GeminiTurnPipeline:
         return text
 
     async def _generate_response(self, transcript_text: str) -> str:
-        response = await self.gemini_client.aio.models.generate_content(
-            model=GEMINI_TEXT_MODEL,
-            contents=transcript_text,
-            config=types.GenerateContentConfig(
-                system_instruction=HOMELANDS_LIVE_SYSTEM_PROMPT,
-                temperature=0,
-                max_output_tokens=160,
-            ),
-        )
-        return (response.text or "").strip()
+        return await self._llm.generate(transcript_text)
 
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)
