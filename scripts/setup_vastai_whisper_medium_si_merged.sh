@@ -23,6 +23,8 @@ WHISPER_DEVICE_OVERRIDE="${WHISPER_DEVICE_OVERRIDE:-cuda}"
 GEMMA_MODEL_REPO_OVERRIDE="${GEMMA_MODEL_REPO_OVERRIDE:-google/gemma-4-12B-it-qat-q4_0-gguf}"
 GEMMA_N_GPU_LAYERS_OVERRIDE="${GEMMA_N_GPU_LAYERS_OVERRIDE:--1}"
 GEMMA_CONTEXT_TOKENS_OVERRIDE="${GEMMA_CONTEXT_TOKENS_OVERRIDE:-4096}"
+REALTIME_TTS_NUM_STEPS_OVERRIDE="${REALTIME_TTS_NUM_STEPS_OVERRIDE:-18,18}"
+REALTIME_TTS_SPEED_OVERRIDE="${REALTIME_TTS_SPEED_OVERRIDE:-0.9}"
 
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
 SCP="scp -o StrictHostKeyChecking=accept-new -P ${SSH_PORT} -i ${SSH_KEY}"
@@ -127,6 +129,8 @@ $SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
    export GEMMA_N_GPU_LAYERS=${GEMMA_N_GPU_LAYERS_OVERRIDE} && \
    export GEMMA_CONTEXT_TOKENS=${GEMMA_CONTEXT_TOKENS_OVERRIDE} && \
    export GEMMA_PREWARM=true && \
+   export REALTIME_TTS_NUM_STEPS=${REALTIME_TTS_NUM_STEPS_OVERRIDE} && \
+   export REALTIME_TTS_SPEED=${REALTIME_TTS_SPEED_OVERRIDE} && \
    .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env \
    > run_logs/webhook.log 2>&1'"
 
