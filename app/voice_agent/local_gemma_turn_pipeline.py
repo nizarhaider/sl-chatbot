@@ -87,7 +87,7 @@ REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet  connection එක
 
 REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
 REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
-REALTIME_TTS_SPEED = float(os.environ.get("REALTIME_TTS_SPEED", "0.9"))
+REALTIME_TTS_SPEED = float(os.environ.get("REALTIME_TTS_SPEED", "1.0"))
 REALTIME_TTS_DEVICE = os.environ.get("REALTIME_TTS_DEVICE", "cuda:0")
 REALTIME_TTS_DTYPE = os.environ.get("REALTIME_TTS_DTYPE", "float16")
 REALTIME_TTS_DEBUG = os.environ.get("REALTIME_TTS_DEBUG", "false").lower() in {
