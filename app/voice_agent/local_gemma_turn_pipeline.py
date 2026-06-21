@@ -81,7 +81,7 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = os.environ.get(
     ),
 )
 
-REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/chandeera-female-sample.ogg"
+REALTIME_TTS_REF_AUDIO = "omnivoice-one-shot-dataset/chandeera-female-sample.wav"
 REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet  connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි."
 
 REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
