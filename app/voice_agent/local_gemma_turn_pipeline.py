@@ -21,6 +21,7 @@ GEMMA_BATCH_TOKENS = int(os.environ.get("GEMMA_BATCH_TOKENS", "512"))
 GEMMA_THREADS = int(os.environ.get("GEMMA_THREADS", "8"))
 GEMMA_TEMPERATURE = float(os.environ.get("GEMMA_TEMPERATURE", "0.2"))
 GEMMA_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMMA_MAX_OUTPUT_TOKENS", "160"))
+GEMMA_HISTORY_MAX_MESSAGES = 12
 GEMMA_PREWARM = os.environ.get("GEMMA_PREWARM", "true").strip().lower() in {
     "1",
     "true",
@@ -235,15 +236,16 @@ class LocalGemmaLLM:
     async def prewarm(self) -> None:
         await asyncio.to_thread(self._get_llm)
 
-    async def generate(self, transcript_text: str) -> str:
+    async def generate(self, transcript_text: str, history: list[dict[str, str]]) -> str:
         async with self._lock:
-            return await asyncio.to_thread(self._generate_sync, transcript_text)
+            return await asyncio.to_thread(self._generate_sync, transcript_text, history)
 
-    def _generate_sync(self, transcript_text: str) -> str:
+    def _generate_sync(self, transcript_text: str, history: list[dict[str, str]]) -> str:
         llm = self._get_llm()
         response = llm.create_chat_completion(
             messages=[
                 {"role": "system", "content": HOMELANDS_LOCAL_SYSTEM_PROMPT},
+                *history,
                 {"role": "user", "content": transcript_text},
             ],
             temperature=GEMMA_TEMPERATURE,
@@ -400,6 +402,7 @@ class LocalGemmaTurnPipeline:
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
         self._llm = LocalGemmaLLM()
+        self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -412,42 +415,45 @@ class LocalGemmaTurnPipeline:
             await self._tts.prewarm()
 
     async def run(self, call_id, input_track, output_track, playback_generation):
-        if TURN_GREETING_DELAY_SECONDS:
-            await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
+        try:
+            if TURN_GREETING_DELAY_SECONDS:
+                await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
 
-        greeting_started_at = time.perf_counter()
-        greeting_seconds = await self._speak(
-            call_id,
-            LOCAL_TURN_GREETING,
-            output_track,
-            playback_generation,
-        )
-
-        logger.info(
-            "Greeting timings for %s: tts_wall=%.0f ms tts_audio=%.0f ms",
-            call_id,
-            (time.perf_counter() - greeting_started_at) * 1000.0,
-            greeting_seconds * 1000.0,
-        )
-
-        if greeting_seconds:
-            protected_seconds = min(
-                greeting_seconds + 0.25,
-                TURN_GREETING_PROTECTION_MAX_SECONDS,
+            greeting_started_at = time.perf_counter()
+            greeting_seconds = await self._speak(
+                call_id,
+                LOCAL_TURN_GREETING,
+                output_track,
+                playback_generation,
             )
+
             logger.info(
-                "Protecting Homelands language prompt for %.2f seconds before VAD; audio was %.2f seconds",
-                protected_seconds,
-                greeting_seconds,
+                "Greeting timings for %s: tts_wall=%.0f ms tts_audio=%.0f ms",
+                call_id,
+                (time.perf_counter() - greeting_started_at) * 1000.0,
+                greeting_seconds * 1000.0,
             )
-            await self._discard_input_audio(input_track, protected_seconds)
 
-        await self._run_turn_loop(
-            call_id=call_id,
-            input_track=input_track,
-            output_track=output_track,
-            playback_generation=playback_generation,
-        )
+            if greeting_seconds:
+                protected_seconds = min(
+                    greeting_seconds + 0.25,
+                    TURN_GREETING_PROTECTION_MAX_SECONDS,
+                )
+                logger.info(
+                    "Protecting Homelands language prompt for %.2f seconds before VAD; audio was %.2f seconds",
+                    protected_seconds,
+                    greeting_seconds,
+                )
+                await self._discard_input_audio(input_track, protected_seconds)
+
+            await self._run_turn_loop(
+                call_id=call_id,
+                input_track=input_track,
+                output_track=output_track,
+                playback_generation=playback_generation,
+            )
+        finally:
+            self._conversation_history.pop(call_id, None)
 
     async def _run_turn_loop(
         self,
@@ -550,7 +556,7 @@ class LocalGemmaTurnPipeline:
         )
 
         llm_started_at = time.perf_counter()
-        response_text = await self._generate_response(transcript_text)
+        response_text = await self._generate_response(call_id, transcript_text)
         llm_ms = (time.perf_counter() - llm_started_at) * 1000.0
 
         if not response_text:
@@ -561,6 +567,7 @@ class LocalGemmaTurnPipeline:
             return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
+        self._append_conversation_turn(call_id, transcript_text, response_text)
 
         tts_started_at = time.perf_counter()
         tts_audio_seconds = await self._speak(
@@ -598,8 +605,24 @@ class LocalGemmaTurnPipeline:
             logger.warning("Whisper returned empty transcription")
         return text
 
-    async def _generate_response(self, transcript_text: str) -> str:
-        return await self._llm.generate(transcript_text)
+    async def _generate_response(self, call_id, transcript_text: str) -> str:
+        history = list(self._conversation_history.get(call_id, []))
+        return await self._llm.generate(transcript_text, history)
+
+    def _append_conversation_turn(
+        self,
+        call_id,
+        transcript_text: str,
+        response_text: str,
+    ) -> None:
+        history = self._conversation_history.setdefault(call_id, [])
+        history.extend(
+            [
+                {"role": "user", "content": transcript_text},
+                {"role": "assistant", "content": response_text},
+            ]
+        )
+        del history[:-GEMMA_HISTORY_MAX_MESSAGES]
 
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)
