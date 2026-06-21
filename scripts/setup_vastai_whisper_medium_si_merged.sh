@@ -24,8 +24,8 @@ GEMMA_MODEL_REPO_OVERRIDE="${GEMMA_MODEL_REPO_OVERRIDE:-google/gemma-4-12B-it-qa
 GEMMA_N_GPU_LAYERS_OVERRIDE="${GEMMA_N_GPU_LAYERS_OVERRIDE:--1}"
 GEMMA_CONTEXT_TOKENS_OVERRIDE="${GEMMA_CONTEXT_TOKENS_OVERRIDE:-4096}"
 
-SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
-SCP="scp -P ${SSH_PORT} -i ${SSH_KEY}"
+SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
+SCP="scp -o StrictHostKeyChecking=accept-new -P ${SSH_PORT} -i ${SSH_KEY}"
 
 log() { echo "▶ $*"; }
 

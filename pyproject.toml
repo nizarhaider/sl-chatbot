@@ -18,8 +18,8 @@ dependencies = [
     "realtimetts[omnivoice]>=0.7.1",
     "python-dotenv>=1.2.1",
     "omnivoice>=0.1.5",
-    "torchaudio>=2.5.1,<2.6",
-    "torch>=2.5.1,<2.6",
+    "torchaudio>=2.7.0,<2.8",
+    "torch>=2.7.0,<2.8",
     "accelerate>=1.12.0",
     "transformers>=4.57.0"
 ]
@@ -30,16 +30,16 @@ dev = [
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu121", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 torchaudio = [
-    { index = "pytorch-cu121", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 
 [tool.pytest.ini_options]
