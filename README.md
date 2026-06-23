@@ -1,8 +1,8 @@
 # WhatsApp Voice Bot
 
-FastAPI service for WhatsApp Cloud API webhooks and WhatsApp calling.
+FastAPI service for WhatsApp Cloud API webhooks and WhatsApp Calling.
 
-The voice stack is intentionally narrow:
+The voice stack is intentionally local:
 
 ```text
 WhatsApp Cloud webhook -> FastAPI webhook
@@ -18,49 +18,23 @@ bash scripts/run_local_host.sh
 
 The app listens on `http://localhost:8000` by default.
 
-## Ngrok temporary tunnel
-
-When you need a temporary public URL for WhatsApp webhook verification, the `scripts/setup_vastai.sh` helper can start an `ngrok` tunnel on the remote host and print the public `https://*.ngrok.io` callback URL. Set `USE_TEMP_TUNNEL=true` (default) to enable this behavior.
-
-**Setup:**
-1. Add your ngrok auth token to `.env`:
-   ```bash
-   NGROK_AUTH_TOKEN=your_ngrok_token_here
-   ```
-2. Run the setup script as usual (it will install ngrok, configure the auth token, start the tunnel in tmux, and print the public URL).
-
-**Useful commands:**
-```bash
-# Get the current public URL
-ssh -i ~/.ssh/vastai_ssh_file -p <PORT> root@<HOST> 'curl http://127.0.0.1:4040/api/tunnels | jq .tunnels[0].public_url'
-
-# Attach to ngrok tmux session
-ssh -i ~/.ssh/vastai_ssh_file -p <PORT> root@<HOST> -t 'tmux attach -t sl-ngrok'
-```
-
-Use the printed URL plus `/webhook` as the webhook callback in the WhatsApp dashboard.
-
 ## Webhook Endpoints
 
 - `GET /webhook`: Meta webhook verification.
-- `POST /webhook`: WhatsApp text, status, and call events.
-- `POST /send-message`: internal outbound WhatsApp message endpoint protected by `x-api-key`.
+- `POST /webhook`: WhatsApp status and call events.
+- `GET /`: health check.
 
-## Voice Flow
+Incoming text messages are ignored. This repository is voice-call-only.
 
-Main files:
+## Runtime Layout
 
-- [app/main.py](/Users/nizar/Documents/Projects/sl_chatbot/app/main.py:1): FastAPI app and RealtimeTTS prewarm.
-- [app/webhooks/whatsapp.py](/Users/nizar/Documents/Projects/sl_chatbot/app/webhooks/whatsapp.py:1): webhook parsing and dispatch.
-- [app/services/webrtc.py](/Users/nizar/Documents/Projects/sl_chatbot/app/services/webrtc.py:1): WhatsApp SDP/WebRTC handling.
-- [app/voice_agent/agent.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/agent.py:1): call task lifecycle and outbound audio track.
-- [app/voice_agent/local_gemma_turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice_agent/local_gemma_turn_pipeline.py:1): local VAD, Whisper STT, Gemma response generation, and RealtimeTTS OmniVoice playback.
+- [app/main.py](/Users/nizar/Documents/Projects/sl_chatbot/app/main.py:1): stable ASGI entrypoint.
+- [app/api/app.py](/Users/nizar/Documents/Projects/sl_chatbot/app/api/app.py:1): FastAPI app creation and model prewarm.
+- [app/integrations/whatsapp/webhook.py](/Users/nizar/Documents/Projects/sl_chatbot/app/integrations/whatsapp/webhook.py:1): webhook verification and call-event dispatch.
+- [app/integrations/whatsapp/webrtc.py](/Users/nizar/Documents/Projects/sl_chatbot/app/integrations/whatsapp/webrtc.py:1): WhatsApp SDP/WebRTC handling.
+- [app/voice/turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice/turn_pipeline.py:1): local turn loop, VAD, ASR, Gemma, and TTS orchestration.
 
-The pipeline uses simple RMS-based voice activity detection locally, transcribes each completed caller turn with Whisper, generates the assistant response with a local Gemma 4 12B Q4 GGUF model, and streams OmniVoice audio chunks back into the WhatsApp WebRTC output track.
-
-## Text Chat Flow
-
-Incoming WhatsApp text messages still use [app/chat_agent](/Users/nizar/Documents/Projects/sl_chatbot/app/chat_agent). That path can answer store questions, search [data/products.xlsx](/Users/nizar/Documents/Projects/sl_chatbot/data/products.xlsx), create pending orders, confirm orders, append rows to [data/orders.xlsx](/Users/nizar/Documents/Projects/sl_chatbot/data/orders.xlsx), and notify a manager.
+The pipeline uses simple RMS-based VAD, transcribes completed caller turns with Whisper, generates responses with local Gemma through `llama-cpp-python`, and streams OmniVoice PCM back into the WhatsApp WebRTC output track.
 
 ## Environment
 
@@ -79,10 +53,10 @@ Voice:
 - `GEMMA_N_GPU_LAYERS`: defaults to `-1`, which asks llama.cpp to load all supported layers into VRAM.
 - `GEMMA_CONTEXT_TOKENS`: defaults to `4096`.
 - `GEMMA_MAX_OUTPUT_TOKENS`: defaults to `160`.
-- `GEMMA_PREWARM`: defaults to `true` in the app so the model is loaded at startup. Startup fails if model prewarm fails.
-- ASR model is fixed to `SPEAK-ASR/whisper-medium-si-merged`.
+- `GEMMA_PREWARM`: defaults to `true`; startup fails if model prewarm fails.
+- `WHISPER_MODEL`: defaults to `SPEAK-ASR/whisper-medium-si-merged`.
 - `WHISPER_DEVICE`: defaults to `cuda`.
-- `REALTIME_TTS_REF_AUDIO`: defaults to `app/voices/sample_si_lk.mp3`.
+- `REALTIME_TTS_REF_AUDIO`: defaults to `app/voices/chandeera-female-sample.wav`.
 - `REALTIME_TTS_REF_TEXT`: reference text for OmniVoice cloning.
 - `REALTIME_TTS_REF_LANGUAGE`: defaults to `si`.
 - `REALTIME_TTS_DEVICE`: defaults to `cuda:0`; use `mps` on Apple Silicon.
@@ -93,26 +67,25 @@ Voice:
 - `TURN_GREETING_DELAY_SECONDS`, `TURN_GREETING_PROTECTION_MAX_SECONDS`: greeting timing controls.
 - `IMPORTANT_LOG_PATH`: defaults to `run_logs/important.log`.
 
-For Vast.ai GPU installs, `scripts/setup_vastai.sh` builds `llama-cpp-python` from source with CUDA:
+## Vast.ai Setup
 
 ```bash
+REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <PORT> <HOST>
+```
+
+The setup script clones or updates `/workspace/sl-chatbot`, syncs `.env`, builds `llama-cpp-python` with CUDA, starts ngrok and the webhook in `tmux`, and waits for local and public webhook verification.
+
+Manual dependency sync on the remote host:
+
+```bash
+cd /workspace/sl-chatbot
 CMAKE_ARGS='-DGGML_CUDA=on' FORCE_CMAKE=1 \
   uv sync --no-binary-package llama-cpp-python --reinstall-package llama-cpp-python
 ```
-
-Gemma 4 12B Q4 needs about 6.7 GB for weights before KV cache and runtime overhead. Budget more VRAM for Whisper, OmniVoice, and context.
-
-Text commerce:
-
-- `CHAT_AGENT_MODEL`
-- `CHAT_AGENT_BUSINESS_NAME`
-- `PRODUCT_CATALOG_PATH`
-- `LOCAL_ORDERS_PATH`
-- `MANAGER_WHATSAPP_NUMBER`
-- optional Google Docs/Sheets service-account settings.
 
 ## Tests
 
 ```bash
 uv run pytest -q
+find app -name '*.py' -print0 | xargs -0 python3 -m py_compile
 ```

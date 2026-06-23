@@ -1,0 +1,93 @@
+import os
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+GEMMA_MODEL_PATH = os.environ.get("GEMMA_MODEL_PATH", "").strip()
+GEMMA_MODEL_REPO = os.environ.get(
+    "GEMMA_MODEL_REPO",
+    "google/gemma-4-12B-it-qat-q4_0-gguf",
+).strip()
+GEMMA_MODEL_FILENAME = os.environ.get("GEMMA_MODEL_FILENAME", "").strip()
+GEMMA_MODEL_DIR = os.environ.get("GEMMA_MODEL_DIR", "").strip()
+GEMMA_N_GPU_LAYERS = int(os.environ.get("GEMMA_N_GPU_LAYERS", "-1"))
+GEMMA_CONTEXT_TOKENS = int(os.environ.get("GEMMA_CONTEXT_TOKENS", "4096"))
+GEMMA_BATCH_TOKENS = int(os.environ.get("GEMMA_BATCH_TOKENS", "512"))
+GEMMA_THREADS = int(os.environ.get("GEMMA_THREADS", "8"))
+GEMMA_TEMPERATURE = float(os.environ.get("GEMMA_TEMPERATURE", "0.2"))
+GEMMA_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMMA_MAX_OUTPUT_TOKENS", "160"))
+GEMMA_HISTORY_MAX_MESSAGES = int(os.environ.get("GEMMA_HISTORY_MAX_MESSAGES", "12"))
+GEMMA_PREWARM = env_bool("GEMMA_PREWARM", True)
+
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "SPEAK-ASR/whisper-medium-si-merged")
+WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "sinhala").strip() or None
+WHISPER_TASK = os.environ.get("WHISPER_TASK", "transcribe").strip()
+
+TURN_INPUT_CHUNK_MS = max(20, int(os.environ.get("TURN_INPUT_CHUNK_MS", "40")))
+TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
+TURN_SILENCE_THRESHOLD = int(os.environ.get("TURN_SILENCE_THRESHOLD", "1000"))
+TURN_END_SILENCE_CHUNKS = max(2, int(os.environ.get("TURN_END_SILENCE_CHUNKS", "50")))
+TURN_MIN_AUDIO_MS = max(200, int(os.environ.get("TURN_MIN_AUDIO_MS", "500")))
+TURN_GREETING_DELAY_SECONDS = max(
+    0.0,
+    float(os.environ.get("TURN_GREETING_DELAY_SECONDS", "1.2")),
+)
+TURN_GREETING_PROTECTION_MAX_SECONDS = max(
+    0.0,
+    float(os.environ.get("TURN_GREETING_PROTECTION_MAX_SECONDS", "1.5")),
+)
+
+LOCAL_TURN_GREETING = os.environ.get(
+    "LOCAL_TURN_GREETING",
+    (
+        "To speak in English, please say English. "
+        "සිංහලෙන් කතා කිරීමට කරුණාකර සිංහල කියන්න. "
+        "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
+    ),
+)
+
+HOMELANDS_PROPERTIES = (
+    "1. Horizon Residencies, Malabe: two-bedroom apartments from LKR 28 million, near schools and supermarkets. "
+    "2. Lakeview Villas, Piliyandala: three-bedroom villas from LKR 48 million, garden, parking, and lake access. "
+    "3. Green Acres, Kurunegala: ten-perch residential land from LKR 9.5 million, clear title, bank loans supported. "
+    "4. Ocean Breeze Apartments, Dehiwala: one and two-bedroom units from LKR 32 million, sea view, ready soon."
+)
+
+HOMELANDS_LOCAL_SYSTEM_PROMPT = os.environ.get(
+    "HOMELANDS_LOCAL_SYSTEM_PROMPT",
+    (
+        "You are a friendly assistant working for Homelands Properties. "
+        "Help the customer with their property-related queries. "
+        f"Use these mock properties only: {HOMELANDS_PROPERTIES} "
+        "The caller has already heard a language-selection greeting asking them to say English, Sinhala, or Tamil. "
+        "If the caller only picks a language, reply in that language with a short introduction: say you are the Homelands Properties assistant and that you can help them learn about available apartments, villas, land, locations, prices, and appointments. "
+        "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "
+        "If the caller message is unclear, garbled, partial, or you do not understand it, ask casually in the caller's current language for them to repeat it or say it a little more clearly. "
+        "Do not repeat the language-selection greeting unless the caller is clearly starting over. "
+        "Do not recommend a property, make up requirements, or schedule anything unless the caller actually asked about a property. "
+        "When the customer asks about properties, recommend a suitable option and say that a Homelands consultant appointment has been scheduled for tomorrow at 10 AM. "
+        "Keep each response brief, natural, and suitable for a phone call."
+    ),
+)
+
+REALTIME_TTS_REF_AUDIO = os.environ.get(
+    "REALTIME_TTS_REF_AUDIO",
+    "app/voices/chandeera-female-sample.wav",
+)
+REALTIME_TTS_REF_TEXT = os.environ.get(
+    "REALTIME_TTS_REF_TEXT",
+    "ඔබතුමියගේ internet  connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි.",
+)
+REALTIME_TTS_REF_LANGUAGE = os.environ.get("REALTIME_TTS_REF_LANGUAGE", "si")
+REALTIME_TTS_NUM_STEPS = os.environ.get("REALTIME_TTS_NUM_STEPS", "12,12")
+REALTIME_TTS_SPEED = float(os.environ.get("REALTIME_TTS_SPEED", "1.0"))
+REALTIME_TTS_DEVICE = os.environ.get("REALTIME_TTS_DEVICE", "cuda:0")
+REALTIME_TTS_DTYPE = os.environ.get("REALTIME_TTS_DTYPE", "float16")
+REALTIME_TTS_DEBUG = env_bool("REALTIME_TTS_DEBUG", False)
+REALTIME_TTS_PREWARM = env_bool("REALTIME_TTS_PREWARM", True)
