@@ -5,12 +5,6 @@ __pycache__
 *.db
 *.log
 .DS_Store
-training_custom_tts/datasets/*
-!training_custom_tts/datasets/openslr_sinhala/
-training_custom_tts/datasets/openslr_sinhala/*
-!training_custom_tts/datasets/openslr_sinhala/extracted/
-training_custom_tts/datasets/openslr_sinhala/extracted/*
-!training_custom_tts/datasets/openslr_sinhala/extracted/sin_2241_1477007898.wav
 tts_debug_latest/
 debug_*.wav
 official_*.wav
