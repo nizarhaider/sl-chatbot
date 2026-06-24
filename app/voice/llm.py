@@ -37,7 +37,7 @@ class LocalQwenLLM:
             messages=[
                 {"role": "system", "content": HOMELANDS_LOCAL_SYSTEM_PROMPT},
                 *history,
-                {"role": "user", "content": transcript_text},
+                {"role": "user", "content": f"{transcript_text}\n/no_think"},
             ],
             temperature=LOCAL_LLM_TEMPERATURE,
             max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,
