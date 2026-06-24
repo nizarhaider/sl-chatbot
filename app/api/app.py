@@ -30,9 +30,11 @@ async def lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
+    from app.dashboard.router import router as dashboard_router
     from app.integrations.whatsapp.webhook import router as whatsapp_router
 
     app = FastAPI(title="WhatsApp Voice Bot", lifespan=lifespan)
+    app.include_router(dashboard_router)
     app.include_router(whatsapp_router)
 
     @app.get("/")

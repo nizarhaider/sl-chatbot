@@ -3,6 +3,7 @@ import logging
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 
+from app.dashboard.state import dashboard_state
 from app.integrations.whatsapp.client import whatsapp_api
 from app.voice.agent import voice_agent
 from app.voice.audio_track import RealtimeAudioTrack
@@ -18,6 +19,7 @@ class WebRTCService:
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = "") -> None:
         await self.close_call(call_id)
         self._caller_phones[call_id] = caller_phone
+        dashboard_state.start_call(call_id, caller_phone)
 
         pc = RTCPeerConnection(configuration=_rtc_configuration())
         self.pcs[call_id] = pc
@@ -36,6 +38,7 @@ class WebRTCService:
                 return
             phone = self._caller_phones.get(call_id, "")
             logger.info("Received audio track from WhatsApp for %s (caller: %s)", call_id, phone)
+            dashboard_state.mark_call_active(call_id, phone)
             asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
 
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")
@@ -58,6 +61,7 @@ class WebRTCService:
         self._caller_phones.pop(call_id, None)
         pc = self.pcs.pop(call_id, None)
         await voice_agent.cancel_call(call_id)
+        dashboard_state.end_call(call_id)
         if close_peer and pc is not None:
             await pc.close()
 

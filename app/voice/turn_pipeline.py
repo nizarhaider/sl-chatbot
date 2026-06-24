@@ -5,6 +5,7 @@ import time
 import numpy as np
 from av.audio.resampler import AudioResampler
 
+from app.dashboard.state import dashboard_state
 from app.voice.asr import LocalWhisperASR, is_noise_text
 from app.voice.config import (
     LOCAL_LLM_HISTORY_MAX_MESSAGES,
@@ -165,6 +166,7 @@ class LocalQwenTurnPipeline:
         transcript_text, transcript_ms = await self._timed_transcribe(call_id, utterance_pcm)
         if not transcript_text:
             return
+        dashboard_state.add_transcript(call_id, "caller", transcript_text)
 
         response_text, llm_ms = await self._timed_response(call_id, transcript_text)
         if not response_text or is_noise_text(response_text):
@@ -172,6 +174,7 @@ class LocalQwenTurnPipeline:
             return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
+        dashboard_state.add_transcript(call_id, "assistant", response_text)
         self._append_conversation_turn(call_id, transcript_text, response_text)
         tts_audio_seconds, tts_ms = await self._timed_speak(
             call_id,

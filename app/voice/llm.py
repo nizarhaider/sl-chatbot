@@ -105,4 +105,11 @@ class LocalQwenLLM:
 
 def _strip_thinking_blocks(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"^.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<think>.*$", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r"(?is)^\s*(thinking|reasoning|analysis)\s*:\s*.*?(final|answer)\s*:\s*",
+        "",
+        text,
+    )
     return text.strip()

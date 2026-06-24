@@ -23,6 +23,8 @@ Important files:
 app/main.py
 app/api/app.py
 app/api/logging.py
+app/dashboard/router.py
+app/dashboard/state.py
 app/integrations/whatsapp/webhook.py
 app/integrations/whatsapp/webrtc.py
 app/integrations/whatsapp/client.py
@@ -72,6 +74,10 @@ Startup prewarm loads Qwen and OmniVoice. Startup fails if prewarm fails so a ba
 ### `app/api/logging.py`
 
 Configures global logging and the filtered rotating important-call log.
+
+### `app/dashboard/router.py`, `app/dashboard/state.py`
+
+Serves `GET /dashboard` and `GET /dashboard/calls`. Live call state is in-memory and records active call metadata plus caller/assistant transcript events for currently running calls.
 
 ### `app/integrations/whatsapp/webhook.py`
 
