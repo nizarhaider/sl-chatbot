@@ -52,24 +52,6 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = (
     "Do not include analysis, reasoning notes, markdown, or <think> blocks."
 )
 
-SINHALA_LANGUAGE_SELECTION_RESPONSE = (
-    "ආයුබෝවන්. මම Homelands Properties සහායකයා. "
-    "ඔබට apartments, villas, ඉඩම්, locations, මිල ගණන් සහ appointments ගැන උදව් කරන්න පුළුවන්."
-)
-
-SINHALA_PROPERTY_OPTIONS_RESPONSE = (
-    "අපට දැන් තියෙන options කිහිපයක් කියන්නම්. "
-    "Malabe Horizon Residencies two-bedroom apartments LKR මිලියන 28 සිට. "
-    "Piliyandala Lakeview Villas three-bedroom villas LKR මිලියන 48 සිට. "
-    "Kurunegala Green Acres ඉඩම් LKR මිලියන 9.5 සිට. "
-    "Dehiwala Ocean Breeze Apartments LKR මිලියන 32 සිට."
-)
-
-SINHALA_CLARIFY_RESPONSE = (
-    "සමාවෙන්න, මට ඒක පැහැදිලිව තේරුණේ නැහැ. "
-    "කරුණාකර ඔබට අවශ්‍ය apartment, villa, land, location, price, හෝ appointment එක ගැන ටිකක් පැහැදිලිව කියන්න."
-)
-
 REALTIME_TTS_REF_AUDIO = "app/voices/chandeera-female-sample.wav"
 REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet  connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි."
 REALTIME_TTS_REF_LANGUAGE = "si"

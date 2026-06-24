@@ -13,9 +13,6 @@ from app.voice.config import (
     LOCAL_LLM_PREWARM,
     LOCAL_TURN_GREETING,
     REALTIME_TTS_PREWARM,
-    SINHALA_CLARIFY_RESPONSE,
-    SINHALA_LANGUAGE_SELECTION_RESPONSE,
-    SINHALA_PROPERTY_OPTIONS_RESPONSE,
     TURN_END_SILENCE_CHUNKS,
     TURN_GREETING_DELAY_SECONDS,
     TURN_GREETING_PROTECTION_MAX_SECONDS,
@@ -208,12 +205,10 @@ class LocalQwenTurnPipeline:
 
     async def _timed_response(self, call_id, transcript_text: str) -> tuple[str, float]:
         started = time.perf_counter()
-        response_text = self._fixed_response_for_transcript(transcript_text)
-        if not response_text:
-            response_text = await self._generate_response(call_id, transcript_text)
+        response_text = await self._generate_response(call_id, transcript_text)
         if _is_repetitive_response(response_text):
-            logger.info("Replacing repetitive Qwen response for %s: %r", call_id, response_text)
-            response_text = self._fallback_response_for_transcript(transcript_text)
+            logger.info("Dropping repetitive Qwen response for %s: %r", call_id, response_text)
+            response_text = ""
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if not response_text:
             logger.info("Empty Qwen response for %s in %.0f ms", call_id, elapsed_ms)
@@ -235,19 +230,6 @@ class LocalQwenTurnPipeline:
     async def _generate_response(self, call_id, transcript_text: str) -> str:
         history = list(self._conversation_history.get(call_id, []))
         return await self._llm.generate(transcript_text, history)
-
-    def _fixed_response_for_transcript(self, transcript_text: str) -> str:
-        normalized = _normalize_text(transcript_text)
-        if normalized in {"sinhala", "sinhalese", "සිංහල"}:
-            return SINHALA_LANGUAGE_SELECTION_RESPONSE
-        if _has_sinhala_text(transcript_text) and _asks_for_property_options(normalized):
-            return SINHALA_PROPERTY_OPTIONS_RESPONSE
-        return ""
-
-    def _fallback_response_for_transcript(self, transcript_text: str) -> str:
-        if _has_sinhala_text(transcript_text) and _asks_for_property_options(_normalize_text(transcript_text)):
-            return SINHALA_PROPERTY_OPTIONS_RESPONSE
-        return SINHALA_CLARIFY_RESPONSE
 
     def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
         history = self._conversation_history.setdefault(call_id, [])
@@ -321,35 +303,6 @@ class LocalQwenTurnPipeline:
             after_vad_ms,
             total_turn_ms,
         )
-
-
-def _normalize_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text.casefold()).strip(" .,!?:;")
-
-
-def _asks_for_property_options(normalized_text: str) -> bool:
-    return any(
-        token in normalized_text
-        for token in (
-            "option",
-            "options",
-            "apartment",
-            "apartments",
-            "villa",
-            "villas",
-            "land",
-            "property",
-            "properties",
-            "ඉඩම්",
-            "නිවාස",
-            "මිල",
-            "විකල්ප",
-        )
-    )
-
-
-def _has_sinhala_text(text: str) -> bool:
-    return any("\u0d80" <= char <= "\u0dff" for char in text)
 
 
 def _is_repetitive_response(text: str) -> bool:
