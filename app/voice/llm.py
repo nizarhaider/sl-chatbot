@@ -48,7 +48,10 @@ class LocalQwenLLM:
             .get("content", "")
             .strip()
         )
-        return _strip_thinking_blocks(text)
+        cleaned = _strip_thinking_blocks(text)
+        if text and not cleaned:
+            logger.info("Qwen response contained thinking without a final answer; raw_chars=%s", len(text))
+        return cleaned
 
     def _get_llm(self):
         if self._llm is not None:
