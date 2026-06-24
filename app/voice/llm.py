@@ -37,7 +37,7 @@ class LocalQwenLLM:
             messages=[
                 {"role": "system", "content": HOMELANDS_LOCAL_SYSTEM_PROMPT},
                 *history,
-                {"role": "user", "content": f"{transcript_text}\n/no_think"},
+                {"role": "user", "content": transcript_text},
             ],
             temperature=LOCAL_LLM_TEMPERATURE,
             max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,
@@ -104,9 +104,15 @@ class LocalQwenLLM:
 
 
 def _strip_thinking_blocks(text: str) -> str:
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = text.strip()
+    if re.search(r"<think\b", text, flags=re.IGNORECASE) and not re.search(
+        r"</think>",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return ""
+    text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"^.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<think>.*$", "", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(
         r"(?is)^\s*(thinking|reasoning|analysis)\s*:\s*.*?(final|answer)\s*:\s*",
         "",
