@@ -5,7 +5,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-GRAPH_API_VERSION = os.environ.get("GRAPH_API_VERSION", "v22.0")
+GRAPH_API_VERSION = "v22.0"
 
 
 def _whatsapp_access_token() -> str | None:

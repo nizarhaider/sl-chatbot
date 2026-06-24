@@ -7,8 +7,8 @@ from av.audio.resampler import AudioResampler
 
 from app.voice.asr import LocalWhisperASR, is_noise_text
 from app.voice.config import (
-    GEMMA_HISTORY_MAX_MESSAGES,
-    GEMMA_PREWARM,
+    LOCAL_LLM_HISTORY_MAX_MESSAGES,
+    LOCAL_LLM_PREWARM,
     LOCAL_TURN_GREETING,
     REALTIME_TTS_PREWARM,
     TURN_END_SILENCE_CHUNKS,
@@ -18,14 +18,14 @@ from app.voice.config import (
     TURN_MIN_AUDIO_MS,
     TURN_SILENCE_THRESHOLD,
 )
-from app.voice.llm import LocalGemmaLLM
+from app.voice.llm import LocalQwenLLM
 from app.voice.tts import RealtimeOmniVoiceTTS
 from app.voice.vad import VadState, pcm_rms
 
 logger = logging.getLogger(__name__)
 
 
-class LocalGemmaTurnPipeline:
+class LocalQwenTurnPipeline:
     def __init__(
         self,
         prepare_tts_text,
@@ -36,7 +36,7 @@ class LocalGemmaTurnPipeline:
         self._interrupt_playback = interrupt_playback
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
-        self._llm = LocalGemmaLLM()
+        self._llm = LocalQwenLLM()
         self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
     async def prewarm_tts(self) -> None:
@@ -44,7 +44,7 @@ class LocalGemmaTurnPipeline:
 
     async def prewarm_models(self) -> None:
         await asyncio.to_thread(self._asr.prewarm)
-        if GEMMA_PREWARM:
+        if LOCAL_LLM_PREWARM:
             await self._llm.prewarm()
         if REALTIME_TTS_PREWARM:
             await self._tts.prewarm()
@@ -168,7 +168,7 @@ class LocalGemmaTurnPipeline:
 
         response_text, llm_ms = await self._timed_response(call_id, transcript_text)
         if not response_text or is_noise_text(response_text):
-            logger.info("Dropping empty/noise Gemma response for %s: %r", call_id, response_text)
+            logger.info("Dropping empty/noise Qwen response for %s: %r", call_id, response_text)
             return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
@@ -204,7 +204,7 @@ class LocalGemmaTurnPipeline:
         response_text = await self._generate_response(call_id, transcript_text)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if not response_text:
-            logger.info("Empty Gemma response for %s in %.0f ms", call_id, elapsed_ms)
+            logger.info("Empty Qwen response for %s in %.0f ms", call_id, elapsed_ms)
         return response_text, elapsed_ms
 
     async def _timed_speak(self, call_id, response_text, output_track, playback_generation):
@@ -232,7 +232,7 @@ class LocalGemmaTurnPipeline:
                 {"role": "assistant", "content": response_text},
             ]
         )
-        del history[:-GEMMA_HISTORY_MAX_MESSAGES]
+        del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
 
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)

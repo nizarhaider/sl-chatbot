@@ -8,12 +8,12 @@ The current voice path is:
 WhatsApp Cloud webhook -> FastAPI /webhook
 WhatsApp Calling SDP offer -> aiortc peer connection
 Inbound WhatsApp audio -> local VAD -> local Whisper STT
-Whisper transcript -> local Gemma 4 12B Q4 via llama.cpp
-Gemma text -> RealtimeTTS OmniVoice
+Whisper transcript -> local Qwen 4B Q4 via llama.cpp
+Qwen text -> RealtimeTTS OmniVoice
 OmniVoice PCM -> outbound aiortc audio track -> WhatsApp call
 ```
 
-The assistant brain is local Gemma. Do not add hosted LLM API calls to the voice path. Incoming WhatsApp text messages are ignored; this repository is voice-call-only.
+The assistant brain is local Qwen. Do not add hosted LLM API calls to the voice path. Incoming WhatsApp text messages are ignored; this repository is voice-call-only.
 
 ## Current Runtime Shape
 
@@ -67,7 +67,7 @@ Stable ASGI entrypoint that exposes `app = create_app()`.
 
 Creates the FastAPI app, mounts the WhatsApp webhook router, exposes `GET /`, and prewarms local voice models during lifespan startup.
 
-Startup prewarm loads Gemma when `GEMMA_PREWARM=true` and loads OmniVoice when `REALTIME_TTS_PREWARM=true`. Startup fails if prewarm fails so a bad GPU/model setup is caught immediately.
+Startup prewarm loads Qwen and OmniVoice. Startup fails if prewarm fails so a bad GPU/model setup is caught immediately.
 
 ### `app/api/logging.py`
 
@@ -96,7 +96,7 @@ Minimal WhatsApp Graph API client for call actions: `pre_accept` and `accept`.
 
 ### `app/voice/agent.py`
 
-Owns active call tasks, playback interruption counters, and delegates turn handling to `LocalGemmaTurnPipeline`.
+Owns active call tasks, playback interruption counters, and delegates turn handling to `LocalQwenTurnPipeline`.
 
 ### `app/voice/audio_track.py`
 
@@ -112,15 +112,17 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to local Gemma 4 12B Q4 via `llama-cpp-python`.
-6. Sends Gemma response text to OmniVoice.
+5. Sends transcript text to local Qwen 4B Q4 via `llama-cpp-python`.
+6. Sends Qwen response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
 
 ### `app/voice/asr.py`, `app/voice/llm.py`, `app/voice/tts.py`, `app/voice/config.py`
 
-Focused wrappers and settings for Whisper, Gemma, OmniVoice, prompts, and turn-control environment variables.
+Focused wrappers and hardcoded settings for Whisper, Qwen, OmniVoice, prompts, and turn-control constants.
 
 ## Environment Variables That Matter
+
+Only secrets and deployment credentials should be environment variables. Voice model settings, TTS settings, prompts, and turn-control values are hardcoded in `app/voice/config.py`; do not add environment variables for them unless explicitly requested.
 
 Core runtime:
 
@@ -128,54 +130,6 @@ Core runtime:
 VERIFY_TOKEN=my_secure_verify_token_123
 WHATSAPP_ACCESS_TOKEN=...
 PHONE_NUMBER_ID=...
-GRAPH_API_VERSION=v22.0
-```
-
-Turn control:
-
-```bash
-TURN_INPUT_CHUNK_MS=40
-TURN_SILENCE_THRESHOLD=1000
-TURN_END_SILENCE_CHUNKS=50
-TURN_GREETING_DELAY_SECONDS=1.2
-TURN_GREETING_PROTECTION_MAX_SECONDS=1.5
-TURN_MIN_AUDIO_MS=500
-```
-
-Local models:
-
-```bash
-WHISPER_MODEL=SPEAK-ASR/whisper-medium-si-merged
-WHISPER_DEVICE=cuda
-GEMMA_MODEL_REPO=google/gemma-4-12B-it-qat-q4_0-gguf
-GEMMA_N_GPU_LAYERS=-1
-GEMMA_CONTEXT_TOKENS=4096
-GEMMA_BATCH_TOKENS=512
-GEMMA_THREADS=8
-GEMMA_TEMPERATURE=0.2
-GEMMA_MAX_OUTPUT_TOKENS=160
-GEMMA_PREWARM=true
-```
-
-OmniVoice:
-
-```bash
-REALTIME_TTS_DEVICE=cuda:0
-REALTIME_TTS_DTYPE=float16
-REALTIME_TTS_NUM_STEPS=12,12
-REALTIME_TTS_REF_AUDIO=app/voices/chandeera-female-sample.wav
-REALTIME_TTS_REF_TEXT=...
-REALTIME_TTS_REF_LANGUAGE=si
-REALTIME_TTS_PREWARM=true
-REALTIME_TTS_DEBUG=false
-```
-
-Logging:
-
-```bash
-IMPORTANT_LOG_PATH=run_logs/important.log
-IMPORTANT_LOG_MAX_BYTES=1048576
-IMPORTANT_LOG_BACKUPS=3
 ```
 
 ## Setup Commands For A New Vast.ai Box
@@ -222,14 +176,7 @@ tmux kill-session -t sl-webhook 2>/dev/null || true
 pkill -f 'uvicorn app.main:app' || true
 tmux new-session -d -s sl-webhook \
   "cd /workspace/sl-chatbot && \
-   .venv/bin/dotenv -f .env run -- env \
-   WHISPER_DEVICE=cuda \
-   GEMMA_N_GPU_LAYERS=-1 \
-   GEMMA_PREWARM=true \
-   REALTIME_TTS_DEVICE=cuda:0 \
-   REALTIME_TTS_DTYPE=float16 \
-   REALTIME_TTS_NUM_STEPS=12,12 \
-   IMPORTANT_LOG_PATH=run_logs/important.log \
+   .venv/bin/dotenv -f .env run -- \
    .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090 --env-file .env \
    2>&1 | tee run_logs/webhook.log"
 tmux ls
@@ -260,14 +207,14 @@ Important filtered log:
 tail -f /workspace/sl-chatbot/run_logs/important.log
 ```
 
-Use these for webhook verification, call events, SDP handling, inbound audio track start, connection state changes, transcript timings, Gemma response timings, TTS completion, and interruption behavior.
+Use these for webhook verification, call events, SDP handling, inbound audio track start, connection state changes, transcript timings, Qwen response timings, TTS completion, and interruption behavior.
 
 ## Healthy Call Path
 
 1. Meta delivers `POST /webhook`.
 2. `app.integrations.whatsapp.webhook` logs `Received call event: connect`.
 3. `app.integrations.whatsapp.webrtc` logs SDP handling and an inbound audio track.
-4. `LocalGemmaTurnPipeline.run()` plays the greeting.
+4. `LocalQwenTurnPipeline.run()` plays the greeting.
 5. Caller speaks.
 6. Logs show `Turn VAD: Speech started`.
 7. Logs show `Turn VAD: Speech ended`.

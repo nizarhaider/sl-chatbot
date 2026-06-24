@@ -1,5 +1,4 @@
 import logging
-import os
 from logging.handlers import RotatingFileHandler
 
 
@@ -14,8 +13,8 @@ class ImportantEventFilter(logging.Filter):
         "Turn transcript",
         "Turn dropped",
         "Turn response",
-        "Gemma response",
-        "Local Gemma model",
+        "Qwen response",
+        "Local Qwen model",
         "RealtimeTTS complete",
         "Greeting timings",
         "Turn timings",
@@ -45,12 +44,14 @@ def configure_logging() -> None:
 
 
 def configure_important_log() -> None:
-    path = os.environ.get("IMPORTANT_LOG_PATH", "run_logs/important.log")
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    import os
+
+    path = "run_logs/important.log"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     handler = RotatingFileHandler(
         path,
-        maxBytes=int(os.environ.get("IMPORTANT_LOG_MAX_BYTES", "1048576")),
-        backupCount=int(os.environ.get("IMPORTANT_LOG_BACKUPS", "3")),
+        maxBytes=1048576,
+        backupCount=3,
     )
     handler.setLevel(logging.INFO)
     handler.addFilter(ImportantEventFilter())

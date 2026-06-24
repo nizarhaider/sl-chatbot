@@ -1,25 +1,26 @@
 import asyncio
 import logging
+import re
 import time
 
 from app.voice.config import (
-    GEMMA_BATCH_TOKENS,
-    GEMMA_CONTEXT_TOKENS,
-    GEMMA_MAX_OUTPUT_TOKENS,
-    GEMMA_MODEL_DIR,
-    GEMMA_MODEL_FILENAME,
-    GEMMA_MODEL_PATH,
-    GEMMA_MODEL_REPO,
-    GEMMA_N_GPU_LAYERS,
-    GEMMA_TEMPERATURE,
-    GEMMA_THREADS,
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
+    LOCAL_LLM_BATCH_TOKENS,
+    LOCAL_LLM_CONTEXT_TOKENS,
+    LOCAL_LLM_MAX_OUTPUT_TOKENS,
+    LOCAL_LLM_MODEL_DIR,
+    LOCAL_LLM_MODEL_FILENAME,
+    LOCAL_LLM_MODEL_PATH,
+    LOCAL_LLM_MODEL_REPO,
+    LOCAL_LLM_N_GPU_LAYERS,
+    LOCAL_LLM_TEMPERATURE,
+    LOCAL_LLM_THREADS,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class LocalGemmaLLM:
+class LocalQwenLLM:
     def __init__(self) -> None:
         self._llm = None
         self._lock = asyncio.Lock()
@@ -38,15 +39,16 @@ class LocalGemmaLLM:
                 *history,
                 {"role": "user", "content": transcript_text},
             ],
-            temperature=GEMMA_TEMPERATURE,
-            max_tokens=GEMMA_MAX_OUTPUT_TOKENS,
+            temperature=LOCAL_LLM_TEMPERATURE,
+            max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,
         )
-        return (
+        text = (
             response.get("choices", [{}])[0]
             .get("message", {})
             .get("content", "")
             .strip()
         )
+        return _strip_thinking_blocks(text)
 
     def _get_llm(self):
         if self._llm is not None:
@@ -56,45 +58,51 @@ class LocalGemmaLLM:
 
         model_path = self._resolve_model_path()
         logger.info(
-            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s",
+            "Loading local Qwen model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s",
             model_path,
-            GEMMA_N_GPU_LAYERS,
-            GEMMA_CONTEXT_TOKENS,
-            GEMMA_BATCH_TOKENS,
+            LOCAL_LLM_N_GPU_LAYERS,
+            LOCAL_LLM_CONTEXT_TOKENS,
+            LOCAL_LLM_BATCH_TOKENS,
+            LOCAL_LLM_THREADS,
         )
         started = time.perf_counter()
         self._llm = Llama(
             model_path=model_path,
-            n_gpu_layers=GEMMA_N_GPU_LAYERS,
-            n_ctx=GEMMA_CONTEXT_TOKENS,
-            n_batch=GEMMA_BATCH_TOKENS,
-            n_threads=GEMMA_THREADS,
+            n_gpu_layers=LOCAL_LLM_N_GPU_LAYERS,
+            n_ctx=LOCAL_LLM_CONTEXT_TOKENS,
+            n_batch=LOCAL_LLM_BATCH_TOKENS,
+            n_threads=LOCAL_LLM_THREADS,
             verbose=False,
         )
-        logger.info("Local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
+        logger.info("Local Qwen model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
         return self._llm
 
     def _resolve_model_path(self) -> str:
-        if GEMMA_MODEL_PATH:
-            return GEMMA_MODEL_PATH
+        if LOCAL_LLM_MODEL_PATH:
+            return LOCAL_LLM_MODEL_PATH
 
         from huggingface_hub import HfApi, hf_hub_download
 
-        filename = GEMMA_MODEL_FILENAME
+        filename = LOCAL_LLM_MODEL_FILENAME
         if not filename:
-            q4_files = [
+            gguf_files = [
                 path
-                for path in HfApi().list_repo_files(GEMMA_MODEL_REPO)
-                if path.lower().endswith(".gguf") and "q4_0" in path.lower()
+                for path in HfApi().list_repo_files(LOCAL_LLM_MODEL_REPO)
+                if path.lower().endswith(".gguf") and "q4" in path.lower()
             ]
-            if not q4_files:
+            if not gguf_files:
                 raise RuntimeError(
-                    f"No Q4_0 GGUF file found in Hugging Face repo {GEMMA_MODEL_REPO!r}; "
-                    "set GEMMA_MODEL_FILENAME or GEMMA_MODEL_PATH."
+                    f"No Q4 GGUF file found in Hugging Face repo {LOCAL_LLM_MODEL_REPO!r}; "
+                    "update LOCAL_LLM_MODEL_FILENAME or LOCAL_LLM_MODEL_PATH in app/voice/config.py."
                 )
-            filename = sorted(q4_files)[0]
+            filename = sorted(gguf_files)[0]
 
-        kwargs = {"repo_id": GEMMA_MODEL_REPO, "filename": filename}
-        if GEMMA_MODEL_DIR:
-            kwargs["local_dir"] = GEMMA_MODEL_DIR
+        kwargs = {"repo_id": LOCAL_LLM_MODEL_REPO, "filename": filename}
+        if LOCAL_LLM_MODEL_DIR:
+            kwargs["local_dir"] = LOCAL_LLM_MODEL_DIR
         return hf_hub_download(**kwargs)
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    return text.strip()

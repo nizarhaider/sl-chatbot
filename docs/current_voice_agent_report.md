@@ -14,7 +14,7 @@ Runtime timestamp checked: 2026-06-21T10:19:11+00:00
 
 ## Executive Summary
 
-The current WhatsApp voice agent is running end-to-end on a Vast.ai GPU instance. The live call path completed successfully with no logged application errors, no empty Gemma responses, no empty Whisper transcripts, and no TTS failures.
+The current WhatsApp voice agent is running end-to-end on a Vast.ai GPU instance. The live call path completed successfully with no logged application errors, no empty Qwen responses, no empty Whisper transcripts, and no TTS failures.
 
 The latest test call shows that the system can:
 
@@ -24,11 +24,11 @@ The latest test call shows that the system can:
 - Segment speech using local RMS VAD.
 - Transcribe Sinhala and Sinhala/English mixed speech with local Whisper.
 - Maintain short per-call conversation history across turns.
-- Generate local Gemma responses without hosted LLM APIs.
+- Generate local Qwen responses without hosted LLM APIs.
 - Synthesize Sinhala speech through RealtimeTTS OmniVoice.
 - Stream PCM audio back into the outbound aiortc track.
 
-The strongest current bottleneck is ASR quality for noisy or code-mixed Sinhala speech. Gemma and TTS are responding reliably, but several transcripts are garbled enough that the agent asks the caller to repeat. When the transcript is clear enough, the agent answers property questions correctly and uses the available mock Homelands property data.
+The strongest current bottleneck is ASR quality for noisy or code-mixed Sinhala speech. Qwen and TTS are responding reliably, but several transcripts are garbled enough that the agent asks the caller to repeat. When the transcript is clear enough, the agent answers property questions correctly and uses the available mock Homelands property data.
 
 ## Current Architecture
 
@@ -43,14 +43,14 @@ WhatsApp Cloud webhook
   -> local audio resampling to 16 kHz mono PCM
   -> local RMS VAD turn detection
   -> local Whisper STT
-  -> local Gemma 4 12B Q4 via llama.cpp / llama-cpp-python
+  -> local Qwen 4B Q4 via llama.cpp / llama-cpp-python
   -> RealtimeTTS OmniVoice synthesis
   -> outbound 48 kHz stereo PCM buffering
   -> aiortc outbound audio track
   -> WhatsApp call audio
 ```
 
-The assistant brain remains local Gemma. No hosted LLM API is in the voice path.
+The assistant brain remains local Qwen. No hosted LLM API is in the voice path.
 
 ## Runtime Hardware
 
@@ -74,7 +74,7 @@ Live hardware reported by the active Vast instance:
 | Swap | 8.0 GiB |
 | Root/workspace disk | 32 GiB total, 19 GiB used, 14 GiB available |
 
-The GPU memory footprint is high but expected for the current stack. At inspection, about 13.1 GiB of 16.3 GiB VRAM was in use after loading Whisper, Gemma Q4, and OmniVoice. This leaves limited headroom on 16 GB GPUs, especially if model context, TTS settings, or concurrent calls increase.
+The GPU memory footprint is high but expected for the current stack. At inspection, the prior stack used about 13.1 GiB of 16.3 GiB VRAM after loading Whisper, the local LLM, and OmniVoice. This leaves limited headroom on 16 GB GPUs, especially if model context, TTS settings, or concurrent calls increase.
 
 ## Runtime Software
 
@@ -101,15 +101,7 @@ tmux session: sl-webhook
   .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8081 --env-file .env
 ```
 
-The webhook process is started with these runtime exports:
-
-```text
-WHISPER_DEVICE=cuda
-GEMMA_MODEL_REPO=google/gemma-4-12B-it-qat-q4_0-gguf
-GEMMA_N_GPU_LAYERS=-1
-GEMMA_CONTEXT_TOKENS=4096
-GEMMA_PREWARM=true
-```
+Voice model, TTS, prompt, and turn-control settings are hardcoded in `app/voice/config.py`.
 
 ## Model Configuration
 
@@ -120,18 +112,18 @@ Current model path and settings observed in logs:
 | ASR | SPEAK-ASR/whisper-medium-si-merged |
 | ASR device | cuda |
 | ASR dtype | torch.float16 |
-| LLM | google/gemma-4-12B-it-qat-q4_0-gguf |
-| LLM file | gemma-4-12b-it-qat-q4_0.gguf |
+| LLM | Qwen/Qwen3-4B-GGUF |
+| LLM file | Qwen3-4B-Q4_K_M.gguf |
 | LLM backend | llama-cpp-python / llama.cpp |
 | LLM GPU layers | -1, all supported layers in VRAM |
-| LLM context | 4096 tokens |
-| LLM batch | 512 tokens |
+| LLM context | 2048 tokens |
+| LLM batch | 256 tokens |
 | TTS | RealtimeTTS OmniVoice |
 | TTS device | cuda:0 |
 | TTS dtype | float16 |
 | TTS step schedule | observed setup uses low-latency OmniVoice settings |
 
-Conversation memory is now enabled in the deployed commit. The agent keeps the last 6 user/assistant turns per active call and passes them into Gemma as chat history before the latest transcript.
+Conversation memory is enabled. The agent keeps the configured recent user/assistant messages per active call and passes them into Qwen as chat history before the latest transcript.
 
 ## Startup And Prewarm
 
@@ -139,13 +131,13 @@ Relevant startup events:
 
 ```text
 2026-06-21 10:10:11.982 Loading Hugging Face Whisper ASR model: SPEAK-ASR/whisper-medium-si-merged (device: cuda dtype: torch.float16)
-2026-06-21 10:11:50.666 Loading local Gemma model: ... gemma-4-12b-it-qat-q4_0.gguf n_gpu_layers=-1 n_ctx=4096 n_batch=512
-2026-06-21 10:11:51.894 Local Gemma model loaded in 1227 ms
+2026-06-21 10:11:50.666 Loading local Qwen model: ... Qwen3-4B-Q4_K_M.gguf n_gpu_layers=-1 n_ctx=2048 n_batch=256
+2026-06-21 10:11:51.894 Local Qwen model loaded in 1227 ms
 2026-06-21 10:12:24.610 WEBHOOK_VERIFIED
 2026-06-21 10:12:29.160 WEBHOOK_VERIFIED
 ```
 
-Gemma itself loaded quickly once the model was already available on disk. The longer startup phase is dominated by Whisper and OmniVoice initialization and dependency/model availability.
+Qwen itself loaded quickly once the model was already available on disk. The longer startup phase is dominated by Whisper and OmniVoice initialization and dependency/model availability.
 
 ## Latest Call Summary
 
@@ -171,7 +163,7 @@ Received call event: terminate
 Connection state: closed
 ```
 
-No errors, tracebacks, empty Gemma responses, empty transcripts, or TTS failures were found in the inspected logs.
+No errors, tracebacks, empty Qwen responses, empty transcripts, or TTS failures were found in the inspected logs.
 
 ## Latency Stats
 
@@ -180,7 +172,7 @@ Stats from 11 completed caller turns in the latest call:
 | Metric | Average | Minimum | Maximum |
 | --- | ---: | ---: | ---: |
 | Whisper STT | 321 ms | 135 ms | 549 ms |
-| Gemma LLM | 592 ms | 277 ms | 1,071 ms |
+| Qwen LLM | 592 ms | 277 ms | 1,071 ms |
 | TTS wall time | 946 ms | 381 ms | 1,844 ms |
 | Synthesized audio duration | 9,389 ms | 2,720 ms | 18,400 ms |
 | Post-VAD response time | 1,860 ms | 817 ms | 3,190 ms |
@@ -189,7 +181,7 @@ Stats from 11 completed caller turns in the latest call:
 Interpretation:
 
 - STT latency is strong. The average transcription time was about 0.32 seconds.
-- Gemma latency is strong for a local 12B Q4 model. The average response generation time was about 0.59 seconds.
+- Qwen latency is strong for a local 4B Q4 model. The average response generation time was about 0.59 seconds.
 - TTS generation wall time is also strong. It averaged under 1 second.
 - The largest user-perceived delay is dominated by how much audio the TTS response produces. Some responses generated 10-18 seconds of audio, so the system can feel slower even when compute latency is low.
 - The current system is viable for single-call testing on a 16 GB RTX 5080, but VRAM headroom is limited.
@@ -256,7 +248,7 @@ The new conversation history appears to be working. The later property answer be
 ## Current Strengths
 
 - End-to-end call pipeline is operational.
-- Local Gemma response latency is very good.
+- Local Qwen response latency is very good.
 - Local Whisper transcription latency is very good.
 - TTS generation wall time is fast enough for interactive use.
 - History-enabled turn handling improves continuity across caller turns.
@@ -319,4 +311,3 @@ Infrastructure:
 - 16 GB VRAM is workable for one active call, but leaves limited headroom.
 - For more stable experimentation, 24 GB GPUs such as RTX 3090/4090 are safer.
 - For repeated fresh deployments, build a prebuilt image or wheelhouse to avoid rebuilding CUDA dependencies and `llama-cpp-python` every time.
-
