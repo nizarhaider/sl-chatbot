@@ -4,6 +4,7 @@ import re
 
 from aiortc import MediaStreamTrack
 
+from app.dashboard.state import dashboard_state
 from app.voice.audio_track import RealtimeAudioTrack
 from app.voice.turn_pipeline import LocalQwenTurnPipeline
 
@@ -82,6 +83,7 @@ class VoiceAgent:
         finally:
             self.active_calls.pop(call_id, None)
             self.playback_generation.pop(call_id, None)
+            dashboard_state.end_call(call_id)
             logger.info("Cleaned up session for %s", call_id)
 
 
