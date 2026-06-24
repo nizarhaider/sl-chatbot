@@ -22,7 +22,7 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Call Dashboard</title>
+  <title>Call Sessions</title>
   <style>
     :root {
       color-scheme: light;
@@ -148,7 +148,7 @@ DASHBOARD_HTML = """
 </head>
 <body>
   <header>
-    <h1>Live Calls</h1>
+    <h1>Call Sessions</h1>
     <div class="status" id="status">Connecting...</div>
   </header>
   <main>
@@ -168,9 +168,10 @@ DASHBOARD_HTML = """
 
     function render(data) {
       const calls = data.calls || [];
-      statusEl.textContent = `${calls.length} live call${calls.length === 1 ? "" : "s"} | Updated ${new Date().toLocaleTimeString()}`;
+      const active = calls.filter(call => call.status === "active").length;
+      statusEl.textContent = `${active} active | ${calls.length} saved | Updated ${new Date().toLocaleTimeString()}`;
       if (!calls.length) {
-        callsEl.innerHTML = '<div class="empty">No live calls</div>';
+        callsEl.innerHTML = '<div class="empty">No call sessions yet</div>';
         return;
       }
       callsEl.innerHTML = calls.map(call => `
@@ -178,7 +179,7 @@ DASHBOARD_HTML = """
           <div class="callHeader">
             <div class="callTitle">
               <div class="phone">${escapeHtml(call.caller_phone || "Unknown caller")}</div>
-              <div class="callId">${escapeHtml(call.call_id)} | Started ${formatTime(call.started_at)}</div>
+              <div class="callId">${escapeHtml(call.call_id)} | Started ${formatTime(call.started_at)}${call.ended_at ? ` | Ended ${formatTime(call.ended_at)}` : ""}</div>
             </div>
             <div class="pill">${escapeHtml(call.status)}</div>
           </div>

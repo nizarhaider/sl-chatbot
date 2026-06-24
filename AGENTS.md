@@ -77,7 +77,7 @@ Configures global logging and the filtered rotating important-call log.
 
 ### `app/dashboard/router.py`, `app/dashboard/state.py`
 
-Serves `GET /dashboard` and `GET /dashboard/calls`. Live call state is in-memory and records active call metadata plus caller/assistant transcript events for currently running calls.
+Serves `GET /dashboard` and `GET /dashboard/calls`. The dashboard records active and ended call metadata plus caller/assistant transcript events. Recent sessions are persisted to `run_logs/call_sessions.json`.
 
 ### `app/integrations/whatsapp/webhook.py`
 

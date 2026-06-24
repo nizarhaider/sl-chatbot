@@ -22,8 +22,8 @@ The app listens on `http://localhost:8000` by default.
 
 - `GET /webhook`: Meta webhook verification.
 - `POST /webhook`: WhatsApp status and call events.
-- `GET /dashboard`: live call dashboard.
-- `GET /dashboard/calls`: live call dashboard JSON.
+- `GET /dashboard`: call sessions dashboard with live and ended transcripts.
+- `GET /dashboard/calls`: call sessions dashboard JSON.
 - `GET /`: health check.
 
 Incoming text messages are ignored. This repository is voice-call-only.
