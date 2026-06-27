@@ -20,14 +20,14 @@ from app.voice.config import (
     TURN_MIN_AUDIO_MS,
     TURN_SILENCE_THRESHOLD,
 )
-from app.voice.llm import LocalQwenLLM
+from app.voice.llm import LocalGemmaLLM
 from app.voice.tts import RealtimeOmniVoiceTTS
 from app.voice.vad import VadState, pcm_rms
 
 logger = logging.getLogger(__name__)
 
 
-class LocalQwenTurnPipeline:
+class LocalGemmaTurnPipeline:
     def __init__(
         self,
         prepare_tts_text,
@@ -38,7 +38,7 @@ class LocalQwenTurnPipeline:
         self._interrupt_playback = interrupt_playback
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
-        self._llm = LocalQwenLLM()
+        self._llm = LocalGemmaLLM()
         self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
     async def prewarm_tts(self) -> None:
@@ -171,7 +171,7 @@ class LocalQwenTurnPipeline:
 
         response_text, llm_ms = await self._timed_response(call_id, transcript_text)
         if not response_text or is_noise_text(response_text):
-            logger.info("Dropping empty/noise Qwen response for %s: %r", call_id, response_text)
+            logger.info("Dropping empty/noise Gemma response for %s: %r", call_id, response_text)
             return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
@@ -207,11 +207,11 @@ class LocalQwenTurnPipeline:
         started = time.perf_counter()
         response_text = await self._generate_response(call_id, transcript_text)
         if _is_repetitive_response(response_text):
-            logger.info("Dropping repetitive Qwen response for %s: %r", call_id, response_text)
+            logger.info("Dropping repetitive Gemma response for %s: %r", call_id, response_text)
             response_text = ""
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if not response_text:
-            logger.info("Empty Qwen response for %s in %.0f ms", call_id, elapsed_ms)
+            logger.info("Empty Gemma response for %s in %.0f ms", call_id, elapsed_ms)
         return response_text, elapsed_ms
 
     async def _timed_speak(self, call_id, response_text, output_track, playback_generation):

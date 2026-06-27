@@ -6,7 +6,7 @@ The voice stack is intentionally local:
 
 ```text
 WhatsApp Cloud webhook -> FastAPI webhook
-WhatsApp WebRTC audio -> local Whisper STT -> local Qwen 4B Q4 -> RealtimeTTS OmniVoice -> WhatsApp WebRTC audio
+WhatsApp WebRTC audio -> local Whisper STT -> local Gemma 4 E4B Q4 -> RealtimeTTS OmniVoice -> WhatsApp WebRTC audio
 ```
 
 ## Local Development
@@ -34,9 +34,9 @@ Incoming text messages are ignored. This repository is voice-call-only.
 - [app/api/app.py](/Users/nizar/Documents/Projects/sl_chatbot/app/api/app.py:1): FastAPI app creation and model prewarm.
 - [app/integrations/whatsapp/webhook.py](/Users/nizar/Documents/Projects/sl_chatbot/app/integrations/whatsapp/webhook.py:1): webhook verification and call-event dispatch.
 - [app/integrations/whatsapp/webrtc.py](/Users/nizar/Documents/Projects/sl_chatbot/app/integrations/whatsapp/webrtc.py:1): WhatsApp SDP/WebRTC handling.
-- [app/voice/turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice/turn_pipeline.py:1): local turn loop, VAD, ASR, Qwen, and TTS orchestration.
+- [app/voice/turn_pipeline.py](/Users/nizar/Documents/Projects/sl_chatbot/app/voice/turn_pipeline.py:1): local turn loop, VAD, ASR, Gemma, and TTS orchestration.
 
-The pipeline uses simple RMS-based VAD, transcribes completed caller turns with Whisper, generates responses with local Qwen through `llama-cpp-python`, and streams OmniVoice PCM back into the WhatsApp WebRTC output track.
+The pipeline uses simple RMS-based VAD, transcribes completed caller turns with Whisper, generates responses with local Gemma through `llama-cpp-python`, and streams OmniVoice PCM back into the WhatsApp WebRTC output track.
 
 ## Environment
 

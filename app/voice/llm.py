@@ -20,7 +20,7 @@ from app.voice.config import (
 logger = logging.getLogger(__name__)
 
 
-class LocalQwenLLM:
+class LocalGemmaLLM:
     def __init__(self) -> None:
         self._llm = None
         self._lock = asyncio.Lock()
@@ -50,7 +50,7 @@ class LocalQwenLLM:
         )
         cleaned = _strip_thinking_blocks(text)
         if text and not cleaned:
-            logger.info("Qwen response contained thinking without a final answer; raw_chars=%s", len(text))
+            logger.info("Gemma response contained thinking without a final answer; raw_chars=%s", len(text))
         return cleaned
 
     def _get_llm(self):
@@ -61,7 +61,7 @@ class LocalQwenLLM:
 
         model_path = self._resolve_model_path()
         logger.info(
-            "Loading local Qwen model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s",
+            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s",
             model_path,
             LOCAL_LLM_N_GPU_LAYERS,
             LOCAL_LLM_CONTEXT_TOKENS,
@@ -77,7 +77,7 @@ class LocalQwenLLM:
             n_threads=LOCAL_LLM_THREADS,
             verbose=False,
         )
-        logger.info("Local Qwen model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
+        logger.info("Local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
         return self._llm
 
     def _resolve_model_path(self) -> str:

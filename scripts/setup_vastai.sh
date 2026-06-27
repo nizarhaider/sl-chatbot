@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
-# SPEAK-ASR/whisper-medium-si-merged ASR model and local Qwen 4B Q4.
+# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 E4B Q4.
 # =============================================================================
 
 set -euo pipefail
