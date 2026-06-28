@@ -52,7 +52,7 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = (
     "Do not include analysis, reasoning notes, markdown, or <think> blocks."
 )
 
-REALTIME_TTS_REF_AUDIO = "app/voices/female-2.wav"
+REALTIME_TTS_REF_AUDIO = "app/voices/female-3.wav"
 REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි."
 REALTIME_TTS_REF_LANGUAGE = "si"
 REALTIME_TTS_NUM_STEPS = "40,40"
