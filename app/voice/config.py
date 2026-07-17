@@ -48,6 +48,7 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = (
 REALTIME_TTS_REF_AUDIO = "app/voices/female-2.wav"
 REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි."
 REALTIME_TTS_REF_LANGUAGE = "si"
+REALTIME_TTS_MODEL_ID = "2broke2code/serendib-omnivoice-finetuned"
 REALTIME_TTS_NUM_STEPS = "20,20"
 REALTIME_TTS_SPEED = 1.0
 REALTIME_TTS_DEVICE = "cuda:0"

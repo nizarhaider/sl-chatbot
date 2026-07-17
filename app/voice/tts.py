@@ -8,6 +8,7 @@ from app.voice.config import (
     REALTIME_TTS_DEBUG,
     REALTIME_TTS_DEVICE,
     REALTIME_TTS_DTYPE,
+    REALTIME_TTS_MODEL_ID,
     REALTIME_TTS_NUM_STEPS,
     REALTIME_TTS_REF_AUDIO,
     REALTIME_TTS_REF_LANGUAGE,
@@ -102,6 +103,7 @@ class RealtimeOmniVoiceTTS:
             language=REALTIME_TTS_REF_LANGUAGE,
         )
         engine = PatchedOmniVoiceEngine(
+            model_id=REALTIME_TTS_MODEL_ID,
             voice=voice,
             device_map=REALTIME_TTS_DEVICE,
             dtype=getattr(torch, REALTIME_TTS_DTYPE),
