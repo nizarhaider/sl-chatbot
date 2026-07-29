@@ -7,6 +7,7 @@ from app.voice.config import (
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
     LOCAL_LLM_BATCH_TOKENS,
     LOCAL_LLM_CONTEXT_TOKENS,
+    LOCAL_LLM_FLASH_ATTENTION,
     LOCAL_LLM_MAX_OUTPUT_TOKENS,
     LOCAL_LLM_MODEL_DIR,
     LOCAL_LLM_MODEL_FILENAME,
@@ -61,12 +62,13 @@ class LocalGemmaLLM:
 
         model_path = self._resolve_model_path()
         logger.info(
-            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s",
+            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
             model_path,
             LOCAL_LLM_N_GPU_LAYERS,
             LOCAL_LLM_CONTEXT_TOKENS,
             LOCAL_LLM_BATCH_TOKENS,
             LOCAL_LLM_THREADS,
+            LOCAL_LLM_FLASH_ATTENTION,
         )
         started = time.perf_counter()
         self._llm = Llama(
@@ -75,6 +77,7 @@ class LocalGemmaLLM:
             n_ctx=LOCAL_LLM_CONTEXT_TOKENS,
             n_batch=LOCAL_LLM_BATCH_TOKENS,
             n_threads=LOCAL_LLM_THREADS,
+            flash_attn=LOCAL_LLM_FLASH_ATTENTION,
             verbose=False,
         )
         logger.info("Local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)

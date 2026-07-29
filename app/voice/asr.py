@@ -43,7 +43,7 @@ class LocalWhisperASR:
 
         import torch
 
-        with torch.no_grad():
+        with torch.inference_mode():
             generated_ids = model.generate(
                 input_features,
                 attention_mask=attention_mask,
@@ -72,6 +72,7 @@ class LocalWhisperASR:
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
             use_safetensors=True,
+            attn_implementation="sdpa",
         ).to(device)
         self._model.eval()
         self._device = device

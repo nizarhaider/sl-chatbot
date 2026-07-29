@@ -68,7 +68,7 @@ class RealtimeOmniVoiceTTS:
                     return False
 
                 try:
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
 
