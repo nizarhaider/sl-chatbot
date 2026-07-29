@@ -161,8 +161,7 @@ Manual dependency sync on the remote host:
 
 ```bash
 cd /workspace/sl-chatbot
-CMAKE_ARGS='-DGGML_CUDA=on' FORCE_CMAKE=1 \
-  uv sync --no-binary-package llama-cpp-python --reinstall-package llama-cpp-python
+uv sync
 ```
 
 Compile-check Python files:
