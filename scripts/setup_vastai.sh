@@ -54,11 +54,8 @@ else
   echo "WARNING: .env not found locally; skipping .env copy."
 fi
 
-if [ -f .env ]; then
-  # shellcheck source=/dev/null
-  set -a
-  source .env
-  set +a
+if [ -f .env ] && [ -z "${NGROK_AUTH_TOKEN}" ]; then
+  NGROK_AUTH_TOKEN="$(sed -n 's/^NGROK_AUTH_TOKEN=//p' .env | head -n 1)"
 fi
 
 log "Installing system packages..."
