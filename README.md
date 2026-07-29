@@ -97,10 +97,13 @@ curl -sS 'http://127.0.0.1:8000/webhook?hub.mode=subscribe&hub.verify_token=my_s
 
 ## Vast.ai Deployment
 
-The production profile targets a single 12 GB GPU. Whisper and OmniVoice stay
-on CUDA while 24 of Gemma's 42 layers are GPU-offloaded; the remaining layers
-run on CPU. This keeps the same model weights and output quality while trading
-some LLM latency for a lower hosting tier.
+The production profile targets a single 12 GB GPU. Whisper, OmniVoice, and all
+42 Gemma layers stay on CUDA. Inference mode, SDPA/flash attention, and a
+smaller llama.cpp batch keep the exact model weights within the available
+VRAM.
+
+See [`docs/hosting_cost_report.md`](docs/hosting_cost_report.md) for the
+measured memory, latency, disk usage, and current provider comparison.
 
 One-shot setup from this repo:
 
