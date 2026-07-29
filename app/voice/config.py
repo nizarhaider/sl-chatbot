@@ -46,8 +46,8 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = (
     "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "
 )
 
-REALTIME_TTS_REF_AUDIO = "app/voices/female-2.wav"
-REALTIME_TTS_REF_TEXT = "ඔබතුමියගේ internet connection එකේ ඇතිවී තිබෙන තාක්ෂණික දෝෂය පිළිබඳව මේවෙනකොටත් අපට වාර්තා වී තිබෙනවා. අපේ Technician කෙනෙක් ඉදිරි පැය විසිහතර ඇතුළත ඔබව visit කරලා ඔබේ ගැටලුට විසඳුමක් ලබාදේවි."
+REALTIME_TTS_REF_AUDIO = "app/voices/female-002.wav"
+REALTIME_TTS_REF_TEXT = "Sir ගේ area එකේ දැනට හදිසි network outage එකක් තියෙනවා. මේ වෙලාවේ අපේ technical team එක මේක fix කරගෙන යන ගමන් ඉන්නේ , ඒ නිසා සිදුව අපහසුතාවයට සමාවෙන්න"
 REALTIME_TTS_REF_LANGUAGE = "si"
 REALTIME_TTS_MODEL_ID = "2broke2code/serendib-omnivoice-finetuned-v2"
 REALTIME_TTS_NUM_STEPS = "20,20"
