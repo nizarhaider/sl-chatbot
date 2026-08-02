@@ -1,10 +1,16 @@
 import json
+import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from app.dashboard.neon_store import NeonCallStore
 
 SESSION_STORE_PATH = "run_logs/call_sessions.json"
 MAX_STORED_CALLS = 100
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,12 +71,23 @@ class LiveCall:
 
 
 class DashboardState:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        call_store: NeonCallStore | None = None,
+        session_store_path: str = SESSION_STORE_PATH,
+    ) -> None:
+        self._session_store_path = session_store_path
+        self._call_store = call_store if call_store is not None else NeonCallStore.from_env()
+        self._write_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="neon-call-writer")
+            if self._call_store is not None
+            else None
+        )
         self._calls: dict[str, LiveCall] = self._load_calls()
 
     def start_call(self, call_id: str, caller_phone: str = "") -> None:
         self._calls[call_id] = LiveCall(call_id=call_id, caller_phone=caller_phone)
-        self._persist()
+        self._persist(self._calls[call_id])
 
     def mark_call_active(self, call_id: str, caller_phone: str = "") -> None:
         call = self._calls.get(call_id)
@@ -82,7 +99,7 @@ class DashboardState:
         call.status = "active"
         call.ended_at = None
         call.updated_at = time.time()
-        self._persist()
+        self._persist(call)
 
     def end_call(self, call_id: str) -> None:
         call = self._calls.get(call_id)
@@ -92,7 +109,7 @@ class DashboardState:
         call.ended_at = time.time()
         call.updated_at = call.ended_at
         self._trim_old_calls()
-        self._persist()
+        self._persist(call)
 
     def add_transcript(self, call_id: str, speaker: str, text: str) -> None:
         if not text:
@@ -103,7 +120,7 @@ class DashboardState:
             self._calls[call_id] = call
         call.transcript.append(TranscriptEvent(speaker=speaker, text=text))
         call.updated_at = time.time()
-        self._persist()
+        self._persist(call)
 
     def snapshot(self) -> dict:
         calls = sorted(
@@ -113,10 +130,10 @@ class DashboardState:
         return {"calls": [call.to_dict() for call in calls]}
 
     def _load_calls(self) -> dict[str, LiveCall]:
-        if not os.path.exists(SESSION_STORE_PATH):
+        if not os.path.exists(self._session_store_path):
             return {}
         try:
-            with open(SESSION_STORE_PATH, encoding="utf-8") as handle:
+            with open(self._session_store_path, encoding="utf-8") as handle:
                 data = json.load(handle)
         except Exception:
             return {}
@@ -127,12 +144,25 @@ class DashboardState:
                 calls[call.call_id] = call
         return calls
 
-    def _persist(self) -> None:
-        os.makedirs(os.path.dirname(SESSION_STORE_PATH), exist_ok=True)
+    def _persist(self, call: LiveCall) -> None:
+        Path(self._session_store_path).parent.mkdir(parents=True, exist_ok=True)
         self._trim_old_calls()
         payload = self.snapshot()
-        with open(SESSION_STORE_PATH, "w", encoding="utf-8") as handle:
+        with open(self._session_store_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
+        if self._write_executor is not None:
+            self._write_executor.submit(self._save_call_to_neon, call.to_dict())
+
+    def _save_call_to_neon(self, call: dict) -> None:
+        try:
+            assert self._call_store is not None
+            self._call_store.save_call(call)
+        except Exception:
+            logger.exception("Failed to persist call %s to Neon", call.get("call_id"))
+
+    def close(self) -> None:
+        if self._write_executor is not None:
+            self._write_executor.shutdown(wait=True)
 
     def _trim_old_calls(self) -> None:
         if len(self._calls) <= MAX_STORED_CALLS:

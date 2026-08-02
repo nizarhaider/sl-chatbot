@@ -26,7 +26,12 @@ async def prewarm_voice_models() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await prewarm_voice_models()
-    yield
+    try:
+        yield
+    finally:
+        from app.dashboard.state import dashboard_state
+
+        dashboard_state.close()
 
 
 def create_app() -> FastAPI:
