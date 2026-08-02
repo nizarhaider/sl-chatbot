@@ -15,9 +15,9 @@ from app.voice.config import (
     REALTIME_TTS_PREWARM,
     TURN_END_SILENCE_CHUNKS,
     TURN_GREETING_DELAY_SECONDS,
-    TURN_GREETING_PROTECTION_MAX_SECONDS,
     TURN_INPUT_CHUNK_SIZE,
     TURN_MIN_AUDIO_MS,
+    TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
 )
 from app.voice.llm import LocalGemmaLLM
@@ -79,16 +79,12 @@ class LocalGemmaTurnPipeline:
         if not greeting_seconds:
             return
 
-        protected_seconds = min(
-            greeting_seconds + 0.25,
-            TURN_GREETING_PROTECTION_MAX_SECONDS,
-        )
-        logger.info(
-            "Protecting Homelands language prompt for %.2f seconds before VAD; audio was %.2f seconds",
-            protected_seconds,
+        await self._discard_playback_echo(
+            call_id,
+            input_track,
+            output_track,
             greeting_seconds,
         )
-        await self._discard_input_audio(input_track, protected_seconds)
 
     async def _run_turn_loop(self, call_id, input_track, output_track, playback_generation) -> None:
         vad = VadState()
@@ -106,6 +102,7 @@ class LocalGemmaTurnPipeline:
                 chunk_buffer.extend(resampled.to_ndarray().tobytes())
                 await self._consume_chunks(
                     call_id,
+                    input_track,
                     chunk_buffer,
                     vad,
                     output_track,
@@ -115,6 +112,7 @@ class LocalGemmaTurnPipeline:
     async def _consume_chunks(
         self,
         call_id,
+        input_track,
         chunk_buffer: bytearray,
         vad: VadState,
         output_track,
@@ -143,6 +141,7 @@ class LocalGemmaTurnPipeline:
             turn = vad.finish()
             await self._handle_turn(
                 call_id=call_id,
+                input_track=input_track,
                 output_track=output_track,
                 playback_generation=playback_generation,
                 turn_started_at=turn.started_at,
@@ -153,6 +152,7 @@ class LocalGemmaTurnPipeline:
     async def _handle_turn(
         self,
         call_id,
+        input_track,
         output_track,
         playback_generation,
         turn_started_at: float | None,
@@ -182,6 +182,12 @@ class LocalGemmaTurnPipeline:
             response_text,
             output_track,
             playback_generation,
+        )
+        await self._discard_playback_echo(
+            call_id,
+            input_track,
+            output_track,
+            tts_audio_seconds,
         )
         self._log_turn_timings(
             call_id,
@@ -275,7 +281,30 @@ class LocalGemmaTurnPipeline:
                 logger.info("Protected prompt input drain ended: %s", exc)
                 break
 
-        logger.info("Discarded %s inbound frames during protected prompt", discarded_frames)
+        logger.info("Discarded %s inbound frames during protected playback", discarded_frames)
+
+    async def _discard_playback_echo(
+        self,
+        call_id,
+        input_track,
+        output_track,
+        generated_audio_seconds: float,
+    ) -> None:
+        if not generated_audio_seconds:
+            return
+
+        pending_seconds = min(
+            generated_audio_seconds,
+            output_track.pending_audio_seconds,
+        )
+        protected_seconds = pending_seconds + TURN_PLAYBACK_ECHO_TAIL_SECONDS
+        logger.info(
+            "Suppressing inbound audio for %s during playback: pending=%.2f seconds tail=%.2f seconds",
+            call_id,
+            pending_seconds,
+            TURN_PLAYBACK_ECHO_TAIL_SECONDS,
+        )
+        await self._discard_input_audio(input_track, protected_seconds)
 
     def _log_turn_timings(
         self,

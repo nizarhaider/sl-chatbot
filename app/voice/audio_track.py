@@ -23,6 +23,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._time_base = Fraction(1, self._sample_rate)
         self._samples_per_frame = self._sample_rate // 50
         self._buffer = b""
+        self._pending_audio_bytes = 0
         self._start_time = None
         self._logged_non_silent_frames = 0
 
@@ -34,6 +35,11 @@ class RealtimeAudioTrack(MediaStreamTrack):
     def frame_size_bytes(self) -> int:
         return self._samples_per_frame * self._channels * 2
 
+    @property
+    def pending_audio_seconds(self) -> float:
+        bytes_per_second = self._sample_rate * self._channels * 2
+        return self._pending_audio_bytes / bytes_per_second
+
     def clear_buffer(self) -> None:
         while not self.queue.empty():
             try:
@@ -41,6 +47,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
             except asyncio.QueueEmpty:
                 break
         self._buffer = b""
+        self._pending_audio_bytes = 0
 
     def add_pcm_audio(self, pcm: bytes, sample_rate: int) -> None:
         if not pcm:
@@ -49,6 +56,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         mono = self._resample_if_needed(pcm, sample_rate)
         stereo = np.repeat(mono[:, None], self._channels, axis=1)
         output_bytes = stereo.astype(np.int16).tobytes()
+        self._pending_audio_bytes += len(output_bytes)
         self._log_queued_audio(pcm, sample_rate, mono, output_bytes)
         self.queue.put_nowait(output_bytes)
 
@@ -92,6 +100,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
 
         data_to_send = self._buffer[:target_size]
         self._buffer = self._buffer[target_size:]
+        self._pending_audio_bytes = max(0, self._pending_audio_bytes - len(data_to_send))
         return data_to_send
 
     def _make_audio_frame(self, data: bytes) -> AudioFrame:
