@@ -75,7 +75,12 @@ Required secrets and deployment credentials:
 VERIFY_TOKEN=my_secure_verify_token_123
 WHATSAPP_ACCESS_TOKEN=...
 PHONE_NUMBER_ID=...
+DATABASE_URL=postgresql://...
 ```
+
+`DATABASE_URL` should point to the same Neon database used by the hosted
+dashboard so call status and transcript updates remain available after the GPU
+instance is terminated.
 
 Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
 
@@ -97,15 +102,25 @@ curl -sS 'http://127.0.0.1:8000/webhook?hub.mode=subscribe&hub.verify_token=my_s
 
 ## Vast.ai Deployment
 
-The production profile targets a single 12 GB GPU. Whisper, OmniVoice, and all
-42 Gemma layers stay on CUDA. Inference mode, SDPA/flash attention, and a
-smaller llama.cpp batch keep the exact model weights within the available
-VRAM.
+The production profile uses at least 16 GB of GPU VRAM. Whisper, OmniVoice, and
+all 42 Gemma layers stay on CUDA. Inference mode, SDPA/flash attention, and a
+smaller llama.cpp batch keep the exact model weights within the available VRAM.
 
 See [`docs/hosting_cost_report.md`](docs/hosting_cost_report.md) for the
 measured memory, latency, disk usage, and current provider comparison.
 
-One-shot setup from this repo:
+One-command rental and setup from this repo:
+
+```bash
+./scripts/deploy_vastai.sh
+```
+
+The deployer selects the cheapest verified, on-demand, single-GPU RTX 4070,
+50-series, or 30-series offer with at least 16 GB VRAM. It rents a 40 GB disk,
+waits for SSH, then runs the setup and health checks. Preview the current choice
+without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`.
+
+To set up an instance that has already been rented:
 
 ```bash
 REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
