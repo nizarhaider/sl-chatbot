@@ -31,16 +31,8 @@ LOCAL_TURN_GREETING = (
     "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
 )
 
-HOMELANDS_PROPERTIES = (
-    "1. Horizon Residencies, Malabe: two-bedroom apartments from LKR 28 million, near schools and supermarkets. "
-    "2. Lakeview Villas, Piliyandala: three-bedroom villas from LKR 48 million, garden, parking, and lake access. "
-    "3. Green Acres, Kurunegala: ten-perch residential land from LKR 9.5 million, clear title, bank loans supported. "
-    "4. Ocean Breeze Apartments, Dehiwala: one and two-bedroom units from LKR 32 million, sea view, ready soon."
-)
-
 HOMELANDS_LOCAL_SYSTEM_PROMPT = (
     "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
-    f"Use these mock properties only: {HOMELANDS_PROPERTIES} "
     "The caller has already heard a language-selection greeting asking them to say English, Sinhala, or Tamil. "
     "If the caller only picks a language, reply in that language with one casual line introducing yourself as the SerendibAI agent for Homelands Properties. "
     "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "

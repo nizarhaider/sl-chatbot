@@ -30,7 +30,7 @@ class VoiceAgent:
         await self.cancel_call(call_id)
         self.playback_generation[call_id] = 0
         task = asyncio.create_task(
-            self._run_turn_pipeline(call_id, input_track, output_track),
+            self._run_turn_pipeline(call_id, caller_phone, input_track, output_track),
             name=f"call-{call_id}",
         )
         self.active_calls[call_id] = task
@@ -68,10 +68,11 @@ class VoiceAgent:
         cleaned = re.sub(r"\s+", " ", text).strip()
         return cleaned.rstrip(",;:").strip()
 
-    async def _run_turn_pipeline(self, call_id, input_track, output_track):
+    async def _run_turn_pipeline(self, call_id, caller_phone, input_track, output_track):
         try:
             await self.turn_pipeline.run(
                 call_id=call_id,
+                caller_phone=caller_phone,
                 input_track=input_track,
                 output_track=output_track,
                 playback_generation=self.playback_generation,

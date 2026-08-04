@@ -2,6 +2,8 @@ import asyncio
 import logging
 import re
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.voice.config import (
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
@@ -17,6 +19,7 @@ from app.voice.config import (
     LOCAL_LLM_TEMPERATURE,
     LOCAL_LLM_THREADS,
 )
+from app.voice.tools import TOOL_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +32,34 @@ class LocalGemmaLLM:
     async def prewarm(self) -> None:
         await asyncio.to_thread(self._get_llm)
 
-    async def generate(self, transcript_text: str, history: list[dict[str, str]]) -> str:
+    async def generate(
+        self,
+        transcript_text: str,
+        history: list[dict[str, str]],
+        continuation: list[dict[str, str]] | None = None,
+    ) -> str:
         async with self._lock:
-            return await asyncio.to_thread(self._generate_sync, transcript_text, history)
+            return await asyncio.to_thread(self._generate_sync, transcript_text, history, continuation or [])
 
-    def _generate_sync(self, transcript_text: str, history: list[dict[str, str]]) -> str:
+    def _generate_sync(
+        self,
+        transcript_text: str,
+        history: list[dict[str, str]],
+        continuation: list[dict[str, str]],
+    ) -> str:
+        local_time = datetime.now(ZoneInfo("Asia/Colombo")).isoformat(timespec="minutes")
         response = self._get_llm().create_chat_completion(
             messages=[
-                {"role": "system", "content": HOMELANDS_LOCAL_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": (
+                        f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\n"
+                        f"Current Sri Lanka date and time: {local_time}."
+                    ),
+                },
                 *history,
                 {"role": "user", "content": transcript_text},
+                *continuation,
             ],
             temperature=LOCAL_LLM_TEMPERATURE,
             max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,

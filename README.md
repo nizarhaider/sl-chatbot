@@ -37,7 +37,10 @@ sequenceDiagram
     Pipeline->>Pipeline: VAD detects caller turn
     Pipeline->>ASR: transcribe 16 kHz PCM
     ASR-->>Pipeline: caller transcript
-    Pipeline->>LLM: generate assistant response
+    Pipeline->>LLM: generate response or tool call
+    LLM-->>Pipeline: optional property search or booking tool call
+    Pipeline->>Pipeline: execute tool against Neon
+    Pipeline->>LLM: tool result
     LLM-->>Pipeline: response text
     Pipeline->>TTS: synthesize response
     TTS-->>RTC: response PCM
@@ -54,6 +57,7 @@ sequenceDiagram
 | [`app/integrations/whatsapp/webrtc.py`](app/integrations/whatsapp/webrtc.py) | WhatsApp SDP handling and aiortc bridge. |
 | [`app/voice/agent.py`](app/voice/agent.py) | Active call task ownership and interruption counters. |
 | [`app/voice/turn_pipeline.py`](app/voice/turn_pipeline.py) | Greeting, VAD, ASR, LLM, TTS, and streaming turn loop. |
+| [`app/voice/tools.py`](app/voice/tools.py) | Neon property search and viewing-appointment tools. |
 | [`app/voice/config.py`](app/voice/config.py) | Voice model settings, prompts, and turn-control constants. |
 | [`app/dashboard/router.py`](app/dashboard/router.py) | Browser dashboard for active and recent call sessions. |
 
@@ -81,6 +85,12 @@ DATABASE_URL=postgresql://...
 `DATABASE_URL` should point to the same Neon database used by the hosted
 dashboard so call status and transcript updates remain available after the GPU
 instance is terminated.
+
+At startup, the voice runtime creates `real_estate_properties` and
+`property_appointments` when needed and seeds the initial Homelands inventory
+for the customer mapped to `PHONE_NUMBER_ID`. Gemma reads property facts only
+through the Neon-backed tools and stores confirmed viewing appointments with
+the call ID and caller phone number.
 
 Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
 
@@ -115,8 +125,8 @@ One-command rental and setup from this repo:
 ./scripts/deploy_vastai.sh
 ```
 
-The deployer selects the cheapest verified, on-demand, single-GPU RTX 4070,
-50-series, or 30-series offer with at least 16 GB VRAM. It rents a 40 GB disk,
+The deployer selects the cheapest verified, on-demand, single-GPU RTX 4070 or
+30-series offer with at least 16 GB VRAM. It rents a 40 GB disk,
 waits for SSH, then runs the setup and health checks. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`.
 

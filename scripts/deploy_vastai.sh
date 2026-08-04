@@ -29,7 +29,7 @@ test -n "${VASTAI_API_KEY}" || fail "VASTAI_API_KEY is missing from .env"
 VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
 QUERY="num_gpus=1 gpu_ram>=16 cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1"
 
-log "Finding the cheapest verified on-demand RTX 4070, 50-series, or 30-series GPU with at least 16 GB VRAM..."
+log "Finding the cheapest verified on-demand RTX 4070 or 30-series GPU with at least 16 GB VRAM..."
 OFFER="$("${VASTAI[@]}" search offers "${QUERY}" \
   --storage "${DISK_GB}" --order dph --limit 200 \
   | "${PYTHON}" -c '
@@ -38,7 +38,7 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-allowed = re.compile(r"^RTX (?:4070|50[0-9]{2}|30[0-9]{2})", re.IGNORECASE)
+allowed = re.compile(r"^RTX (?:4070|30[0-9]{2})", re.IGNORECASE)
 eligible = [offer for offer in offers if allowed.search(str(offer.get("gpu_name", "")))]
 if not eligible:
     raise SystemExit("No eligible Vast.ai offer is currently available")

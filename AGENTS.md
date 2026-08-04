@@ -141,8 +141,9 @@ PHONE_NUMBER_ID=...
 ## Setup Commands For A New Vast.ai Box
 
 Rental policy: use an on-demand instance, choose the cheapest available single
-RTX 4070, 50-series, or 30-series GPU with at least 16 GB VRAM, and use a 40 GB
-disk. Leave a deployed instance running until the user confirms the WhatsApp
+RTX 4070 or 30-series GPU with at least 16 GB VRAM, and use a 40 GB disk. The
+prebuilt llama.cpp CUDA 12.5 wheel is not compatible with RTX 50-series GPUs.
+Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
 
 One-command rental and setup:

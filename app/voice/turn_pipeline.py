@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import time
@@ -22,6 +23,7 @@ from app.voice.config import (
 )
 from app.voice.llm import LocalGemmaLLM
 from app.voice.tts import RealtimeOmniVoiceTTS
+from app.voice.tools import CallContext, RealEstateToolService, parse_tool_call, tool_call_message
 from app.voice.vad import VadState, pcm_rms
 
 logger = logging.getLogger(__name__)
@@ -39,22 +41,25 @@ class LocalGemmaTurnPipeline:
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
         self._llm = LocalGemmaLLM()
+        self._tools = RealEstateToolService.from_env()
         self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
 
     async def prewarm_models(self) -> None:
+        if self._tools is not None:
+            await self._tools.ensure_ready()
         await asyncio.to_thread(self._asr.prewarm)
         if LOCAL_LLM_PREWARM:
             await self._llm.prewarm()
         if REALTIME_TTS_PREWARM:
             await self._tts.prewarm()
 
-    async def run(self, call_id, input_track, output_track, playback_generation):
+    async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
         try:
             await self._play_greeting(call_id, input_track, output_track, playback_generation)
-            await self._run_turn_loop(call_id, input_track, output_track, playback_generation)
+            await self._run_turn_loop(call_id, caller_phone, input_track, output_track, playback_generation)
         finally:
             self._conversation_history.pop(call_id, None)
 
@@ -86,7 +91,7 @@ class LocalGemmaTurnPipeline:
             greeting_seconds,
         )
 
-    async def _run_turn_loop(self, call_id, input_track, output_track, playback_generation) -> None:
+    async def _run_turn_loop(self, call_id, caller_phone, input_track, output_track, playback_generation) -> None:
         vad = VadState()
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
@@ -102,6 +107,7 @@ class LocalGemmaTurnPipeline:
                 chunk_buffer.extend(resampled.to_ndarray().tobytes())
                 await self._consume_chunks(
                     call_id,
+                    caller_phone,
                     input_track,
                     chunk_buffer,
                     vad,
@@ -112,6 +118,7 @@ class LocalGemmaTurnPipeline:
     async def _consume_chunks(
         self,
         call_id,
+        caller_phone,
         input_track,
         chunk_buffer: bytearray,
         vad: VadState,
@@ -141,6 +148,7 @@ class LocalGemmaTurnPipeline:
             turn = vad.finish()
             await self._handle_turn(
                 call_id=call_id,
+                caller_phone=caller_phone,
                 input_track=input_track,
                 output_track=output_track,
                 playback_generation=playback_generation,
@@ -152,6 +160,7 @@ class LocalGemmaTurnPipeline:
     async def _handle_turn(
         self,
         call_id,
+        caller_phone,
         input_track,
         output_track,
         playback_generation,
@@ -169,7 +178,7 @@ class LocalGemmaTurnPipeline:
             return
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
 
-        response_text, llm_ms = await self._timed_response(call_id, transcript_text)
+        response_text, llm_ms = await self._timed_response(call_id, caller_phone, transcript_text)
         if not response_text or is_noise_text(response_text):
             logger.info("Dropping empty/noise Gemma response for %s: %r", call_id, response_text)
             return
@@ -209,9 +218,9 @@ class LocalGemmaTurnPipeline:
             logger.info("Empty transcript for %s in %.0f ms", call_id, elapsed_ms)
         return transcript_text, elapsed_ms
 
-    async def _timed_response(self, call_id, transcript_text: str) -> tuple[str, float]:
+    async def _timed_response(self, call_id, caller_phone, transcript_text: str) -> tuple[str, float]:
         started = time.perf_counter()
-        response_text = await self._generate_response(call_id, transcript_text)
+        response_text = await self._generate_response(call_id, caller_phone, transcript_text)
         if _is_repetitive_response(response_text):
             logger.info("Dropping repetitive Gemma response for %s: %r", call_id, response_text)
             response_text = ""
@@ -233,9 +242,39 @@ class LocalGemmaTurnPipeline:
             logger.warning("Whisper returned empty transcription")
         return text
 
-    async def _generate_response(self, call_id, transcript_text: str) -> str:
+    async def _generate_response(self, call_id, caller_phone, transcript_text: str) -> str:
         history = list(self._conversation_history.get(call_id, []))
-        return await self._llm.generate(transcript_text, history)
+        continuation: list[dict[str, str]] = []
+        context = CallContext(call_id=call_id, caller_phone=caller_phone)
+
+        for _ in range(2):
+            response = await self._llm.generate(transcript_text, history, continuation)
+            tool_call = parse_tool_call(response)
+            if tool_call is None:
+                if "<tool_call" in response.casefold():
+                    logger.warning("Gemma emitted a malformed tool call for %s", call_id)
+                    return "Sorry, I couldn't complete that request. Please try again."
+                return response
+            if self._tools is None:
+                result = {"ok": False, "error": "The booking database is not configured."}
+            else:
+                result = await self._tools.execute(tool_call, context)
+            logger.info("Tool call for %s: name=%s ok=%s", call_id, tool_call.name, result.get("ok"))
+            continuation.extend(
+                [
+                    {"role": "assistant", "content": tool_call_message(tool_call)},
+                    {
+                        "role": "user",
+                        "content": f"<tool_result>{json.dumps(result, ensure_ascii=False)}</tool_result>",
+                    },
+                ]
+            )
+
+        response = await self._llm.generate(transcript_text, history, continuation)
+        if parse_tool_call(response) is not None:
+            logger.warning("Gemma exceeded the tool-call limit for %s", call_id)
+            return "Sorry, I couldn't complete that request. Please try again."
+        return response
 
     def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
         history = self._conversation_history.setdefault(call_id, [])
