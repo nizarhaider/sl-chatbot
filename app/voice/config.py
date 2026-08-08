@@ -44,7 +44,7 @@ REALTIME_TTS_REF_TEXT = (
     "සර් කැමති නම් අපි දැන්ම ඒක renew කරන්න process එක පටන් ගන්න පුළුවන්"
 )
 REALTIME_TTS_REF_LANGUAGE = "si"
-REALTIME_TTS_MODEL_ID = "2broke2code/serendib-omnivoice-finetuned-v2"
+REALTIME_TTS_MODEL_ID = "2broke2code/serendib-omnivoice-finetuned-v4"
 REALTIME_TTS_NUM_STEPS = "20,20"
 REALTIME_TTS_SPEED = 1.0
 REALTIME_TTS_DEVICE = "cuda:0"

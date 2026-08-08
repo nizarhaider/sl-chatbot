@@ -2,7 +2,7 @@
 
 Voice-only WhatsApp assistant powered by local models on a GPU host.
 
-Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through `llama-cpp-python`, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
+Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through `llama-cpp-python`, and the SerendibAI OmniVoice V4 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
 
 ## Architecture
 
@@ -116,8 +116,8 @@ The production profile uses at least 16 GB of GPU VRAM. Whisper, OmniVoice, and
 all 42 Gemma layers stay on CUDA. Inference mode, SDPA/flash attention, and a
 smaller llama.cpp batch keep the exact model weights within the available VRAM.
 
-See [`docs/hosting_cost_report.md`](docs/hosting_cost_report.md) for the
-measured memory, latency, disk usage, and current provider comparison.
+See [`docs/voice_model_report.md`](docs/voice_model_report.md) for the canonical
+training, release, deployment, evaluation, tracking, and hosting report.
 
 One-command rental and setup from this repo:
 

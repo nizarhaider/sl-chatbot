@@ -1,0 +1,78 @@
+{
+  "model": "/workspace/omnivoice-v4/checkpoint-1104",
+  "training_ids": "001-309",
+  "manual_holdout_ids": [
+    "310",
+    "311"
+  ],
+  "reference_audio": "female-004.wav",
+  "reference_audio_metrics": {
+    "sha256": "7ba00de952caa88f2ce81b1102abcd675f64ca9ab3d6f6841699d00412a9fbd3",
+    "bytes": 559586,
+    "duration_seconds": 11.656,
+    "sample_rate": 24000,
+    "channels": 1,
+    "sample_width_bits": 16,
+    "peak": 0.214142,
+    "rms": 0.034997
+  },
+  "reference_text": "Good morning sir, සර්ගේ vehicle insurance policy එක ලබන සතියෙන් expire වෙනවා. සර් කැමති නම් අපි දැන්ම ඒක renew කරන්න process එක පටන් ගන්න පුළුවන්",
+  "num_steps": 20,
+  "speed": 1.0,
+  "results": [
+    {
+      "id": "310",
+      "text": "අපේ අලුත් POS system එක Sir ගේ retail branches ඔක්කොටම එකපාර integrate කරන්න පුළුවන්. ඒ ගැන presentation එකක් කරන්න වෙලාවක් දෙන්න පුළුවන්ද?",
+      "seed": 20261110,
+      "generated_file": "holdout_310_v4.wav",
+      "generated": {
+        "sha256": "d5553feef07b73f228e4194b8bd180a8b05e8f44d5834fd8413b08ece71b2c7b",
+        "bytes": 468524,
+        "duration_seconds": 9.76,
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_width_bits": 16,
+        "peak": 0.207092,
+        "rms": 0.036398
+      },
+      "real_file": "audio/310.wav",
+      "real": {
+        "sha256": "42c759582409c1a2eef43c95a1069d27308f44a3db1555d881f6f4f6460d619b",
+        "bytes": 533518,
+        "duration_seconds": 11.113,
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_width_bits": 16,
+        "peak": 0.229004,
+        "rms": 0.049727
+      }
+    },
+    {
+      "id": "311",
+      "text": "Madame ගේ office computers වලට අලුත් antivirus version එක install කරන්න admin password එක අපිට දෙන්න පුළුවන්ද?",
+      "seed": 20261111,
+      "generated_file": "holdout_311_v4.wav",
+      "generated": {
+        "sha256": "4f879eb3388e084baab436370e6e9c587207e6af2b4581ca9e729dd041c3f33c",
+        "bytes": 394604,
+        "duration_seconds": 8.22,
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_width_bits": 16,
+        "peak": 0.211945,
+        "rms": 0.035886
+      },
+      "real_file": "audio/311.wav",
+      "real": {
+        "sha256": "a56543fa99987a52426f657afc5188d030234fcf26e1a3bddb93d587b4fa3949",
+        "bytes": 369678,
+        "duration_seconds": 7.7,
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_width_bits": 16,
+        "peak": 0.252258,
+        "rms": 0.047899
+      }
+    }
+  ]
+}
