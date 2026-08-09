@@ -82,6 +82,7 @@ class NeonRealEstateStore:
             min_size=1,
             max_size=4,
             open=False,
+            check=ConnectionPool.check_connection,
             timeout=5,
             kwargs={"connect_timeout": 10},
         )
