@@ -55,6 +55,18 @@ def test_tool_call_round_trip() -> None:
     assert parse_tool_call("<tool_call>not-json</tool_call>") is None
 
 
+def test_tool_call_accepts_gemma_malformed_closing_marker() -> None:
+    call = parse_tool_call(
+        '<tool_call>{"name":"search_properties","arguments":'
+        '{"location":"Dehiwala","property_type":"Apartment"}}<tool_call|>'
+    )
+
+    assert call == ToolCall(
+        name="search_properties",
+        arguments={"location": "Dehiwala", "property_type": "Apartment"},
+    )
+
+
 def test_tool_service_passes_call_context_to_booking() -> None:
     store = FakeStore()
     service = RealEstateToolService(store)

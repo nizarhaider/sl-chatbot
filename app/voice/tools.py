@@ -55,12 +55,12 @@ class CallContext:
 
 
 def parse_tool_call(text: str) -> ToolCall | None:
-    match = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"<tool_call>\s*", text, re.IGNORECASE)
     if not match:
         return None
     try:
-        payload = json.loads(match.group(1))
-    except json.JSONDecodeError:
+        payload, _ = json.JSONDecoder().raw_decode(text[match.end():])
+    except (json.JSONDecodeError, TypeError):
         return None
     if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
         return None
