@@ -1,6 +1,6 @@
 # SerendibAI Voice Model Report
 
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 
 This is the single canonical operational report for OmniVoice training,
 evaluation, release tracking, and the WhatsApp voice runtime. Historical V2
@@ -13,9 +13,9 @@ useful for comparison.
 - Immutable model revision: `85747b9376885e3bf8847f6dfd45864798e31ccd`.
 - Release tag: `v4.0.0`.
 - Release training checkpoint: step 1,104, predetermined before training.
-- Runtime configuration now targets V4, but no production server is running.
-- All Vast.ai instances were destroyed at the user's request; verified active
-  instance count: zero.
+- Runtime reference: training row `033`, stored as
+  `app/voices/training-033.wav`, SHA-256
+  `dcf030654b31bd745280a2d8d942ac47e79bdf7cd2aca3e1b047a03d3e810fc5`.
 - V4 manual holdout IDs 310 and 311 were generated on the training GPU and
   packaged with their real recordings for listening comparison.
 
@@ -64,8 +64,9 @@ published. Vast.ai instance `47170301` ran for 2,441.738 seconds at
 `$0.0911111111` per hour, for an estimated `$0.0618`, and was destroyed after
 the release was verified.
 
-The V4 model generated valid 24 kHz mono PCM for both unseen manual-test
-scripts using `app/voices/female-004.wav` as the production reference:
+The original V4 release check generated valid 24 kHz mono PCM for both unseen
+manual-test scripts using `app/voices/female-004.wav`. The live runtime now uses
+training row `033` instead:
 
 | ID | Real duration | V4 duration | V4 SHA-256 |
 | ---: | ---: | ---: | --- |

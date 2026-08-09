@@ -4,6 +4,10 @@ Voice-only WhatsApp assistant powered by local models on a GPU host.
 
 Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through `llama-cpp-python`, and the SerendibAI OmniVoice V4 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
 
+The runtime voice-cloning reference is pinned to V4 training row `033` at
+`app/voices/training-033.wav`, with the matching dataset transcript in
+`app/voice/config.py`.
+
 ## Architecture
 
 ```mermaid

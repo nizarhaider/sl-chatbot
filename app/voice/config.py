@@ -38,10 +38,11 @@ HOMELANDS_LOCAL_SYSTEM_PROMPT = (
     "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "
 )
 
-REALTIME_TTS_REF_AUDIO = "app/voices/female-004.wav"
+REALTIME_TTS_REF_AUDIO = "app/voices/training-033.wav"
 REALTIME_TTS_REF_TEXT = (
-    "Good morning sir, සර්ගේ vehicle insurance policy එක ලබන සතියෙන් expire වෙනවා. "
-    "සර් කැමති නම් අපි දැන්ම ඒක renew කරන්න process එක පටන් ගන්න පුළුවන්"
+    "ඔබතුමාගේ ගිය මාසේ බිල් එක ටිකක් වැඩිවෙලා තියෙන්නේ Sir ගත්ත international "
+    "call charges නිසා. Sirට ඕනෙ නම් මට පුළුවන් ඒකේ detailed report එකක් "
+    "ඔබතුමාගේ registered email එකට එවන්න."
 )
 REALTIME_TTS_REF_LANGUAGE = "si"
 REALTIME_TTS_MODEL_ID = "2broke2code/serendib-omnivoice-finetuned-v4"
