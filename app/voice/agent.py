@@ -54,6 +54,11 @@ class VoiceAgent:
     async def prewarm_models(self) -> None:
         await self.turn_pipeline.prewarm_models()
 
+    async def close(self) -> None:
+        for call_id in list(self.active_calls):
+            await self.cancel_call(call_id)
+        await self.turn_pipeline.close()
+
     def _interrupt_playback(
         self,
         call_id: str | None,

@@ -56,6 +56,10 @@ class LocalGemmaTurnPipeline:
         if REALTIME_TTS_PREWARM:
             await self._tts.prewarm()
 
+    async def close(self) -> None:
+        if self._tools is not None:
+            await self._tools.close()
+
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
         try:
             await self._play_greeting(call_id, input_track, output_track, playback_generation)

@@ -30,7 +30,9 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         from app.dashboard.state import dashboard_state
+        from app.voice.agent import voice_agent
 
+        await voice_agent.close()
         dashboard_state.close()
 
 

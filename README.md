@@ -90,7 +90,8 @@ At startup, the voice runtime creates `real_estate_properties` and
 `property_appointments` when needed and seeds the initial Homelands inventory
 for the customer mapped to `PHONE_NUMBER_ID`. Gemma reads property facts only
 through the Neon-backed tools and stores confirmed viewing appointments with
-the call ID and caller phone number.
+the call ID and caller phone number. A small Neon connection pool is warmed at
+startup so database connection setup does not delay a live booking turn.
 
 Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
 

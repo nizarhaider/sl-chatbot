@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg.errors import UniqueViolation
+from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
 COLOMBO_TZ = ZoneInfo("Asia/Colombo")
@@ -75,13 +76,21 @@ def tool_call_message(call: ToolCall) -> str:
 
 class NeonRealEstateStore:
     def __init__(self, database_url: str, phone_number_id: str) -> None:
-        self._database_url = database_url
         self._phone_number_id = phone_number_id
+        self._pool = ConnectionPool(
+            database_url,
+            min_size=1,
+            max_size=4,
+            open=False,
+            timeout=5,
+            kwargs={"connect_timeout": 10},
+        )
         self._customer_id: str | None = None
         self._whatsapp_number_id: str | None = None
 
     def ensure_schema(self) -> None:
-        with psycopg.connect(self._database_url, connect_timeout=10) as connection:
+        self._pool.open(wait=True, timeout=15)
+        with self._pool.connection() as connection:
             customer_id, whatsapp_number_id = self._load_mapping(connection)
             connection.execute(
                 """
@@ -138,6 +147,9 @@ class NeonRealEstateStore:
             self._customer_id = customer_id
             self._whatsapp_number_id = whatsapp_number_id
 
+    def close(self) -> None:
+        self._pool.close()
+
     def search_properties(self, arguments: dict) -> list[dict]:
         customer_id, _ = self._mapping()
         clauses = ["customer_id = %s", "status = 'active'"]
@@ -165,7 +177,7 @@ class NeonRealEstateStore:
             order by price_lkr, name
             limit 5
         """
-        with psycopg.connect(self._database_url, connect_timeout=10) as connection:
+        with self._pool.connection() as connection:
             rows = connection.execute(sql, values).fetchall()
         return [
             {
@@ -188,7 +200,7 @@ class NeonRealEstateStore:
         appointment_id = uuid.uuid4()
 
         try:
-            with psycopg.connect(self._database_url, connect_timeout=10) as connection:
+            with self._pool.connection() as connection:
                 property_row = connection.execute(
                     """
                     select name, location
@@ -257,6 +269,9 @@ class RealEstateToolService:
 
     async def ensure_ready(self) -> None:
         await asyncio.to_thread(self._store.ensure_schema)
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self._store.close)
 
     async def execute(self, call: ToolCall, context: CallContext) -> dict:
         try:
