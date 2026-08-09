@@ -16,6 +16,9 @@ useful for comparison.
 - Runtime reference: training row `033`, stored as
   `app/voices/training-033.wav`, SHA-256
   `dcf030654b31bd745280a2d8d942ac47e79bdf7cd2aca3e1b047a03d3e810fc5`.
+- Runtime status: no active Vast.ai instance. Test instance `47266964` was
+  destroyed after the 2026-08-09 V4 call checks, and zero active instances were
+  verified.
 - V4 manual holdout IDs 310 and 311 were generated on the training GPU and
   packaged with their real recordings for listening comparison.
 
@@ -215,11 +218,19 @@ URL access; the pre-existing WhatsApp draft was preserved.
 Large datasets, weights, checkpoints, and generated artifacts are stored on
 the private Hugging Face Hub rather than in the local workspace.
 
+Call transcripts have two runtime representations. The live dashboard reads
+`run_logs/call_sessions.json` on the GPU container; the durable copy is the
+Neon `calls.transcript` column and survives instance destruction.
+
 ## Cost and Capacity
 
 V4 training and release preparation cost an estimated `$0.0618` at
 `$0.0911111111` per hour. The instance was destroyed and the active-instance
 count was verified as zero.
+
+The 2026-08-09 V4 call-test rental, instance `47266964`, ran for 3,992.891
+seconds at `$0.1177777778` per hour, for an estimated `$0.1306`. Vast audit
+records show creation at 17:14:52 and destruction at 18:21:25 (+0530).
 
 V3 training cost `$0.1548` at `$0.1422222222` per hour. The training instance
 was destroyed after the release was verified.
@@ -253,6 +264,12 @@ Sinhala ASR quality for noisy and code-mixed speech was the main functional
 bottleneck. Gemma and TTS were reliable, but overly long responses sometimes
 hurt call pacing.
 
+The 2026-08-09 V4 test reinforced that English-word pronunciation should be
+improved in training data. V4 already contains mixed-language material, so do
+not add runtime language switching. Record more natural Singlish/code-switched
+sentences containing the specific weak English words, add them to the next
+dataset revision, and evaluate those words explicitly after fine-tuning.
+
 ## Progress Log
 
 | Time (+0530) | Result |
@@ -284,6 +301,12 @@ hurt call pacing.
 | 2026-08-08 17:34 | Generated and verified the real-versus-V4 manual holdout pairs for IDs 310 and 311. |
 | 2026-08-08 17:42 | Published and tagged private V4 model revision `85747b9376885e3bf8847f6dfd45864798e31ccd`. |
 | 2026-08-08 17:44 | Destroyed instance `47170301`; verified zero active Vast.ai instances. |
+| 2026-08-09 17:14 | Rented Vast instance `47266964`, an RTX 4070 Ti SUPER, for the V4 call test. |
+| 2026-08-09 17:53 | Restarted V4 with training reference row `033`; public webhook and full model prewarm passed. |
+| 2026-08-09 18:04 | Fixed stale Neon SSL connections by validating pooled connections before property queries; a forced stale-connection test recovered and returned all four listings. |
+| 2026-08-09 18:15 | Verified a live inventory search, then reproduced the follow-up failure: Gemma emitted valid tool JSON with the malformed closing marker `<tool_call|>`. |
+| 2026-08-09 18:18 | Updated tool parsing to decode JSON after `<tool_call>` without depending on the closing marker; regression suite passed. |
+| 2026-08-09 18:21 | Verified the latest transcript was persisted in Neon, destroyed instance `47266964`, and confirmed zero active Vast.ai instances. |
 
 ## Operations
 

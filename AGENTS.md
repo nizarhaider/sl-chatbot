@@ -35,7 +35,7 @@ app/voice/asr.py
 app/voice/llm.py
 app/voice/tts.py
 app/voice/config.py
-app/voices/chandeera-female-sample.wav
+app/voices/training-033.wav
 scripts/run_local_host.sh
 scripts/setup_vastai.sh
 pyproject.toml
@@ -78,6 +78,10 @@ Configures global logging and the filtered rotating important-call log.
 ### `app/dashboard/router.py`, `app/dashboard/state.py`
 
 Serves `GET /dashboard` and `GET /dashboard/calls`. The dashboard records active and ended call metadata plus caller/assistant transcript events. Recent sessions are persisted to `run_logs/call_sessions.json`.
+
+Completed call transcripts are also persisted to the Neon `calls.transcript`
+column. Neon is the durable copy after a Vast instance is destroyed; the JSON
+file exists only on the GPU container unless copied elsewhere.
 
 ### `app/integrations/whatsapp/webhook.py`
 
@@ -126,6 +130,23 @@ What it does:
 
 Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, and turn-control constants.
 
+## V4 Production Invariants
+
+- Use `2broke2code/serendib-omnivoice-finetuned-v4` at immutable revision
+  `85747b9376885e3bf8847f6dfd45864798e31ccd`.
+- Use V4 training row `033` as the runtime speaker reference:
+  `app/voices/training-033.wav`, with its exact transcript in
+  `app/voice/config.py`. Do not substitute `female-004.wav`.
+- The model was trained on Sinhala-English code-switching. Do not add runtime
+  language switching or transliteration to compensate for weak English-word
+  pronunciation. Add natural recorded Singlish/code-switched examples of the
+  troublesome words to the next fine-tuning dataset instead.
+- `NeonRealEstateStore` must validate pooled connections on checkout. Neon may
+  close an idle SSL connection while the bot waits between calls.
+- Gemma sometimes emits a valid JSON tool request followed by the malformed
+  marker `<tool_call|>`. Parse the JSON immediately after `<tool_call>` instead
+  of requiring a perfect closing tag.
+
 ## Environment Variables That Matter
 
 Only secrets and deployment credentials should be environment variables. Voice model settings, TTS settings, prompts, and turn-control values are hardcoded in `app/voice/config.py`; do not add environment variables for them unless explicitly requested.
@@ -145,6 +166,9 @@ RTX 4070 or 30-series GPU with at least 16 GB VRAM, and use a 40 GB disk. The
 prebuilt llama.cpp CUDA 12.5 wheel is not compatible with RTX 50-series GPUs.
 Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
+
+The last V4 test rental, Vast instance `47266964`, was destroyed on
+2026-08-09 and the account was verified to have zero active instances.
 
 One-command rental and setup:
 

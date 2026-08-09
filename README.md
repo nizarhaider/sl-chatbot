@@ -90,14 +90,30 @@ DATABASE_URL=postgresql://...
 dashboard so call status and transcript updates remain available after the GPU
 instance is terminated.
 
+The live dashboard keeps an ephemeral copy at
+`run_logs/call_sessions.json`. The durable transcript is stored in the Neon
+`calls.transcript` column; verify that copy before destroying a test instance.
+
 At startup, the voice runtime creates `real_estate_properties` and
 `property_appointments` when needed and seeds the initial Homelands inventory
 for the customer mapped to `PHONE_NUMBER_ID`. Gemma reads property facts only
 through the Neon-backed tools and stores confirmed viewing appointments with
 the call ID and caller phone number. A small Neon connection pool is warmed at
 startup so database connection setup does not delay a live booking turn.
+Pooled connections are checked before use because Neon can close an idle SSL
+connection between calls.
 
 Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
+
+## V4 Runtime Lessons
+
+- Keep the runtime on training reference row `033`; `female-004.wav` was used
+  only for an earlier release comparison.
+- V4 already supports mixed-language training text. English-word pronunciation
+  gaps should be addressed by adding more natural Singlish/code-switched
+  recordings to the next dataset, not by switching language IDs at runtime.
+- Property-tool parsing accepts valid JSON after `<tool_call>` even when Gemma
+  produces its observed malformed `<tool_call|>` closing marker.
 
 ## Local Development
 
