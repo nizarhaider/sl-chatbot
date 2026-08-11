@@ -27,6 +27,7 @@ from app.database import (
     CallContext,
     RealEstateToolService,
     call_log,
+    ground_search_call,
     parse_tool_call,
     tool_call_message,
 )
@@ -177,6 +178,7 @@ class TurnPipeline:
                 if "<tool_call" in response.casefold():
                     return "Sorry, I couldn't complete that request. Please try again."
                 return response
+            call = ground_search_call(transcript, call)
             result = (
                 await self.tools.execute(call, context)
                 if self.tools

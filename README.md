@@ -92,6 +92,15 @@ Use a new `RUN_NAME` for every run. The script reports `training_audio_minutes` 
 hf upload YOUR_ACCOUNT/YOUR_MODEL /workspace/YOUR_RUN_OUTPUT
 ```
 
+For the separate Sinhala conversation model, run the single reproducible Gemma 4 E4B LoRA job on a CUDA host with at least 24 GB VRAM:
+
+```bash
+uv run scripts/finetune_llm.py \
+  --scripts-csv /workspace/voice_scripts.csv
+```
+
+The script turns the human-written call-center lines into grounded caller/agent pairs, validates a grouped train/validation split, fine-tunes E4B with response-only LoRA, and pushes the private dataset and adapter to Hugging Face. Use `--prepare-only` or `--train-only` to resume one stage without repeating the other.
+
 ## 3. Local voice-model inference only
 
 This path loads OmniVoice V5 and the pinned reference clip—no WhatsApp, Whisper, Gemma, or Neon. CUDA, Apple Silicon MPS, and CPU are selected automatically:

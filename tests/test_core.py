@@ -7,6 +7,7 @@ from app.database import (
     ToolCall,
     appointment_time,
     format_transcript,
+    ground_search_call,
     parse_tool_call,
     tool_call_message,
 )
@@ -76,6 +77,20 @@ def test_tool_call_round_trip_and_malformed_closer() -> None:
     assert parse_tool_call(tool_call_message(call)) == call
     assert malformed_close == ToolCall("search_properties", {"location": "Dehiwala"})
     assert parse_tool_call("<tool_call>not-json</tool_call>") is None
+
+
+def test_explicit_property_and_location_override_llm_search_guess() -> None:
+    wrong = ToolCall("search_properties", {"location": "Malabe"})
+
+    ocean = ground_search_call("Ocean Breeze දෙහිවල විස්තර", wrong)
+    kurunegala = ground_search_call("කුරුණෑගල land එකක්", wrong)
+
+    assert ocean.arguments == {
+        "query": "Ocean Breeze Apartments",
+        "location": "Dehiwala",
+        "property_type": "apartment",
+    }
+    assert kurunegala.arguments == {"location": "Kurunegala"}
 
 
 def test_tool_service_booking_and_unknown_tool() -> None:

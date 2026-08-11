@@ -61,6 +61,13 @@ PROPERTIES = (
     ),
 )
 
+LOCATION_ALIASES = {
+    "Malabe": ("malabe", "මාලබේ", "මලබේ"),
+    "Piliyandala": ("piliyandala", "පිළියන්දල"),
+    "Kurunegala": ("kurunegala", "කුරුණෑගල"),
+    "Dehiwala": ("dehiwala", "දෙහිවල"),
+}
+
 TOOL_INSTRUCTIONS = """
 Property facts and viewing appointments are available only through tools. Never invent inventory,
 prices, availability, or confirmations. Emit exactly one tool block when needed:
@@ -104,6 +111,24 @@ def tool_call_message(call: ToolCall) -> str:
         {"name": call.name, "arguments": call.arguments}, separators=(",", ":")
     )
     return f"<tool_call>{payload}</tool_call>"
+
+
+def ground_search_call(transcript: str, call: ToolCall) -> ToolCall:
+    """Prefer explicit caller terms over an LLM's inferred search filters."""
+    if call.name != "search_properties":
+        return call
+    text = transcript.casefold()
+    arguments = dict(call.arguments)
+    for slug, name, location, property_type, *_ in PROPERTIES:
+        brand = " ".join(name.casefold().split()[:2])
+        if name.casefold() in text or brand in text or slug.replace("-", " ") in text:
+            arguments.update(query=name, location=location, property_type=property_type)
+            return ToolCall(call.name, arguments)
+    for location, aliases in LOCATION_ALIASES.items():
+        if any(alias in text for alias in aliases):
+            arguments["location"] = location
+            break
+    return ToolCall(call.name, arguments)
 
 
 @dataclass

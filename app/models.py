@@ -20,6 +20,7 @@ from app.config import (
     LLM_GPU_LAYERS,
     LLM_MAX_TOKENS,
     LLM_REPO,
+    LLM_REVISION,
     LLM_TEMPERATURE,
     LLM_THREADS,
     SYSTEM_PROMPT,
@@ -144,7 +145,11 @@ class LocalGemmaLLM:
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
 
-        model_path = hf_hub_download(repo_id=LLM_REPO, filename=LLM_FILENAME)
+        model_path = hf_hub_download(
+            repo_id=LLM_REPO,
+            filename=LLM_FILENAME,
+            revision=LLM_REVISION,
+        )
         started = time.perf_counter()
         self._llm = Llama(
             model_path=model_path,
