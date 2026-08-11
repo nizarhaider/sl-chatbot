@@ -86,16 +86,17 @@ setup() {
   scp -q -o StrictHostKeyChecking=accept-new -i "$SSH_KEY" -P "$port" \
     "$ROOT/.env" "$remote:/workspace/sl-chatbot/.env"
 
-  log "Installing the server profile and ngrok..."
+  log "Installing the supervised server profile and ngrok..."
   ssh "${ssh_args[@]}" "$remote" "APP_PORT=$APP_PORT bash -s" <<'REMOTE'
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl gnupg tmux
+apt-get install -y -qq -o Dpkg::Options::="--force-confold" curl gnupg supervisor
 if ! command -v ngrok >/dev/null; then
   curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
   echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" > /etc/apt/sources.list.d/ngrok.list
   apt-get update -qq
-  apt-get install -y -qq ngrok
+  apt-get install -y -qq -o Dpkg::Options::="--force-confold" ngrok
 fi
 cd /workspace/sl-chatbot
 uv sync --extra server
@@ -107,8 +108,31 @@ test -n "${NGROK_AUTH_TOKEN:-}"
 ngrok config add-authtoken "$NGROK_AUTH_TOKEN" >/dev/null
 tmux kill-session -t sl-webhook 2>/dev/null || true
 tmux kill-session -t sl-ngrok 2>/dev/null || true
-tmux new-session -d -s sl-webhook "cd /workspace/sl-chatbot && .venv/bin/dotenv -f .env run -- .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT > run_logs/server.log 2>&1"
-tmux new-session -d -s sl-ngrok "ngrok http $APP_PORT --log=stdout > /workspace/sl-chatbot/run_logs/ngrok.log 2>&1"
+cat >/etc/supervisor/conf.d/sl-webhook.conf <<EOF
+[program:sl-webhook]
+command=/workspace/sl-chatbot/.venv/bin/dotenv -f /workspace/sl-chatbot/.env run -- /workspace/sl-chatbot/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT
+directory=/workspace/sl-chatbot
+autostart=true
+autorestart=true
+startsecs=15
+stopsignal=TERM
+stdout_logfile=/workspace/sl-chatbot/run_logs/server.log
+redirect_stderr=true
+EOF
+cat >/etc/supervisor/conf.d/sl-ngrok.conf <<EOF
+[program:sl-ngrok]
+command=/usr/local/bin/ngrok http $APP_PORT --log=stdout
+directory=/workspace/sl-chatbot
+autostart=true
+autorestart=true
+startsecs=5
+stopsignal=TERM
+stdout_logfile=/workspace/sl-chatbot/run_logs/ngrok.log
+redirect_stderr=true
+EOF
+supervisorctl reread >/dev/null
+supervisorctl update >/dev/null
+supervisorctl restart sl-webhook sl-ngrok >/dev/null
 REMOTE
 
   log "Waiting for model prewarm and health check..."

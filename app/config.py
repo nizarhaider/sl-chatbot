@@ -4,8 +4,9 @@ Secrets belong in ``.env``. Change behavior here so manual edits remain obvious.
 """
 
 # Local conversation model.
-LLM_REPO = "google/gemma-4-E4B-it-qat-q4_0-gguf"
-LLM_FILENAME = "gemma-4-E4B_q4_0-it.gguf"
+LLM_REPO = "2broke2code/serendib-gemma-4-e4b-sinhala-callcenter-gguf-v1"
+LLM_REVISION = "e0174ff3e4959695e671e10f2302954ca6e55a9c"
+LLM_FILENAME = "serendib-gemma-4-e4b-sinhala-callcenter-q4_k_m.gguf"
 LLM_GPU_LAYERS = 42
 LLM_CONTEXT = 2048
 LLM_BATCH = 128
