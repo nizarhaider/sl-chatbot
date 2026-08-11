@@ -1,218 +1,115 @@
-# WhatsApp Voice Bot
+# SerendibAI WhatsApp Voice Bot
 
-Voice-only WhatsApp assistant powered by local models on a GPU host.
+A small, voice-only WhatsApp runtime. Calls stay local to the GPU host:
 
-Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through `llama-cpp-python`, and the SerendibAI OmniVoice V4 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
+`WhatsApp WebRTC -> VAD -> Sinhala Whisper -> Gemma -> OmniVoice V5 -> WebRTC`
 
-The runtime voice-cloning reference is pinned to V4 training row `033` at
-`app/voices/training-033.wav`, with the matching dataset transcript in
-`app/voice/config.py`.
+Property search, bookings, call status, and transcripts are stored in Neon. Model weights and the exact V5 reference clip are downloaded from pinned Hugging Face revisions. No dataset, checkpoint, generated audio, or dashboard bundle belongs in this repository.
 
-## Architecture
+## Files
 
-```mermaid
-flowchart LR
-    WA[WhatsApp Cloud] -->|webhook events| API[FastAPI /webhook]
-    API -->|SDP offer| RTC[aiortc peer connection]
-    RTC -->|inbound audio| VAD[Local RMS VAD]
-    VAD -->|completed turn PCM| ASR[Local Whisper STT]
-    ASR -->|transcript| LLM[Local Gemma 4 E4B Q4]
-    LLM -->|response text| TTS[RealtimeTTS OmniVoice]
-    TTS -->|48 kHz stereo PCM| RTC
-    RTC -->|outbound audio| WA
-```
-
-```mermaid
-sequenceDiagram
-    participant WA as WhatsApp Cloud
-    participant Webhook as FastAPI /webhook
-    participant RTC as aiortc
-    participant Pipeline as LocalGemmaTurnPipeline
-    participant ASR as Whisper
-    participant LLM as Gemma
-    participant TTS as OmniVoice
-
-    WA->>Webhook: call connect event with SDP offer
-    Webhook->>RTC: create peer connection
-    RTC-->>WA: pre_accept and accept with SDP answer
-    RTC->>Pipeline: inbound audio track
-    Pipeline->>TTS: synthesize greeting
-    TTS-->>RTC: greeting PCM
-    Pipeline->>Pipeline: VAD detects caller turn
-    Pipeline->>ASR: transcribe 16 kHz PCM
-    ASR-->>Pipeline: caller transcript
-    Pipeline->>LLM: generate response or tool call
-    LLM-->>Pipeline: optional property search or booking tool call
-    Pipeline->>Pipeline: execute tool against Neon
-    Pipeline->>LLM: tool result
-    LLM-->>Pipeline: response text
-    Pipeline->>TTS: synthesize response
-    TTS-->>RTC: response PCM
-    RTC-->>WA: outbound call audio
-```
-
-## Main Components
-
-| Path | Purpose |
+| File | Change it when… |
 | --- | --- |
-| [`app/main.py`](app/main.py) | ASGI entrypoint. |
-| [`app/api/app.py`](app/api/app.py) | FastAPI app factory and startup model prewarm. |
-| [`app/integrations/whatsapp/webhook.py`](app/integrations/whatsapp/webhook.py) | Meta verification, status events, and call event dispatch. |
-| [`app/integrations/whatsapp/webrtc.py`](app/integrations/whatsapp/webrtc.py) | WhatsApp SDP handling and aiortc bridge. |
-| [`app/voice/agent.py`](app/voice/agent.py) | Active call task ownership and interruption counters. |
-| [`app/voice/turn_pipeline.py`](app/voice/turn_pipeline.py) | Greeting, VAD, ASR, LLM, TTS, and streaming turn loop. |
-| [`app/voice/tools.py`](app/voice/tools.py) | Neon property search and viewing-appointment tools. |
-| [`app/voice/config.py`](app/voice/config.py) | Voice model settings, prompts, and turn-control constants. |
-| [`app/dashboard/router.py`](app/dashboard/router.py) | Browser dashboard for active and recent call sessions. |
+| `app/config.py` | changing model pins, prompts, voice settings, or turn timing |
+| `app/models.py` | changing Whisper, Gemma, or OmniVoice loading/inference |
+| `app/pipeline.py` | changing the conversational turn flow |
+| `app/audio.py` | changing VAD or WebRTC audio conversion |
+| `app/database.py` | changing Neon call records or property tools |
+| `app/whatsapp.py` | changing webhook, Graph API, or WebRTC behavior |
+| `app/main.py` | changing startup, shutdown, logging, or health checks |
+| `scripts/vast.sh` | renting/configuring the webhook GPU |
+| `scripts/finetune.sh` | reproducing an OmniVoice fine-tune |
+| `scripts/infer.py` | running voice-only Gradio inference locally |
 
-## Runtime Endpoints
+The runtime configuration is intentionally centralized in `app/config.py`. Secrets go only in `.env`.
 
-| Endpoint | Description |
-| --- | --- |
-| `GET /` | Health check. |
-| `GET /webhook` | Meta webhook verification. |
-| `POST /webhook` | WhatsApp statuses and call events. |
-| `GET /dashboard` | Call sessions dashboard. |
-| `GET /dashboard/calls` | Call sessions JSON. |
+## First setup
 
-## Environment
+Install [uv](https://docs.astral.sh/uv/) and create `.env`:
 
-Required secrets and deployment credentials:
-
-```bash
-VERIFY_TOKEN=my_secure_verify_token_123
+```dotenv
+HF_TOKEN=...
+VASTAI_API_KEY=...
+NGROK_AUTH_TOKEN=...
+VERIFY_TOKEN=...
 WHATSAPP_ACCESS_TOKEN=...
 PHONE_NUMBER_ID=...
 DATABASE_URL=postgresql://...
 ```
 
-`DATABASE_URL` should point to the same Neon database used by the hosted
-dashboard so call status and transcript updates remain available after the GPU
-instance is terminated.
-
-The live dashboard keeps an ephemeral copy at
-`run_logs/call_sessions.json`. The durable transcript is stored in the Neon
-`calls.transcript` column; verify that copy before destroying a test instance.
-
-At startup, the voice runtime creates `real_estate_properties` and
-`property_appointments` when needed and seeds the initial Homelands inventory
-for the customer mapped to `PHONE_NUMBER_ID`. Gemma reads property facts only
-through the Neon-backed tools and stores confirmed viewing appointments with
-the call ID and caller phone number. A small Neon connection pool is warmed at
-startup so database connection setup does not delay a live booking turn.
-Pooled connections are checked before use because Neon can close an idle SSL
-connection between calls.
-
-Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
-
-## V4 Runtime Lessons
-
-- Keep the runtime on training reference row `033`; `female-004.wav` was used
-  only for an earlier release comparison.
-- V4 already supports mixed-language training text. English-word pronunciation
-  gaps should be addressed by adding more natural Singlish/code-switched
-  recordings to the next dataset, not by switching language IDs at runtime.
-- Property-tool parsing accepts valid JSON after `<tool_call>` even when Gemma
-  produces its observed malformed `<tool_call|>` closing marker.
-
-## Local Development
+Never commit `.env`. For tests and lightweight editing:
 
 ```bash
 uv sync
-bash scripts/run_local_host.sh
-```
-
-The local server listens on `http://localhost:8000`.
-
-Useful checks:
-
-```bash
-curl -sS http://127.0.0.1:8000/
-curl -sS 'http://127.0.0.1:8000/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
-```
-
-## Vast.ai Deployment
-
-The production profile uses at least 16 GB of GPU VRAM. Whisper, OmniVoice, and
-all 42 Gemma layers stay on CUDA. Inference mode, SDPA/flash attention, and a
-smaller llama.cpp batch keep the exact model weights within the available VRAM.
-
-See [`docs/voice_model_report.md`](docs/voice_model_report.md) for the canonical
-training, release, deployment, evaluation, tracking, and hosting report.
-
-One-command rental and setup from this repo:
-
-```bash
-./scripts/deploy_vastai.sh
-```
-
-The deployer selects the cheapest verified, on-demand, single-GPU RTX 4070 or
-30-series offer with at least 16 GB VRAM. It rents a 40 GB disk,
-waits for SSH, then runs the setup and health checks. Preview the current choice
-without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`.
-
-To set up an instance that has already been rented:
-
-```bash
-REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
-```
-
-The setup script prepares `/workspace/sl-chatbot`, syncs `.env` when present, builds `llama-cpp-python` with CUDA, starts ngrok, starts the webhook in `tmux`, and waits for webhook verification.
-
-Manual dependency sync on the remote host:
-
-```bash
-cd /workspace/sl-chatbot
-uv sync
-```
-
-Run the webhook manually:
-
-```bash
-cd /workspace/sl-chatbot
-tmux kill-session -t sl-webhook 2>/dev/null || true
-tmux new-session -d -s sl-webhook \
-  "cd /workspace/sl-chatbot && \
-   .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090 --env-file .env \
-   2>&1 | tee run_logs/webhook.log"
-```
-
-## Verification
-
-Compile-check Python files:
-
-```bash
-find app -name '*.py' -print0 | xargs -0 python3 -m py_compile
-```
-
-Run tests:
-
-```bash
 uv run pytest -q
 ```
 
-Healthy call logs should show:
+## 1. Vast.ai WhatsApp webserver
 
-```text
-Received call event: connect
-Inbound audio track received
-Turn VAD: Speech started
-Turn VAD: Speech ended
-Turn transcript
-Turn response
-RealtimeTTS complete
-```
-
-## Logs
-
-Main webhook log:
+The server needs one verified RTX 4070/30-series GPU with at least 16 GB VRAM and a direct SSH port. From your Mac:
 
 ```bash
-tail -f /workspace/sl-chatbot/run_logs/webhook.log
+uv sync
+chmod +x scripts/vast.sh
+./scripts/vast.sh rent
 ```
 
-Important filtered call log:
+The command selects the cheapest matching offer, rents it, syncs this repository plus `.env`, installs the `server` dependency profile, starts FastAPI and ngrok in `tmux`, waits for model prewarming, and prints the `/webhook` URL. Preview the offer without renting:
 
 ```bash
-tail -f /workspace/sl-chatbot/run_logs/important.log
+DRY_RUN=true ./scripts/vast.sh rent
 ```
+
+Configure an instance you already rented, inspect instances, or destroy one:
+
+```bash
+./scripts/vast.sh setup HOST SSH_PORT
+./scripts/vast.sh list
+./scripts/vast.sh destroy INSTANCE_ID
+```
+
+The instance remains billable until `destroy` succeeds. Server logs live only at `/workspace/sl-chatbot/run_logs/server.log`; durable call records remain in Neon.
+
+## 2. Fine-tune OmniVoice
+
+Run this on a fresh CUDA Vast.ai instance. The script pins the OmniVoice source and V5 dataset revisions, downloads only rows listed in `train.jsonl` (never the holdouts), runs official tokenization and training, and leaves output under `/workspace`:
+
+```bash
+cd /workspace/sl-chatbot
+export HF_TOKEN=...  # omit this if the instance already supplies it
+bash scripts/finetune.sh
+```
+
+Optional run settings:
+
+```bash
+RUN_NAME=serendib-v6 STEPS=1500 bash scripts/finetune.sh
+```
+
+Use a new `RUN_NAME` for every run. The script reports `training_audio_minutes` before training and `Training wall-clock seconds` afterward; these are different measurements. Review the output, then upload the chosen final model directory to Hugging Face rather than committing it here:
+
+```bash
+hf upload YOUR_ACCOUNT/YOUR_MODEL /workspace/YOUR_RUN_OUTPUT
+```
+
+## 3. Local voice-model inference only
+
+This path loads OmniVoice V5 and the pinned reference clip—no WhatsApp, Whisper, Gemma, or Neon. CUDA, Apple Silicon MPS, and CPU are selected automatically:
+
+```bash
+uv sync --extra infer
+uv run --extra infer python scripts/infer.py
+```
+
+Open [http://127.0.0.1:7860](http://127.0.0.1:7860). Models are cached by Hugging Face outside the repository. Use `--host 0.0.0.0 --port 7860` only when you deliberately want LAN access.
+
+## Manual runtime checks
+
+```bash
+uv sync --extra server
+uv run --extra server uvicorn app.main:app --host 127.0.0.1 --port 8081
+curl -fsS http://127.0.0.1:8081/
+curl -fsS 'http://127.0.0.1:8081/webhook?hub.mode=subscribe&hub.verify_token=YOUR_VERIFY_TOKEN&hub.challenge=12345'
+```
+
+Archived legacy comparisons, bundled voices, and the old local MLflow database are recoverable from `s3://serendibai-models/sl-chatbot-legacy/2026-08-11/`.

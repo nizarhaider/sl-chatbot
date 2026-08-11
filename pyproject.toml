@@ -1,30 +1,41 @@
 [project]
 name = "sl-chatbot"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Lean local-model runtime for SerendibAI WhatsApp voice calls"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
-    "fastapi[standard]>=0.129.0",
-    "aiortc>=1.9.0",
-    "httpx>=0.27.0",
-    "numpy>=1.26.0",
-    "huggingface-hub>=0.36.0",
-    "llama-cpp-python>=0.3.16",
-    "realtimetts[omnivoice]>=0.7.1",
-    "python-dotenv>=1.2.1",
-    "psycopg[binary,pool]>=3.2",
+    "aiortc>=1.14,<2",
+    "fastapi>=0.129,<1",
+    "httpx>=0.27,<1",
+    "numpy>=1.26,<3",
+    "psycopg[binary,pool]>=3.2,<4",
+    "python-dotenv>=1.2,<2",
+    "uvicorn>=0.40,<1",
+]
+
+[project.optional-dependencies]
+server = [
+    "accelerate>=1.12,<2",
+    "huggingface-hub>=0.36,<2",
+    "llama-cpp-python>=0.3.16,<1",
     "omnivoice>=0.1.5",
-    "torchaudio>=2.7.0,<2.8",
-    "torch>=2.7.0,<2.8",
-    "accelerate>=1.12.0",
-    "transformers>=4.57.0"
+    "torch==2.8.*",
+    "torchaudio==2.8.*",
+    "transformers>=5.3,<6",
+]
+infer = [
+    "accelerate>=1.12,<2",
+    "gradio>=6.5,<7",
+    "huggingface-hub>=0.36,<2",
+    "omnivoice>=0.1.5",
+    "torch==2.8.*",
+    "torchaudio==2.8.*",
+    "transformers>=5.3,<6",
 ]
 
 [dependency-groups]
-dev = [
-    "pytest>=9.0.3",
-]
+dev = ["pytest>=9,<10"]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
