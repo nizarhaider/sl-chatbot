@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -12,13 +11,13 @@ import numpy as np
 from aiortc import MediaStreamTrack
 from av.audio.resampler import AudioResampler
 
+from app.agent import GemmaAgentRuntime
 from app.audio import OutboundAudioTrack, VoiceActivity, pcm_rms
 from app.config import (
     END_SILENCE_CHUNKS,
     GREETING,
     GREETING_DELAY_SECONDS,
     INPUT_CHUNK_BYTES,
-    LLM_HISTORY_MESSAGES,
     MIN_AUDIO_MS,
     PLAYBACK_ECHO_TAIL_SECONDS,
     PROGRESS_DELAY_SECONDS,
@@ -26,14 +25,8 @@ from app.config import (
     PROGRESS_REPEAT_SECONDS,
     SILENCE_RMS,
 )
-from app.database import (
-    CallContext,
-    RealEstateToolService,
-    call_log,
-    parse_tool_call,
-    tool_call_message,
-)
-from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS, is_noise_text
+from app.database import call_log
+from app.models import LocalWhisperASR, OmniVoiceTTS, is_noise_text
 from app.speech import detect_language
 
 logger = logging.getLogger(__name__)
@@ -42,21 +35,17 @@ logger = logging.getLogger(__name__)
 class TurnPipeline:
     def __init__(self, tts: OmniVoiceTTS | None = None) -> None:
         self.asr = LocalWhisperASR()
-        self.llm = LocalGemmaLLM()
+        self.agent = GemmaAgentRuntime()
         self.tts = tts or OmniVoiceTTS()
-        self.tools = RealEstateToolService.from_env()
-        self.history: dict[str, list[dict[str, str]]] = {}
+        self.progress_index: dict[str, int] = {}
 
     async def prewarm(self) -> None:
-        if self.tools:
-            await self.tools.ensure_ready()
         await asyncio.to_thread(self.asr.prewarm)
-        await self.llm.prewarm()
+        await self.agent.prewarm()
         await self.tts.prewarm()
 
     async def close(self) -> None:
-        if self.tools:
-            await self.tools.close()
+        await self.agent.close()
 
     async def run(
         self,
@@ -66,6 +55,7 @@ class TurnPipeline:
         output_track: OutboundAudioTrack,
         playback_generation: dict[str, int],
     ) -> None:
+        await self.agent.start_session(call_id, phone)
         try:
             await asyncio.sleep(GREETING_DELAY_SECONDS)
             greeting_seconds = await self._speak(
@@ -76,7 +66,8 @@ class TurnPipeline:
                 call_id, phone, input_track, output_track, playback_generation
             )
         finally:
-            self.history.pop(call_id, None)
+            await self.agent.end_session(call_id)
+            self.progress_index.pop(call_id, None)
 
     async def _listen(
         self, call_id, phone, input_track, output_track, playback_generation
@@ -159,7 +150,10 @@ class TurnPipeline:
                     and time.perf_counter() - last_notice < PROGRESS_REPEAT_SECONDS
                 ):
                     return
-                line = PROGRESS_LINES[language][1 if followup else 0]
+                lines = PROGRESS_LINES[language]
+                index = self.progress_index.get(call_id, 0)
+                line = lines[index % len(lines)]
+                self.progress_index[call_id] = index + 1
                 call_log.add(call_id, "assistant", line)
                 logger.info("Turn progress for %s: %s", call_id, line)
                 seconds = await self._speak(
@@ -213,7 +207,6 @@ class TurnPipeline:
             return
         logger.info("Turn response for %s: %s", call_id, response)
         call_log.add(call_id, "assistant", response)
-        self._remember(call_id, transcript, response)
 
         stage_started = time.perf_counter()
         seconds = await self._speak(call_id, response, output_track, generations)
@@ -290,48 +283,7 @@ class TurnPipeline:
     async def _respond(
         self, call_id: str, phone: str, transcript: str, on_tool=None
     ) -> str:
-        history = list(self.history.get(call_id, []))
-        continuation: list[dict[str, str]] = []
-        context = CallContext(call_id, phone)
-        for _ in range(2):
-            response = await self.llm.generate(transcript, history, continuation)
-            call = parse_tool_call(response)
-            if call is None:
-                if "<tool_call" in response.casefold():
-                    return "Sorry, I couldn't complete that request. Please try again."
-                return response
-            if on_tool:
-                await on_tool()
-            result = (
-                await self.tools.execute(call, context)
-                if self.tools
-                else {"ok": False, "error": "The booking database is not configured."}
-            )
-            continuation.extend(
-                [
-                    {"role": "assistant", "content": tool_call_message(call)},
-                    {
-                        "role": "user",
-                        "content": f"<tool_result>{json.dumps(result, ensure_ascii=False)}</tool_result>",
-                    },
-                ]
-            )
-        response = await self.llm.generate(transcript, history, continuation)
-        return (
-            "Sorry, I couldn't complete that request. Please try again."
-            if parse_tool_call(response)
-            else response
-        )
-
-    def _remember(self, call_id: str, transcript: str, response: str) -> None:
-        history = self.history.setdefault(call_id, [])
-        history.extend(
-            [
-                {"role": "user", "content": transcript},
-                {"role": "assistant", "content": response},
-            ]
-        )
-        del history[:-LLM_HISTORY_MESSAGES]
+        return await self.agent.respond(call_id, phone, transcript, on_tool)
 
     async def _speak(
         self, call_id, text, output_track, generations, language=None

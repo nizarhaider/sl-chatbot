@@ -37,7 +37,7 @@ async def lifespan(_: FastAPI):
         raise RuntimeError(
             f"Missing required environment variables: {', '.join(missing)}"
         )
-    logger.info("Prewarming local ASR, LLM, TTS, and database")
+    logger.info("Prewarming local ASR, ADK/Gemma, TTS, and database")
     await voice_agent.prewarm()
     logger.info("Voice server ready")
     try:

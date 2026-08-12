@@ -1,15 +1,46 @@
-name: Production quality gate
+name: Vast guard and production quality gate
 
 on:
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 */2 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  destroy-vast-instances:
+    if: github.event_name == 'schedule'
+    name: Destroy all Vast instances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: false
+
+      - name: Destroy every instance on the account
+        env:
+          VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
+        run: |
+          test -n "$VAST_AI_API_KEY"
+          instances=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
+          ids=$(printf '%s' "$instances" | jq -r '.[].id')
+          if test -z "$ids"; then
+            echo "No Vast instances are active."
+            exit 0
+          fi
+          failed=0
+          for id in $ids; do
+            echo "Destroying Vast instance $id"
+            uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+              destroy instance "$id" -y || failed=1
+          done
+          exit "$failed"
+
   gpu-integration:
+    if: github.event_name != 'schedule'
     name: GPU integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -32,6 +63,9 @@ jobs:
           test -n "$VAST_AI_API_KEY"
           test -n "$HF_TOKEN"
           test -n "$GEMINI_API_KEY"
+
+      - name: Validate Google ADK orchestration contract
+        run: uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Stage 1 · Register key and rent the cheapest 16 GB+ GPU
         run: |
@@ -128,18 +162,30 @@ jobs:
             -P "$VAST_PORT" "$RUNNER_TEMP/hf.env" "$remote:/workspace/sl-chatbot/.env"
           ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
-            'tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot && \
-             cd /workspace/sl-chatbot && timeout 15m uv sync --extra server --frozen && \
-             find .venv/lib/python3.11/site-packages/nvidia -type d -name lib \
-               -print | paste -sd: - > .cuda-library-path && \
-             printf "%s\n" \
-               "#!/usr/bin/env bash" \
-               "set -euo pipefail" \
-               "cd /workspace/sl-chatbot" \
-               "export LD_LIBRARY_PATH=\"\$(cat .cuda-library-path):\${LD_LIBRARY_PATH:-}\"" \
-               "PYTHONPATH=. .venv/bin/dotenv -f .env run -- .venv/bin/python tests/gpu_integration.py \"\$1\"" \
-               > run-stage && chmod +x run-stage'
+            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" 'bash -se' <<'REMOTE'
+          tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot
+          cd /workspace/sl-chatbot
+          sync_ok=false
+          for attempt in 1 2 3; do
+            if timeout 15m uv sync --extra server --frozen; then
+              sync_ok=true
+              break
+            fi
+            echo "uv sync attempt $attempt failed; retrying" >&2
+            sleep 15
+          done
+          test "$sync_ok" = true
+          find .venv/lib/python3.11/site-packages/nvidia -type d -name lib \
+            -print | paste -sd: - > .cuda-library-path
+          printf "%s\n" \
+            "#!/usr/bin/env bash" \
+            "set -euo pipefail" \
+            "cd /workspace/sl-chatbot" \
+            "export LD_LIBRARY_PATH=\"\$(cat .cuda-library-path):\${LD_LIBRARY_PATH:-}\"" \
+            "PYTHONPATH=. .venv/bin/dotenv -f .env run -- .venv/bin/python tests/gpu_integration.py \"\$1\"" \
+            > run-stage
+          chmod +x run-stage
+          REMOTE
 
       - name: Stage 2 · Webhook
         run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage webhook
@@ -147,7 +193,7 @@ jobs:
       - name: Stage 3 · Sinhala ASR
         run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage asr
 
-      - name: Stage 4 · Multilingual LLM
+      - name: Stage 4 · ADK-managed multilingual Gemma
         run: |
           $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage llm
           scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
@@ -162,7 +208,7 @@ jobs:
             "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json"
           exit "$judge_status"
 
-      - name: Stage 5 · LLM tool calls
+      - name: Stage 5 · ADK session memory and tool loop
         run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage tools
 
       - name: Stage 6 · OmniVoice
