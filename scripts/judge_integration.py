@@ -1,4 +1,4 @@
-"""Grade multilingual call-center responses with GitHub Models."""
+"""Grade multilingual call-center responses with Gemini."""
 
 from __future__ import annotations
 
@@ -32,23 +32,12 @@ Return only JSON matching:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("report")
-    parser.add_argument("--model", default="openai/gpt-4.1")
+    parser.add_argument("--model", default="gemini-3.6-flash")
     args = parser.parse_args()
-    token = os.getenv("GITHUB_TOKEN")
+    token = os.getenv("GEMINI_API_KEY")
     if not token:
-        raise SystemExit("GITHUB_TOKEN is required")
+        raise SystemExit("GEMINI_API_KEY is required")
     report = json.loads(Path(args.report).read_text(encoding="utf-8"))
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-    }
-    catalog = httpx.get(
-        "https://models.github.ai/catalog/models", headers=headers, timeout=30
-    )
-    catalog.raise_for_status()
-    available = {model["id"] for model in catalog.json()}
-    if args.model not in available:
-        raise SystemExit(f"GitHub Models judge is unavailable: {args.model}")
     evidence = {
         "system_prompt_used_by_tested_model": report["system_prompt"],
         "caller_inputs": {
@@ -59,21 +48,28 @@ def main() -> None:
         "tested_model_outputs": report["results"]["llm"]["cases"],
     }
     response = httpx.post(
-        "https://models.github.ai/inference/chat/completions",
-        headers=headers,
+        f"https://generativelanguage.googleapis.com/v1beta/models/{args.model}:generateContent",
+        headers={"x-goog-api-key": token, "Content-Type": "application/json"},
         json={
-            "model": args.model,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": RUBRIC},
-                {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)},
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": f"{RUBRIC}\n\nEvidence:\n"
+                            + json.dumps(evidence, ensure_ascii=False)
+                        }
+                    ]
+                }
             ],
+            "generationConfig": {
+                "temperature": 0,
+                "responseMimeType": "application/json",
+            },
         },
         timeout=60,
     )
     response.raise_for_status()
-    result = json.loads(response.json()["choices"][0]["message"]["content"])
+    result = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if not result.get("pass"):
         raise SystemExit("AI judge rejected one or more language cases")

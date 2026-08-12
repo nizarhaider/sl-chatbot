@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  models: read
 
 jobs:
   gpu-integration:
@@ -17,6 +16,7 @@ jobs:
     env:
       VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       VAST_TEMPLATE_HASH: 18e97fc6703dea11057cee364a8eaa8c
 
     steps:
@@ -30,6 +30,7 @@ jobs:
         run: |
           test -n "$VAST_AI_API_KEY"
           test -n "$HF_TOKEN"
+          test -n "$GEMINI_API_KEY"
 
       - name: Stage 1 · Register key and rent the cheapest 16 GB+ GPU
         run: |
@@ -159,8 +160,6 @@ jobs:
             -P "$VAST_PORT" "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json" .
 
       - name: Stage 4 · AI-judge all three languages
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           uv run --frozen python scripts/judge_integration.py gpu-integration-report.json
           scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \

@@ -52,12 +52,12 @@ Every pull request into `main` rents the cheapest compatible Vast.ai RTX 30/40-s
 1. rent and connect to the cheapest compatible verified GPU offer with at least 16 GB VRAM, using the pinned virtual-environment CUDA runtime rather than the host image's incidental toolkit version;
 2. the FastAPI webhook starts and completes Meta's verification handshake;
 3. the pinned Sinhala ASR transcribes a fixed, revision-pinned call-center recording;
-4. the production Gemma wrapper verifies CUDA offload, then answers call-center requests in English, Sinhala, and Tamil with its real system/tool prompt; GitHub Models grades language, usefulness, tone, groundedness, and safety;
+4. the production Gemma wrapper verifies CUDA offload, then answers call-center requests in English, Sinhala, and Tamil with its real system/tool prompt; Gemini grades language, usefulness, tone, groundedness, and safety;
 5. the model selects and the runtime executes both `search_properties` and `book_appointment` against an in-memory copy of the production tool contract;
 6. OmniVoice produces non-silent, plausible-duration speech in all three languages and stays faster than real time;
 7. a representative full-model workload continuously samples GPU memory/utilization and fails on CUDA OOM or peak VRAM above 16,384 MiB.
 
-Only a clean archive of committed files and the read-only Hugging Face token are sent to the host; the local `.env` and its other credentials are never copied. The workflow uploads its combined JSON report and WAV samples for 14 days. Its cleanup step destroys the Vast instance and removes the temporary SSH key even after a failure. Configure repository secrets `VAST_AI_API_KEY` (prefer a scoped CI key with user/instance/SSH-key permissions) and `HF_TOKEN` (read-only), then require the `GPU integration tests` status check on `main`. Run one stage on a CUDA host with:
+Only a clean archive of committed files and the read-only Hugging Face token are sent to the host; the local `.env` and its other credentials are never copied. The Gemini judge key stays on the GitHub runner. The workflow uploads its combined JSON report and WAV samples for 14 days. Its cleanup step destroys the Vast instance and removes the temporary SSH key even after a failure. Configure repository secrets `VAST_AI_API_KEY` (prefer a scoped CI key with user/instance/SSH-key permissions), `HF_TOKEN` (read-only), and `GEMINI_API_KEY`, then require the `GPU integration tests` status check on `main`. Run one stage on a CUDA host with:
 
 ```bash
 uv sync --extra server --frozen
@@ -147,7 +147,7 @@ Add a dated entry here whenever a change affects the production model, training 
 
 ### 2026-08-12
 
-- Replaced the broad unit-test collection with staged GPU integration tests for webhook, real ASR, multilingual system-prompted Gemma plus both property tools, audible/latency-checked OmniVoice, and a representative 16 GiB GPU load budget. GitHub Actions rents one temporary Vast GPU, runs each stage over a separate SSH call with status `200` on success, AI-grades the three LLM languages with GitHub Models, preserves the report/audio samples, and always destroys the instance.
+- Replaced the broad unit-test collection with staged GPU integration tests for webhook, real ASR, multilingual system-prompted Gemma plus both property tools, audible/latency-checked OmniVoice, and a representative 16 GiB GPU load budget. GitHub Actions rents one temporary Vast GPU, runs each stage over a separate SSH call with status `200` on success, AI-grades the three LLM languages with Gemini, preserves the report/audio samples, and always destroys the instance.
 - Reviewed the latest production call and corrected caller-visible behavior without adding intent keyword routes: relaxed the multilingual system style, added interruptible language-aware progress speech before slow/tool work and every ten seconds thereafter, and prevented invented personal identities.
 - Calmed OmniVoice delivery by selecting a declarative real-estate reference from the same pinned V5 dataset, using a neutral terminal cadence, and selecting Sinhala, Tamil, or English per turn. Added TTS-boundary Sinhala number verbalization and Sri Lankan place-name pronunciation while leaving stored/model text unchanged.
 - Expanded the seeded Neon inventory from 4 to 16 properties across 15 locations, made seed changes synchronize existing rows, and added one safe retry for transient Neon writes and WhatsApp call-control requests.
