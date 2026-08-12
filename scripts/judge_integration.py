@@ -70,6 +70,11 @@ def main() -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if not result.get("pass"):
         raise SystemExit("AI judge rejected one or more language cases")
+    report["results"]["llm_judge"] = {"status": 200, **result}
+    Path(args.report).write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps({"stage": "llm_judge", "status": 200}))
 
 
 if __name__ == "__main__":
