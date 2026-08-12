@@ -38,6 +38,17 @@ def main() -> None:
     if not token:
         raise SystemExit("GITHUB_TOKEN is required")
     report = json.loads(Path(args.report).read_text(encoding="utf-8"))
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    catalog = httpx.get(
+        "https://models.github.ai/catalog/models", headers=headers, timeout=30
+    )
+    catalog.raise_for_status()
+    available = {model["id"] for model in catalog.json()}
+    if args.model not in available:
+        raise SystemExit(f"GitHub Models judge is unavailable: {args.model}")
     evidence = {
         "system_prompt_used_by_tested_model": report["system_prompt"],
         "caller_inputs": {
@@ -49,11 +60,7 @@ def main() -> None:
     }
     response = httpx.post(
         "https://models.github.ai/inference/chat/completions",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2026-03-10",
-        },
+        headers=headers,
         json={
             "model": args.model,
             "temperature": 0,
