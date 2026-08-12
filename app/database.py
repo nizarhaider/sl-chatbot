@@ -213,7 +213,29 @@ def parse_tool_call(text: str) -> ToolCall | None:
         if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
             return None
         arguments = payload.get("arguments", {})
-        return ToolCall(payload["name"], arguments) if isinstance(arguments, dict) else None
+        return (
+            ToolCall(payload["name"], normalize_tool_arguments(arguments))
+            if isinstance(arguments, dict)
+            else None
+        )
+
+    cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text, flags=re.I)
+    try:
+        payload = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        if isinstance(payload.get("tool_name"), str) and isinstance(
+            payload.get("parameters", {}), dict
+        ):
+            return ToolCall(
+                payload["tool_name"], normalize_tool_arguments(payload["parameters"])
+            )
+        calls = payload.get("tool_calls")
+        if isinstance(calls, list) and len(calls) == 1 and isinstance(calls[0], dict):
+            function, arguments = calls[0].get("function"), calls[0].get("args", {})
+            if isinstance(function, str) and isinstance(arguments, dict):
+                return ToolCall(function, normalize_tool_arguments(arguments))
 
     native = re.search(
         r"<\|tool_call>\s*call:([A-Za-z_][\w]*)\s*\{(.*?)\}\s*<tool_call\|>",
@@ -235,8 +257,26 @@ def parse_tool_call(text: str) -> ToolCall | None:
         elif value.casefold() in {"true", "false"}:
             arguments[key.strip()] = value.casefold() == "true"
         else:
-            arguments[key.strip()] = value
-    return ToolCall(native.group(1), arguments)
+            arguments[key.strip()] = normalize_tool_value(value)
+    return ToolCall(native.group(1), normalize_tool_arguments(arguments))
+
+
+def normalize_tool_arguments(arguments: dict) -> dict:
+    return {
+        key: normalize_tool_value(value)
+        for key, value in arguments.items()
+        if value is not None
+    }
+
+
+def normalize_tool_value(value):
+    if not isinstance(value, str):
+        return value
+    cleaned = value.strip()
+    quote_token = '<|"|>'
+    if cleaned.startswith(quote_token) and cleaned.endswith(quote_token):
+        cleaned = cleaned[len(quote_token) : -len(quote_token)]
+    return cleaned.strip('"\'')
 
 
 def tool_call_message(call: ToolCall) -> str:

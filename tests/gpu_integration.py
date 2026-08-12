@@ -267,6 +267,12 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
         assert call and call.name == expected_tool, f"expected {expected_tool}, got {raw}"
         result = await service.execute(call, CallContext("integration-test", "94770000000"))
         assert result["ok"] is True, result
+        if expected_tool == "search_properties":
+            assert result["count"] >= 1, result
+            assert any(row["location"] == "Malabe" for row in result["properties"]), result
+        else:
+            assert result["appointment"]["property_id"] == "horizon-residencies-malabe"
+            assert result["appointment"]["customer_name"] == "Nimal Perera"
         results[expected_tool] = {"call": call.arguments, "result": result}
     unknown = await service.execute(
         ToolCall("unknown_tool", {}), CallContext("integration-test", "")
