@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
+from difflib import SequenceMatcher
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -33,7 +34,6 @@ from app.speech import detect_language
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
 MODEL_NAME = "local/gemma-4-e4b"
-ToolNotice = Callable[[], Awaitable[None]]
 LANGUAGE_NAMES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
 
 
@@ -86,7 +86,6 @@ class PropertyAgentTools:
 
     def __init__(self, service: RealEstateToolService | None) -> None:
         self.service = service
-        self.notices: dict[str, ToolNotice] = {}
         self.traces: dict[str, list[dict[str, Any]]] = {}
 
     async def search_properties(
@@ -120,6 +119,10 @@ class PropertyAgentTools:
         }
         return await self._execute("search_properties", arguments, tool_context)
 
+    async def list_property_locations(self, tool_context: ToolContext) -> dict:
+        """List every location that currently has active property inventory."""
+        return await self._execute("list_property_locations", {}, tool_context)
+
     async def book_appointment(
         self,
         tool_context: ToolContext,
@@ -148,8 +151,6 @@ class PropertyAgentTools:
         self, name: str, arguments: dict[str, Any], tool_context: ToolContext
     ) -> dict:
         call_id = str(tool_context.state.get("call_id", ""))
-        if notice := self.notices.get(call_id):
-            await notice()
         safe_arguments = {
             key: "[provided]" if key == "customer_name" else value
             for key, value in arguments.items()
@@ -202,7 +203,11 @@ class GemmaAgentRuntime:
             name="serendibai_property_agent",
             model=self.model,
             instruction=_agent_instruction,
-            tools=[self.tools.search_properties, self.tools.book_appointment],
+            tools=[
+                self.tools.search_properties,
+                self.tools.list_property_locations,
+                self.tools.book_appointment,
+            ],
             generate_content_config=types.GenerateContentConfig(
                 temperature=LLM_TEMPERATURE,
                 max_output_tokens=LLM_MAX_TOKENS,
@@ -239,37 +244,39 @@ class GemmaAgentRuntime:
         call_id: str,
         phone: str,
         transcript: str,
-        on_tool: ToolNotice | None = None,
     ) -> str:
         if call_id not in self._users:
             await self.start_session(call_id, phone)
-        if on_tool:
-            self.tools.notices[call_id] = on_tool
         self.tools.traces[call_id] = []
+        locations = (
+            await self.tool_service.available_locations()
+            if self.tool_service
+            else []
+        )
         final_text = ""
-        try:
-            async for event in self.runner.run_async(
-                user_id=self._users[call_id],
-                session_id=call_id,
-                new_message=types.Content(
-                    role="user", parts=[types.Part(text=transcript)]
+        async for event in self.runner.run_async(
+            user_id=self._users[call_id],
+            session_id=call_id,
+            new_message=types.Content(
+                role="user", parts=[types.Part(text=transcript)]
+            ),
+            state_delta={
+                "caller_language": detect_language(transcript),
+                "inventory_locations": locations,
+            },
+            run_config=RunConfig(
+                max_llm_calls=3,
+                get_session_config=GetSessionConfig(
+                    num_recent_events=LLM_HISTORY_MESSAGES
                 ),
-                state_delta={"caller_language": detect_language(transcript)},
-                run_config=RunConfig(
-                    max_llm_calls=3,
-                    get_session_config=GetSessionConfig(
-                        num_recent_events=LLM_HISTORY_MESSAGES
-                    ),
-                ),
-            ):
-                if event.is_final_response() and event.content:
-                    final_text = " ".join(
-                        part.text.strip()
-                        for part in event.content.parts or []
-                        if part.text and part.text.strip()
-                    )
-        finally:
-            self.tools.notices.pop(call_id, None)
+            ),
+        ):
+            if event.is_final_response() and event.content:
+                final_text = " ".join(
+                    part.text.strip()
+                    for part in event.content.parts or []
+                    if part.text and part.text.strip()
+                )
         return strip_thinking(final_text)
 
     def tool_trace(self, call_id: str) -> list[dict[str, Any]]:
@@ -277,7 +284,6 @@ class GemmaAgentRuntime:
 
     async def end_session(self, call_id: str) -> None:
         user_id = self._users.pop(call_id, None)
-        self.tools.notices.pop(call_id, None)
         self.tools.traces.pop(call_id, None)
         if user_id:
             await self.sessions.delete_session(
@@ -334,10 +340,14 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
 def _agent_instruction(context: ReadonlyContext) -> str:
     language = str(context.state.get("caller_language", "en"))
     name = LANGUAGE_NAMES.get(language, "English")
+    locations = ", ".join(context.state.get("inventory_locations", []))
     return (
         LocalGemmaLLM.system_instruction()
         + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
-        f"the spoken answer must remain entirely in {name}. Tool data is never caller speech."
+        f"the spoken answer must remain entirely in {name}. Tool data is never caller speech. "
+        f"Active inventory locations are: {locations or 'unavailable'}. Only send a location "
+        "filter when the caller clearly named one of those locations; noisy words such as "
+        "'any' or 'some' are not locations. Omit location for a broad request."
     )
 
 
@@ -391,16 +401,19 @@ def _response_parts(message: dict) -> list[types.Part]:
 
 
 def _response_contract_violations(message: dict, messages: list[dict]) -> list[str]:
-    if message.get("tool_calls") or not any(
-        "<tool_result>" in str(item.get("content", "")) for item in messages
-    ):
+    if message.get("tool_calls"):
         return []
     response = strip_thinking(message.get("content") or "")
     expected = _caller_language(messages)
     violations = []
-    if detect_language(response) != expected:
+    if _repeats_previous_answer(response, messages):
+        violations.append("do not repeat the previous answer; address the latest request directly")
+    has_tool_result = any(
+        "<tool_result>" in str(item.get("content", "")) for item in messages
+    )
+    if has_tool_result and detect_language(response) != expected:
         violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
-    required_prices = _tool_prices(messages)
+    required_prices = _tool_prices(messages) if has_tool_result else []
     missing = [price for price in required_prices if price not in response]
     if missing:
         violations.append(
@@ -425,24 +438,49 @@ def _caller_language(messages: list[dict]) -> str:
 def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
     language = _caller_language(messages)
     prices = ", ".join(f'"LKR {price}"' for price in _tool_prices(messages))
+    price_rule = (
+        f" Copy prices exactly as {prices}; do not convert them to lakhs or words."
+        if prices
+        else ""
+    )
     if language == "si":
         return (
-            "අවසාන කථන පිළිතුර පමණක් නැවත ලියන්න. මුළු පිළිතුරම සිංහලෙන් තබන්න. "
-            f"මිල හරියටම {prices} ලෙස ඉලක්කම්වලින් copy කරන්න. මිල ලක්ෂවලට හෝ "
-            "වචනවලට හරවන්න එපා. Tool result එකේ facts පමණක් භාවිතා කරන්න."
+            "අලුත්ම caller ඉල්ලීමට සෘජුව පිළිතුරු දෙන්න. කලින් පිළිතුර නැවත කියන්න එපා. "
+            "ප්‍රයෝජනවත් කෙටි වාක්‍ය එකක් සිට තුනක් දක්වා සිංහලෙන් කියන්න."
+            + price_rule
         )
     if language == "ta":
         return (
-            "இறுதி பேச்சுப் பதிலை மட்டும் மீண்டும் எழுதுங்கள். முழுப் பதிலும் தமிழில் இருக்க "
-            f"வேண்டும். விலையை இலக்கங்களில் சரியாக {prices} என்று copy செய்யுங்கள். விலையை "
-            "லட்சங்களாகவோ சொற்களாகவோ மாற்ற வேண்டாம். Tool result facts மட்டும் பயன்படுத்துங்கள்."
+            "அழைப்பாளரின் சமீபத்திய கோரிக்கைக்கு நேரடியாகப் பதிலளிக்கவும். முந்தைய பதிலை "
+            "மீண்டும் சொல்ல வேண்டாம். தமிழில் ஒன்று முதல் மூன்று பயனுள்ள குறுகிய வாக்கியங்கள் "
+            "பேசவும்."
+            + price_rule
         )
     return (
         "Rewrite only the final spoken answer entirely in English. Fix these violations: "
         + "; ".join(violations)
-        + ". Copy exact prices in digits, do not convert them to lakhs or words, and use only "
-        "facts in the tool result."
+        + ". Give one to three useful short sentences and answer the latest request directly."
+        + price_rule
     )
+
+
+def _repeats_previous_answer(response: str, messages: list[dict]) -> bool:
+    current = " ".join(re.findall(r"\w+", response.casefold()))
+    if not current:
+        return False
+    previous = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages)
+            if item.get("role") == "assistant"
+            and "<tool_call>" not in str(item.get("content", ""))
+        ),
+        "",
+    )
+    prior = " ".join(re.findall(r"\w+", previous.casefold()))
+    if not prior:
+        return False
+    return current == prior or SequenceMatcher(None, current, prior).ratio() >= 0.84
 
 
 def _tool_prices(messages: list[dict]) -> list[str]:

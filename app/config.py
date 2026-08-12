@@ -33,23 +33,23 @@ TTS_REFERENCE_TEXT = (
 TTS_STEPS = 20
 TTS_SPEED = 0.98
 
-PROGRESS_DELAY_SECONDS = 6
+PROGRESS_DELAY_SECONDS = 4
 PROGRESS_REPEAT_SECONDS = 10
 PROGRESS_LINES = {
     "si": (
-        "හ්ම්, පොඩ්ඩක් ඉන්න. මම බලලා කියන්නම්.",
-        "හරි, මට පොඩි වෙලාවක් දෙන්න. විස්තර ටික බලන්නම්.",
-        "තව පොඩ්ඩක් ඉන්න. මම ඒක check කරන ගමන්.",
+        "පොඩ්ඩක් ඉන්න.",
+        "මම බලන ගමන්.",
+        "තව පොඩි වෙලාවක්.",
     ),
     "ta": (
-        "ம், ஒரு நிமிடம். நான் பார்த்துச் சொல்கிறேன்.",
-        "சரி, கொஞ்சம் நேரம் கொடுங்கள். விவரங்களைப் பார்க்கிறேன்.",
-        "இன்னும் கொஞ்சம் பொறுங்கள். நான் அதைச் சரிபார்க்கிறேன்.",
+        "ஒரு நிமிடம்.",
+        "நான் பார்க்கிறேன்.",
+        "இன்னும் கொஞ்சம் நேரம்.",
     ),
     "en": (
-        "Hmm, give me a moment. I'll check that.",
-        "Sure, give me a moment while I check the details.",
-        "Just another moment, I'm still checking that.",
+        "One moment.",
+        "I'm checking.",
+        "Just a little longer.",
     ),
 }
 
@@ -62,7 +62,16 @@ MIN_AUDIO_MS = 500
 GREETING_DELAY_SECONDS = 0.5
 PLAYBACK_ECHO_TAIL_SECONDS = 0.35
 
-GREETING = "Please say English, සිංහල, or தமிழ்."
+GREETING_PARTS = (
+    ("English.", "en"),
+    ("සිංහල.", "si"),
+    ("தமிழ்.", "ta"),
+)
+LANGUAGE_ACKNOWLEDGEMENTS = {
+    "en": "Okay, this is SerendibAI. How can I help?",
+    "si": "හරි, මේ SerendibAI. ඔබට කොහොමද උදව් කරන්න ඕනේ?",
+    "ta": "சரி, இது SerendibAI. உங்களுக்கு எப்படி உதவலாம்?",
+}
 
 SYSTEM_PROMPT = (
     "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
@@ -74,8 +83,10 @@ SYSTEM_PROMPT = (
     "personal name. Do not introduce yourself again for an actual customer request. "
     "Sound warm and relaxed, not corporate, scripted, or overly enthusiastic. In Sinhala, use "
     "natural respectful spoken grammar rather than formal written translations; in Tamil and "
-    "English, use the same conversational register. Keep each spoken reply to one short sentence "
-    "unless a tool result requires more detail. Stay grounded in the conversation: do "
+    "English, use the same conversational register. Give a useful conversational answer in one "
+    "to three short spoken sentences. Include enough detail to answer the question, but do not "
+    "repeat the previous answer or ask for permission to perform a search the caller already "
+    "requested. Stay grounded in the conversation: do "
     "not introduce a property, location, preference, or fact the caller did not mention and a "
     "tool did not return. Decide intent from the full conversation. A greeting or brief "
     "acknowledgement is not a property request; respond naturally and ask how you can help without "

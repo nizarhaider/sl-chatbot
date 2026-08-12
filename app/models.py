@@ -16,6 +16,8 @@ from app.config import (
     ASR_LANGUAGE,
     ASR_MODEL,
     ASR_REVISION,
+    GREETING_PARTS,
+    LANGUAGE_ACKNOWLEDGEMENTS,
     LLM_BATCH,
     LLM_CONTEXT,
     LLM_FILENAME,
@@ -220,7 +222,7 @@ class OmniVoiceTTS:
 
     async def prewarm(self) -> None:
         await asyncio.to_thread(self._get_model)
-        await asyncio.to_thread(self._precache_progress)
+        await asyncio.to_thread(self._precache_prompts)
 
     async def speak(
         self, text: str, on_audio_chunk, language: str | None = None
@@ -271,14 +273,21 @@ class OmniVoiceTTS:
             )
         return normalize_waveform(audio)
 
-    def _precache_progress(self) -> None:
+    def _precache_prompts(self) -> None:
         for language, lines in PROGRESS_LINES.items():
             for line in lines:
-                spoken, _ = normalize_for_tts(line, language)
-                self._audio_cache[(spoken, language)] = self.synthesize(
-                    spoken, language=language
-                )
-        logger.info("OmniVoice progress prompts cached")
+                self._cache_phrase(line, language)
+        for text, language in GREETING_PARTS:
+            self._cache_phrase(text, language)
+        for language, text in LANGUAGE_ACKNOWLEDGEMENTS.items():
+            self._cache_phrase(text, language)
+        logger.info("OmniVoice call prompts cached")
+
+    def _cache_phrase(self, text: str, language: str) -> None:
+        spoken, _ = normalize_for_tts(text, language)
+        self._audio_cache[(spoken, language)] = self.synthesize(
+            spoken, language=language
+        )
 
     def _get_model(self):
         if self._model is not None:

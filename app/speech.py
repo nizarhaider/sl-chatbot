@@ -102,6 +102,22 @@ def detect_language(text: str) -> str:
     return "en"
 
 
+def selected_language(text: str) -> str | None:
+    """Return a language only when the caller is clearly selecting it."""
+    words = re.findall(r"[A-Za-z\u0B80-\u0BFF\u0D80-\u0DFF]+", text.casefold())
+    if not words:
+        return None
+    choices = {
+        "en": {"english"},
+        "si": {"sinhala", "sinhalese", "සිංහල"},
+        "ta": {"tamil", "தமிழ்"},
+    }
+    for language, names in choices.items():
+        if all(word in names for word in words):
+            return language
+    return None
+
+
 def normalize_for_tts(text: str, language: str | None = None) -> tuple[str, str]:
     language = language or detect_language(text)
     spoken = re.sub(r"\s+", " ", text).strip().rstrip(",;:")
