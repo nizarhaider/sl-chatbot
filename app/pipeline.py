@@ -177,13 +177,30 @@ class TurnPipeline:
             except TimeoutError:
                 await progress()
                 while True:
-                    try:
-                        response = await asyncio.wait_for(
-                            asyncio.shield(response_task), PROGRESS_REPEAT_SECONDS
+                    response, interrupted = await self._wait_for_response_or_speech(
+                        response_task,
+                        call_id,
+                        input_track,
+                        output_track,
+                        generations,
+                        PROGRESS_REPEAT_SECONDS,
+                    )
+                    if interrupted:
+                        response_task.cancel()
+                        await asyncio.gather(response_task, return_exceptions=True)
+                        await self._handle_turn(
+                            call_id,
+                            phone,
+                            input_track,
+                            output_track,
+                            generations,
+                            interrupted.started_at,
+                            interrupted.pcm,
                         )
+                        return
+                    if response is not None:
                         break
-                    except TimeoutError:
-                        await progress(followup=True)
+                    await progress(followup=True)
         finally:
             if not response_task.done():
                 response_task.cancel()
@@ -212,6 +229,60 @@ class TurnPipeline:
             tts_ms,
             total_ms,
         )
+
+    async def _wait_for_response_or_speech(
+        self,
+        response_task,
+        call_id,
+        input_track,
+        output_track,
+        generations,
+        timeout,
+    ):
+        """Keep listening during slow work so caller speech can cancel the turn."""
+        vad = VoiceActivity()
+        resampler = AudioResampler(format="s16", layout="mono", rate=16_000)
+        buffer = bytearray()
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None, None
+            receive = asyncio.create_task(input_track.recv())
+            done, _ = await asyncio.wait(
+                (response_task, receive),
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if response_task in done:
+                receive.cancel()
+                await asyncio.gather(receive, return_exceptions=True)
+                return response_task.result(), None
+            if receive not in done:
+                receive.cancel()
+                await asyncio.gather(receive, return_exceptions=True)
+                return None, None
+            try:
+                frame = receive.result()
+            except Exception as exc:  # noqa: BLE001 - closed media backend.
+                logger.info("Input ended during slow turn for %s: %s", call_id, exc)
+                response_task.cancel()
+                raise
+            for converted in resampler.resample(frame):
+                buffer.extend(converted.to_ndarray().tobytes())
+            while len(buffer) >= INPUT_CHUNK_BYTES:
+                chunk = bytes(buffer[:INPUT_CHUNK_BYTES])
+                del buffer[:INPUT_CHUNK_BYTES]
+                speech = pcm_rms(chunk) > SILENCE_RMS
+                if speech and not vad.speaking:
+                    logger.info("Turn interrupted by caller speech")
+                    vad.start()
+                    generations[call_id] = generations.get(call_id, 0) + 1
+                    output_track.clear()
+                if vad.speaking:
+                    vad.add(chunk, speech)
+                if vad.speaking and vad.silence_chunks >= END_SILENCE_CHUNKS:
+                    return None, vad.finish()
 
     async def _respond(
         self, call_id: str, phone: str, transcript: str, on_tool=None
