@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import psycopg
-from psycopg.errors import UniqueViolation
+from psycopg.errors import OperationalError, UniqueViolation
 from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
@@ -59,17 +59,135 @@ PROPERTIES = (
         32_000_000,
         "One and two-bedroom units with sea views; ready soon.",
     ),
+    (
+        "city-gardens-rajagiriya",
+        "City Gardens",
+        "Rajagiriya",
+        "apartment",
+        3,
+        41_500_000,
+        "Three-bedroom apartment with two parking spaces and gym access.",
+    ),
+    (
+        "capital-heights-battaramulla",
+        "Capital Heights",
+        "Battaramulla",
+        "apartment",
+        2,
+        35_000_000,
+        "Two-bedroom apartment near the administrative district; ready to occupy.",
+    ),
+    (
+        "urban-nest-nugegoda",
+        "Urban Nest",
+        "Nugegoda",
+        "apartment",
+        2,
+        29_500_000,
+        "Apartment close to public transport, shopping, and schools.",
+    ),
+    (
+        "palm-court-mount-lavinia",
+        "Palm Court",
+        "Mount Lavinia",
+        "apartment",
+        3,
+        46_000_000,
+        "Three-bedroom apartment within walking distance of the beach.",
+    ),
+    (
+        "orchard-villas-kottawa",
+        "Orchard Villas",
+        "Kottawa",
+        "villa",
+        4,
+        57_000_000,
+        "Four-bedroom gated villa with garden, parking, and solar hot water.",
+    ),
+    (
+        "lake-road-homes-maharagama",
+        "Lake Road Homes",
+        "Maharagama",
+        "house",
+        3,
+        38_500_000,
+        "Detached family home with three bedrooms and covered parking.",
+    ),
+    (
+        "canal-view-homes-negombo",
+        "Canal View Homes",
+        "Negombo",
+        "house",
+        3,
+        34_000_000,
+        "Three-bedroom house with garden, ten minutes from Negombo town.",
+    ),
+    (
+        "hill-country-residences-kandy",
+        "Hill Country Residences",
+        "Kandy",
+        "apartment",
+        2,
+        31_500_000,
+        "Two-bedroom apartment with hill views and backup power.",
+    ),
+    (
+        "southern-breeze-villas-galle",
+        "Southern Breeze Villas",
+        "Galle",
+        "villa",
+        3,
+        52_000_000,
+        "Three-bedroom villa with pool access, near Galle town.",
+    ),
+    (
+        "sunset-gardens-matara",
+        "Sunset Gardens",
+        "Matara",
+        "house",
+        3,
+        30_000_000,
+        "New three-bedroom house with parking and a small garden.",
+    ),
+    (
+        "tech-park-lands-malabe",
+        "Tech Park Lands",
+        "Malabe",
+        "land",
+        None,
+        12_500_000,
+        "Eight-perch residential plots near the technology corridor; clear title.",
+    ),
+    (
+        "expressway-lands-homagama",
+        "Expressway Lands",
+        "Homagama",
+        "land",
+        None,
+        8_800_000,
+        "Ten-perch residential plots with road, water, and electricity access.",
+    ),
 )
 
 TOOL_INSTRUCTIONS = """
 Property facts and viewing appointments are available only through tools. Never invent inventory,
-prices, availability, or confirmations. Emit exactly one tool block when needed:
-<tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>
+prices, availability, locations, or confirmations. Infer the caller's intent and filters from the
+full conversation. Ask a natural follow-up question when required information is missing. Emit
+exactly one tool block containing valid JSON when a tool is needed.
 
 Tools:
 - search_properties: optional query, location, property_type, bedrooms, max_price_lkr.
 - book_appointment: required property_id, customer_name, appointment_at (ISO 8601).
-A booking is confirmed only when book_appointment returns ok=true.
+Call search_properties as soon as the caller asks what is available, names a property, or supplies
+any search filter. For a broad inventory request, search with empty arguments instead of asking for
+filters first. Put a named property in query. Include only filters supported by the conversation
+and never invent one. Write location and property_type tool arguments in English even when the
+caller speaks another language. Greetings and acknowledgements are not searches. Once you choose a
+tool and its required information is present, emit the tool call immediately with no introduction,
+permission question, acknowledgement, or other spoken text.
+After a tool result, interpret it and answer naturally in the caller's language. Preserve all
+numbers and property facts exactly as returned. A booking is confirmed only when
+book_appointment returns ok=true.
 """.strip()
 
 
@@ -87,16 +205,78 @@ class CallContext:
 
 def parse_tool_call(text: str) -> ToolCall | None:
     match = re.search(r"<tool_call>\s*", text, re.IGNORECASE)
-    if not match:
-        return None
+    if match:
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(text[match.end() :])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
+            return None
+        arguments = payload.get("arguments", {})
+        return (
+            ToolCall(payload["name"], normalize_tool_arguments(arguments))
+            if isinstance(arguments, dict)
+            else None
+        )
+
+    cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text, flags=re.I)
     try:
-        payload, _ = json.JSONDecoder().raw_decode(text[match.end() :])
+        payload = json.loads(cleaned)
     except (json.JSONDecodeError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        if isinstance(payload.get("tool_name"), str) and isinstance(
+            payload.get("parameters", {}), dict
+        ):
+            return ToolCall(
+                payload["tool_name"], normalize_tool_arguments(payload["parameters"])
+            )
+        calls = payload.get("tool_calls")
+        if isinstance(calls, list) and len(calls) == 1 and isinstance(calls[0], dict):
+            function, arguments = calls[0].get("function"), calls[0].get("args", {})
+            if isinstance(function, str) and isinstance(arguments, dict):
+                return ToolCall(function, normalize_tool_arguments(arguments))
+
+    native = re.search(
+        r"<\|tool_call>\s*call:([A-Za-z_][\w]*)\s*\{(.*?)\}\s*<tool_call\|>",
+        text,
+        re.DOTALL,
+    )
+    if not native:
         return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
-        return None
-    arguments = payload.get("arguments", {})
-    return ToolCall(payload["name"], arguments) if isinstance(arguments, dict) else None
+    arguments: dict[str, object] = {}
+    for item in re.split(r",\s*(?=[A-Za-z_]\w*\s*:)", native.group(2).strip()):
+        if not item:
+            continue
+        key, separator, value = item.partition(":")
+        if not separator or not re.fullmatch(r"[A-Za-z_]\w*", key.strip()):
+            return None
+        value = value.strip().strip('"\'')
+        if re.fullmatch(r"-?\d+", value):
+            arguments[key.strip()] = int(value)
+        elif value.casefold() in {"true", "false"}:
+            arguments[key.strip()] = value.casefold() == "true"
+        else:
+            arguments[key.strip()] = normalize_tool_value(value)
+    return ToolCall(native.group(1), normalize_tool_arguments(arguments))
+
+
+def normalize_tool_arguments(arguments: dict) -> dict:
+    return {
+        key: normalize_tool_value(value)
+        for key, value in arguments.items()
+        if value is not None
+    }
+
+
+def normalize_tool_value(value):
+    if not isinstance(value, str):
+        return value
+    cleaned = value.strip()
+    quote_token = '<|"|>'
+    if cleaned.startswith(quote_token) and cleaned.endswith(quote_token):
+        cleaned = cleaned[len(quote_token) : -len(quote_token)]
+    return cleaned.strip('"\'')
 
 
 def tool_call_message(call: ToolCall) -> str:
@@ -136,34 +316,44 @@ class NeonCallStore:
         return cls(url, number) if url and number else None
 
     def save(self, call: dict) -> None:
-        with psycopg.connect(self.database_url, connect_timeout=10) as connection:
-            customer_id, number_id = self._mapping or _load_mapping(
-                connection, self.phone_number_id
-            )
-            self._mapping = customer_id, number_id
-            connection.execute(
-                """
-                insert into calls (id, customer_id, whatsapp_number_id, customer_phone, status, transcript, created_at)
-                values (%s, %s, %s, %s, %s, %s, %s)
-                on conflict (id) do update set
-                    customer_phone=excluded.customer_phone,
-                    status=excluded.status,
-                    transcript=excluded.transcript
-                """,
-                (
-                    str(uuid.uuid5(CALL_NAMESPACE, call["call_id"])),
-                    customer_id,
-                    number_id,
-                    call.get("caller_phone") or None,
-                    {
-                        "connecting": "started",
-                        "active": "active",
-                        "ended": "completed",
-                    }.get(call["status"], call["status"]),
-                    format_transcript(call.get("transcript", [])),
-                    datetime.fromtimestamp(call["started_at"], tz=UTC),
-                ),
-            )
+        for attempt in range(2):
+            try:
+                with psycopg.connect(
+                    self.database_url, connect_timeout=10
+                ) as connection:
+                    customer_id, number_id = self._mapping or _load_mapping(
+                        connection, self.phone_number_id
+                    )
+                    self._mapping = customer_id, number_id
+                    connection.execute(
+                        """
+                        insert into calls (id, customer_id, whatsapp_number_id, customer_phone, status, transcript, created_at)
+                        values (%s, %s, %s, %s, %s, %s, %s)
+                        on conflict (id) do update set
+                            customer_phone=excluded.customer_phone,
+                            status=excluded.status,
+                            transcript=excluded.transcript
+                        """,
+                        (
+                            str(uuid.uuid5(CALL_NAMESPACE, call["call_id"])),
+                            customer_id,
+                            number_id,
+                            call.get("caller_phone") or None,
+                            {
+                                "connecting": "started",
+                                "active": "active",
+                                "ended": "completed",
+                            }.get(call["status"], call["status"]),
+                            format_transcript(call.get("transcript", [])),
+                            datetime.fromtimestamp(call["started_at"], tz=UTC),
+                        ),
+                    )
+                return
+            except OperationalError:
+                self._mapping = None
+                if attempt:
+                    raise
+                time.sleep(0.5)
 
 
 class CallLog:
@@ -283,7 +473,11 @@ class PropertyStore:
                     """
                     insert into real_estate_properties
                         (id, customer_id, slug, name, location, property_type, bedrooms, price_lkr, details)
-                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (customer_id, slug) do nothing
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    on conflict (customer_id, slug) do update set
+                        name=excluded.name, location=excluded.location,
+                        property_type=excluded.property_type, bedrooms=excluded.bedrooms,
+                        price_lkr=excluded.price_lkr, details=excluded.details, status='active'
                     """,
                     (
                         uuid.uuid5(PROPERTY_NAMESPACE, f"{customer_id}:{slug}"),
