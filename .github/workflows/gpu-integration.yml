@@ -53,7 +53,7 @@ jobs:
           offer_ids=$(printf '%s' "$offers" | jq -r \
             '[.[] | select(
               (.gpu_name | test("^RTX (40[0-9]{2}|30[0-9]{2})"; "i")) and
-              .inet_down >= 800 and .disk_bw >= 1500 and .reliability >= 0.99
+              .inet_down >= 2500 and .disk_bw >= 1500 and .reliability >= 0.99
             )] | sort_by(.dph_total) | .[:3] | .[].id')
           test -n "$offer_ids"
           attempt_number=0
@@ -129,7 +129,7 @@ jobs:
             -o StrictHostKeyChecking=accept-new \
             -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
             'tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot && \
-             cd /workspace/sl-chatbot && timeout 10m uv sync --extra server --frozen && \
+             cd /workspace/sl-chatbot && timeout 15m uv sync --extra server --frozen && \
              find .venv/lib/python3.11/site-packages/nvidia -type d -name lib \
                -print | paste -sd: - > .cuda-library-path'
 

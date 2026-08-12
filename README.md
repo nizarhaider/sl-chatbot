@@ -47,7 +47,7 @@ uv run python -m compileall -q app scripts tests
 
 ## Production quality gate
 
-Every pull request into `main` rents the cheapest compatible Vast.ai RTX 30/40-series GPU with at least 16 GB VRAM, production-grade advertised network/disk performance, and at least 99% reliability. It copies the repository once, then makes a separate SSH call for each integration-test stage. A stage prints status `200` when it passes; any other result stops the quality gate. Dependency setup has a ten-minute ceiling so a poor host cannot consume the whole job timeout:
+Every pull request into `main` rents the cheapest compatible Vast.ai RTX 30/40-series GPU with at least 16 GB VRAM, at least 2.5 Gbps advertised download, production-grade disk performance, and at least 99% reliability. It copies the repository once, then makes a separate SSH call for each integration-test stage. A stage prints status `200` when it passes; any other result stops the quality gate. Dependency setup has a fifteen-minute ceiling so a poor host cannot consume the whole job timeout:
 
 1. rent and connect to the cheapest compatible verified GPU offer with at least 16 GB VRAM, using the pinned virtual-environment CUDA runtime rather than the host image's incidental toolkit version;
 2. the FastAPI webhook starts and completes Meta's verification handshake;
