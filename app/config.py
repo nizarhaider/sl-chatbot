@@ -40,14 +40,10 @@ INPUT_CHUNK_BYTES = (16_000 * 2 * INPUT_CHUNK_MS) // 1000
 SILENCE_RMS = 1000
 END_SILENCE_CHUNKS = 30
 MIN_AUDIO_MS = 500
-GREETING_DELAY_SECONDS = 1.2
+GREETING_DELAY_SECONDS = 0.5
 PLAYBACK_ECHO_TAIL_SECONDS = 0.35
 
-GREETING = (
-    "To speak in English, please say English. "
-    "සිංහලෙන් කතා කිරීමට කරුණාකර සිංහල කියන්න. "
-    "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
-)
+GREETING = "Please say English, සිංහල, or தமிழ்."
 
 SYSTEM_PROMPT = (
     "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
