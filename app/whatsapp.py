@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 
 import httpx
 from aiortc import (
@@ -35,17 +36,21 @@ async def send_call_action(
     if session:
         payload["session"] = session
     url = f"https://graph.facebook.com/v22.0/{number_id}/calls"
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                url, headers={"Authorization": f"Bearer {token}"}, json=payload
-            )
-        if response.status_code != 200:
-            logger.error("WhatsApp %s failed: %s", action, response.text)
-        return response.status_code == 200
-    except httpx.HTTPError:
-        logger.exception("WhatsApp %s request failed", action)
-        return False
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20, connect=10)) as client:
+        for attempt in range(2):
+            try:
+                response = await client.post(
+                    url, headers={"Authorization": f"Bearer {token}"}, json=payload
+                )
+                if response.status_code != 200:
+                    logger.error("WhatsApp %s failed: %s", action, response.text)
+                return response.status_code == 200
+            except httpx.HTTPError:
+                if attempt:
+                    logger.exception("WhatsApp %s request failed", action)
+                    return False
+                await asyncio.sleep(0.4 + random.random() * 0.2)
+    return False
 
 
 class WebRTCService:

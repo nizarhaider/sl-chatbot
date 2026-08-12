@@ -23,10 +23,10 @@ from app.config import (
     LLM_REVISION,
     LLM_TEMPERATURE,
     LLM_THREADS,
+    PROGRESS_LINES,
     SYSTEM_PROMPT,
     TTS_DATASET,
     TTS_DATASET_REVISION,
-    TTS_LANGUAGE,
     TTS_MODEL,
     TTS_REFERENCE_FILE,
     TTS_REFERENCE_TEXT,
@@ -35,6 +35,7 @@ from app.config import (
     TTS_STEPS,
 )
 from app.database import TOOL_INSTRUCTIONS
+from app.speech import normalize_for_tts
 
 logger = logging.getLogger(__name__)
 
@@ -183,15 +184,24 @@ class OmniVoiceTTS:
         self.sample_rate = 24_000
         self._model = None
         self._reference_audio: str | None = None
+        self._audio_cache: dict[tuple[str, str], np.ndarray] = {}
         self._lock = asyncio.Lock()
 
     async def prewarm(self) -> None:
         await asyncio.to_thread(self._get_model)
+        await asyncio.to_thread(self._precache_progress)
 
-    async def speak(self, text: str, on_audio_chunk) -> float:
+    async def speak(
+        self, text: str, on_audio_chunk, language: str | None = None
+    ) -> float:
         async with self._lock:
             started = time.perf_counter()
-            waveform = await asyncio.to_thread(self.synthesize, text)
+            spoken, language = normalize_for_tts(text, language)
+            waveform = self._audio_cache.get((spoken, language))
+            if waveform is None:
+                waveform = await asyncio.to_thread(
+                    self.synthesize, spoken, None, language
+                )
             pcm = (np.clip(waveform, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
             chunk_bytes = self.sample_rate * 2 // 5  # 200 ms
             for offset in range(0, len(pcm), chunk_bytes):
@@ -200,12 +210,14 @@ class OmniVoiceTTS:
             logger.info(
                 "OmniVoice complete: elapsed_ms=%.0f chars=%s audio_ms=%.0f",
                 (time.perf_counter() - started) * 1000,
-                len(text),
+                len(spoken),
                 seconds * 1000,
             )
             return seconds
 
-    def synthesize(self, text: str, seed: int | None = None) -> np.ndarray:
+    def synthesize(
+        self, text: str, seed: int | None = None, language: str | None = None
+    ) -> np.ndarray:
         if not text.strip():
             raise ValueError("Text is required")
         model = self._get_model()
@@ -220,13 +232,22 @@ class OmniVoiceTTS:
         with torch.inference_mode():
             audio = model.generate(
                 text=text.strip(),
-                language=TTS_LANGUAGE,
+                language=language,
                 ref_audio=self._reference_audio,
                 ref_text=TTS_REFERENCE_TEXT,
                 num_step=TTS_STEPS,
                 speed=TTS_SPEED,
             )
         return normalize_waveform(audio)
+
+    def _precache_progress(self) -> None:
+        for language, lines in PROGRESS_LINES.items():
+            for line in lines:
+                spoken, _ = normalize_for_tts(line, language)
+                self._audio_cache[(spoken, language)] = self.synthesize(
+                    spoken, language=language
+                )
+        logger.info("OmniVoice progress prompts cached")
 
     def _get_model(self):
         if self._model is not None:

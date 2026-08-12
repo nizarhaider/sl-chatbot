@@ -24,15 +24,30 @@ TTS_MODEL = "2broke2code/serendib-omnivoice-finetuned-v5"
 TTS_REVISION = "b0f75c9b1103c3695f5813cd448facaa10f1b1bd"
 TTS_DATASET = "2broke2code/serendib-omnivoice-dataset-v5"
 TTS_DATASET_REVISION = "5d2f4cc973f2c923a84607e60d746df1be2eb0dd"
-TTS_REFERENCE_FILE = "audio/033.wav"
+TTS_REFERENCE_FILE = "audio/270.wav"
 TTS_REFERENCE_TEXT = (
-    "ඔබතුමාගේ ගිය මාසේ බිල් එක ටිකක් වැඩිවෙලා තියෙන්නේ Sir ගත්ත international "
-    "call charges නිසා. Sirට ඕනෙ නම් මට පුළුවන් ඒකේ detailed report එකක් "
-    "ඔබතුමාගේ registered email එකට එවන්න."
+    "Sir property එකේ යතුරු ටික භාර දෙන්න කලින් අපි final inspection එකක් කරනවා. "
+    "ඒ වෙලාවට ඔබතුමාත් ගෙදර ඉන්නවා නම් ගොඩක් හොඳයි."
 )
-TTS_LANGUAGE = "si"
 TTS_STEPS = 20
-TTS_SPEED = 1.0
+TTS_SPEED = 0.98
+
+PROGRESS_DELAY_SECONDS = 2.25
+PROGRESS_REPEAT_SECONDS = 10
+PROGRESS_LINES = {
+    "si": (
+        "හ්ම්, පොඩ්ඩක් ඉන්න. මම බලලා කියන්නම්.",
+        "තව පොඩි වෙලාවක් දෙන්න. මම තාම බලන ගමන්.",
+    ),
+    "ta": (
+        "ம், ஒரு நிமிடம். நான் பார்த்துச் சொல்கிறேன்.",
+        "இன்னும் கொஞ்சம் நேரம் கொடுங்கள். நான் இன்னும் பார்த்துக்கொண்டிருக்கிறேன்.",
+    ),
+    "en": (
+        "Hmm, give me a moment. I'll check that.",
+        "I need a little more time. I'm still checking.",
+    ),
+}
 
 # Turn detection and playback protection.
 INPUT_CHUNK_MS = 40
@@ -49,8 +64,11 @@ SYSTEM_PROMPT = (
     "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
     "The caller has already heard a language-selection greeting. Reply in the same language as "
     "the caller's latest speech unless they clearly ask to switch languages. If they only choose "
-    "a language, introduce yourself in one casual line. Keep each spoken reply to one short "
-    "sentence unless a tool result requires more detail. Stay grounded in the conversation: do "
+    "a language, introduce SerendibAI in one casual line without inventing a personal name. "
+    "Sound warm and relaxed, not corporate, scripted, or overly enthusiastic. In Sinhala, use "
+    "natural respectful spoken grammar rather than formal written translations; in Tamil and "
+    "English, use the same conversational register. Keep each spoken reply to one short sentence "
+    "unless a tool result requires more detail. Stay grounded in the conversation: do "
     "not introduce a property, location, preference, or fact the caller did not mention and a "
     "tool did not return. Decide intent from the full conversation. A greeting or brief "
     "acknowledgement is not a property request; respond naturally and ask how you can help without "

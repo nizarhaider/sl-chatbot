@@ -12,6 +12,7 @@ from app.database import (
 )
 from app.models import is_noise_text, strip_thinking
 from app.pipeline import TurnPipeline, repetitive
+from app.speech import detect_language, normalize_for_tts
 from app.whatsapp import refine_sdp
 
 
@@ -57,7 +58,7 @@ class FakeCallStore:
 
 
 class FakeTTS:
-    async def speak(self, text, on_audio_chunk):
+    async def speak(self, text, on_audio_chunk, language=None):
         on_audio_chunk(b"\0\0" * 240, 24_000)
         return 0.01
 
@@ -187,6 +188,17 @@ def test_small_text_and_time_helpers() -> None:
     assert is_noise_text("___ ---")
     assert repetitive("please wait please wait please wait while I check")
     assert not repetitive("yes yes yes")
+
+
+def test_tts_uses_spoken_sinhala_numbers_and_place_names() -> None:
+    spoken, language = normalize_for_tts(
+        "Malabe apartment එක රුපියල් 28,000,000යි?", "si"
+    )
+    assert language == "si"
+    assert spoken == "මාලබේ apartment එක රුපියල් මිලියන විසි අටයි."
+    assert detect_language("සිංහලෙන් කතා කරන්න") == "si"
+    assert detect_language("தமிழில் பேசுங்கள்") == "ta"
+    assert normalize_for_tts("All set.", "en")[0] == "All set."
 
 
 def test_whatsapp_sdp_is_reduced_to_expected_audio_shape() -> None:

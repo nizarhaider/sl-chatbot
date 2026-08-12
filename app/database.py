@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import psycopg
-from psycopg.errors import UniqueViolation
+from psycopg.errors import OperationalError, UniqueViolation
 from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,114 @@ PROPERTIES = (
         32_000_000,
         "One and two-bedroom units with sea views; ready soon.",
     ),
+    (
+        "city-gardens-rajagiriya",
+        "City Gardens",
+        "Rajagiriya",
+        "apartment",
+        3,
+        41_500_000,
+        "Three-bedroom apartment with two parking spaces and gym access.",
+    ),
+    (
+        "capital-heights-battaramulla",
+        "Capital Heights",
+        "Battaramulla",
+        "apartment",
+        2,
+        35_000_000,
+        "Two-bedroom apartment near the administrative district; ready to occupy.",
+    ),
+    (
+        "urban-nest-nugegoda",
+        "Urban Nest",
+        "Nugegoda",
+        "apartment",
+        2,
+        29_500_000,
+        "Apartment close to public transport, shopping, and schools.",
+    ),
+    (
+        "palm-court-mount-lavinia",
+        "Palm Court",
+        "Mount Lavinia",
+        "apartment",
+        3,
+        46_000_000,
+        "Three-bedroom apartment within walking distance of the beach.",
+    ),
+    (
+        "orchard-villas-kottawa",
+        "Orchard Villas",
+        "Kottawa",
+        "villa",
+        4,
+        57_000_000,
+        "Four-bedroom gated villa with garden, parking, and solar hot water.",
+    ),
+    (
+        "lake-road-homes-maharagama",
+        "Lake Road Homes",
+        "Maharagama",
+        "house",
+        3,
+        38_500_000,
+        "Detached family home with three bedrooms and covered parking.",
+    ),
+    (
+        "canal-view-homes-negombo",
+        "Canal View Homes",
+        "Negombo",
+        "house",
+        3,
+        34_000_000,
+        "Three-bedroom house with garden, ten minutes from Negombo town.",
+    ),
+    (
+        "hill-country-residences-kandy",
+        "Hill Country Residences",
+        "Kandy",
+        "apartment",
+        2,
+        31_500_000,
+        "Two-bedroom apartment with hill views and backup power.",
+    ),
+    (
+        "southern-breeze-villas-galle",
+        "Southern Breeze Villas",
+        "Galle",
+        "villa",
+        3,
+        52_000_000,
+        "Three-bedroom villa with pool access, near Galle town.",
+    ),
+    (
+        "sunset-gardens-matara",
+        "Sunset Gardens",
+        "Matara",
+        "house",
+        3,
+        30_000_000,
+        "New three-bedroom house with parking and a small garden.",
+    ),
+    (
+        "tech-park-lands-malabe",
+        "Tech Park Lands",
+        "Malabe",
+        "land",
+        None,
+        12_500_000,
+        "Eight-perch residential plots near the technology corridor; clear title.",
+    ),
+    (
+        "expressway-lands-homagama",
+        "Expressway Lands",
+        "Homagama",
+        "land",
+        None,
+        8_800_000,
+        "Ten-perch residential plots with road, water, and electricity access.",
+    ),
 )
 
 TOOL_INSTRUCTIONS = """
@@ -70,10 +178,11 @@ exactly one tool block containing valid JSON when a tool is needed.
 Tools:
 - search_properties: optional query, location, property_type, bedrooms, max_price_lkr.
 - book_appointment: required property_id, customer_name, appointment_at (ISO 8601).
-Call search_properties as soon as the caller names a property or supplies any search filter; the
-remaining search fields are optional. Put a named property in query. Include only filters supported
-by the conversation and never invent one. Write location and property_type tool arguments in
-English even when the caller speaks Sinhala. Greetings and acknowledgements are not searches.
+Call search_properties as soon as the caller asks what is available, names a property, or supplies
+any search filter. For a broad inventory request, search with empty arguments instead of asking for
+filters first. Put a named property in query. Include only filters supported by the conversation
+and never invent one. Write location and property_type tool arguments in English even when the
+caller speaks Sinhala. Greetings and acknowledgements are not searches.
 After a tool result, interpret it and answer naturally in the caller's language. Preserve all
 numbers and property facts exactly as returned. A booking is confirmed only when
 book_appointment returns ok=true.
@@ -143,34 +252,44 @@ class NeonCallStore:
         return cls(url, number) if url and number else None
 
     def save(self, call: dict) -> None:
-        with psycopg.connect(self.database_url, connect_timeout=10) as connection:
-            customer_id, number_id = self._mapping or _load_mapping(
-                connection, self.phone_number_id
-            )
-            self._mapping = customer_id, number_id
-            connection.execute(
-                """
-                insert into calls (id, customer_id, whatsapp_number_id, customer_phone, status, transcript, created_at)
-                values (%s, %s, %s, %s, %s, %s, %s)
-                on conflict (id) do update set
-                    customer_phone=excluded.customer_phone,
-                    status=excluded.status,
-                    transcript=excluded.transcript
-                """,
-                (
-                    str(uuid.uuid5(CALL_NAMESPACE, call["call_id"])),
-                    customer_id,
-                    number_id,
-                    call.get("caller_phone") or None,
-                    {
-                        "connecting": "started",
-                        "active": "active",
-                        "ended": "completed",
-                    }.get(call["status"], call["status"]),
-                    format_transcript(call.get("transcript", [])),
-                    datetime.fromtimestamp(call["started_at"], tz=UTC),
-                ),
-            )
+        for attempt in range(2):
+            try:
+                with psycopg.connect(
+                    self.database_url, connect_timeout=10
+                ) as connection:
+                    customer_id, number_id = self._mapping or _load_mapping(
+                        connection, self.phone_number_id
+                    )
+                    self._mapping = customer_id, number_id
+                    connection.execute(
+                        """
+                        insert into calls (id, customer_id, whatsapp_number_id, customer_phone, status, transcript, created_at)
+                        values (%s, %s, %s, %s, %s, %s, %s)
+                        on conflict (id) do update set
+                            customer_phone=excluded.customer_phone,
+                            status=excluded.status,
+                            transcript=excluded.transcript
+                        """,
+                        (
+                            str(uuid.uuid5(CALL_NAMESPACE, call["call_id"])),
+                            customer_id,
+                            number_id,
+                            call.get("caller_phone") or None,
+                            {
+                                "connecting": "started",
+                                "active": "active",
+                                "ended": "completed",
+                            }.get(call["status"], call["status"]),
+                            format_transcript(call.get("transcript", [])),
+                            datetime.fromtimestamp(call["started_at"], tz=UTC),
+                        ),
+                    )
+                return
+            except OperationalError:
+                self._mapping = None
+                if attempt:
+                    raise
+                time.sleep(0.5)
 
 
 class CallLog:
@@ -290,7 +409,11 @@ class PropertyStore:
                     """
                     insert into real_estate_properties
                         (id, customer_id, slug, name, location, property_type, bedrooms, price_lkr, details)
-                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (customer_id, slug) do nothing
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    on conflict (customer_id, slug) do update set
+                        name=excluded.name, location=excluded.location,
+                        property_type=excluded.property_type, bedrooms=excluded.bedrooms,
+                        price_lkr=excluded.price_lkr, details=excluded.details, status='active'
                     """,
                     (
                         uuid.uuid5(PROPERTY_NAMESPACE, f"{customer_id}:{slug}"),

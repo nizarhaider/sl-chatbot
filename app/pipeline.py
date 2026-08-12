@@ -21,6 +21,9 @@ from app.config import (
     LLM_HISTORY_MESSAGES,
     MIN_AUDIO_MS,
     PLAYBACK_ECHO_TAIL_SECONDS,
+    PROGRESS_DELAY_SECONDS,
+    PROGRESS_LINES,
+    PROGRESS_REPEAT_SECONDS,
     SILENCE_RMS,
 )
 from app.database import (
@@ -31,6 +34,7 @@ from app.database import (
     tool_call_message,
 )
 from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS, is_noise_text
+from app.speech import detect_language
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +144,50 @@ class TurnPipeline:
         call_log.add(call_id, "caller", transcript)
 
         stage_started = time.perf_counter()
-        response = await self._respond(call_id, phone, transcript)
+        language = detect_language(transcript)
+        last_notice = 0.0
+        notice_count = 0
+        notice_lock = asyncio.Lock()
+
+        async def progress(followup: bool = False) -> None:
+            nonlocal last_notice, notice_count
+            async with notice_lock:
+                if notice_count and not followup:
+                    return
+                if followup and time.perf_counter() - last_notice < PROGRESS_REPEAT_SECONDS:
+                    return
+                line = PROGRESS_LINES[language][1 if followup else 0]
+                call_log.add(call_id, "assistant", line)
+                logger.info("Turn progress for %s: %s", call_id, line)
+                seconds = await self._speak(
+                    call_id, line, output_track, generations, language
+                )
+                last_notice = time.perf_counter()
+                notice_count += 1
+                await self._discard_echo(input_track, output_track, seconds)
+
+        response_task = asyncio.create_task(
+            self._respond(call_id, phone, transcript, progress)
+        )
+        try:
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.shield(response_task), PROGRESS_DELAY_SECONDS
+                )
+            except TimeoutError:
+                await progress()
+                while True:
+                    try:
+                        response = await asyncio.wait_for(
+                            asyncio.shield(response_task), PROGRESS_REPEAT_SECONDS
+                        )
+                        break
+                    except TimeoutError:
+                        await progress(followup=True)
+        finally:
+            if not response_task.done():
+                response_task.cancel()
+                await asyncio.gather(response_task, return_exceptions=True)
         llm_ms = (time.perf_counter() - stage_started) * 1000
         if not response or is_noise_text(response) or repetitive(response):
             return
@@ -166,7 +213,9 @@ class TurnPipeline:
             total_ms,
         )
 
-    async def _respond(self, call_id: str, phone: str, transcript: str) -> str:
+    async def _respond(
+        self, call_id: str, phone: str, transcript: str, on_tool=None
+    ) -> str:
         history = list(self.history.get(call_id, []))
         continuation: list[dict[str, str]] = []
         context = CallContext(call_id, phone)
@@ -177,6 +226,8 @@ class TurnPipeline:
                 if "<tool_call" in response.casefold():
                     return "Sorry, I couldn't complete that request. Please try again."
                 return response
+            if on_tool:
+                await on_tool()
             result = (
                 await self.tools.execute(call, context)
                 if self.tools
@@ -208,7 +259,9 @@ class TurnPipeline:
         )
         del history[:-LLM_HISTORY_MESSAGES]
 
-    async def _speak(self, call_id, text, output_track, generations) -> float:
+    async def _speak(
+        self, call_id, text, output_track, generations, language=None
+    ) -> float:
         text = re.sub(r"\s+", " ", text).strip().rstrip(",;:")
         if not text:
             return 0
@@ -218,7 +271,7 @@ class TurnPipeline:
             if generations.get(call_id, 0) == generation:
                 output_track.add_pcm(chunk, sample_rate)
 
-        seconds = await self.tts.speak(text, forward)
+        seconds = await self.tts.speak(text, forward, language)
         return seconds if generations.get(call_id, 0) == generation else 0
 
     async def _discard_echo(

@@ -128,6 +128,9 @@ Add a dated entry here whenever a change affects the production model, training 
 
 ### 2026-08-12
 
+- Reviewed the latest production call and corrected caller-visible behavior without adding intent keyword routes: relaxed the multilingual system style, added language-aware progress speech before slow/tool work and every ten seconds thereafter, and prevented invented personal identities.
+- Calmed OmniVoice delivery by selecting a declarative real-estate reference from the same pinned V5 dataset, using a neutral terminal cadence, and selecting Sinhala, Tamil, or English per turn. Added TTS-boundary Sinhala number verbalization and Sri Lankan place-name pronunciation while leaving stored/model text unchanged.
+- Expanded the seeded Neon inventory from 4 to 16 properties across 15 locations, made seed changes synchronize existing rows, and added one safe retry for transient Neon writes and WhatsApp call-control requests.
 - Replaced the stock conversation model with the private, revision-pinned Gemma 4 E4B Sinhala call-center Q4_K_M model. Added the reproducible dataset/LoRA training script and kept datasets, adapters, converted weights, and checkpoints in cloud storage.
 - Moved the Vast.ai webhook and ngrok tunnel to supervised, automatically restarting services.
 - Fixed live audio turn handling after production testing: the system prompt is pre-cached, the greeting is shorter, end-of-turn silence is reduced, and outbound speech is queued before echo suppression so the bot no longer transcribes itself as the caller.
