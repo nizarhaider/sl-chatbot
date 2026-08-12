@@ -161,10 +161,12 @@ jobs:
 
       - name: Stage 4 · AI-judge all three languages
         run: |
-          uv run --frozen python scripts/judge_integration.py gpu-integration-report.json
+          judge_status=0
+          uv run --frozen python scripts/judge_integration.py gpu-integration-report.json || judge_status=$?
           scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
             -P "$VAST_PORT" gpu-integration-report.json \
             "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json"
+          exit "$judge_status"
 
       - name: Stage 5 · LLM tool calls
         run: |

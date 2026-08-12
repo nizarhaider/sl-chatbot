@@ -71,12 +71,16 @@ def main() -> None:
     response.raise_for_status()
     result = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    if not result.get("pass"):
-        raise SystemExit("AI judge rejected one or more language cases")
     report["results"]["llm_judge"] = {"status": 200, **result}
     Path(args.report).write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if not result.get("pass"):
+        report["results"]["llm_judge"]["status"] = 422
+        Path(args.report).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        raise SystemExit("AI judge rejected one or more language cases")
     print(json.dumps({"stage": "llm_judge", "status": 200}))
 
 

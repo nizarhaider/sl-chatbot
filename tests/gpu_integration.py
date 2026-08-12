@@ -21,7 +21,7 @@ import numpy as np
 from fastapi import FastAPI
 from huggingface_hub import hf_hub_download
 
-from app.config import SYSTEM_PROMPT, TTS_DATASET, TTS_DATASET_REVISION
+from app.config import TTS_DATASET, TTS_DATASET_REVISION
 from app.database import CallContext, PROPERTIES, RealEstateToolService, ToolCall
 from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS
 from app.whatsapp import router
@@ -124,7 +124,7 @@ async def run_stage(stage: str, audio_dir: Path) -> dict:
 
 
 def save_result(path: Path, stage: str, result: dict) -> None:
-    report = {"system_prompt": SYSTEM_PROMPT, "results": {}}
+    report = {"system_prompt": LocalGemmaLLM._system_message()["content"], "results": {}}
     if path.exists():
         report = json.loads(path.read_text(encoding="utf-8"))
     report["results"][stage] = result

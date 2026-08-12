@@ -182,7 +182,9 @@ Call search_properties as soon as the caller asks what is available, names a pro
 any search filter. For a broad inventory request, search with empty arguments instead of asking for
 filters first. Put a named property in query. Include only filters supported by the conversation
 and never invent one. Write location and property_type tool arguments in English even when the
-caller speaks Sinhala. Greetings and acknowledgements are not searches.
+caller speaks another language. Greetings and acknowledgements are not searches. Once you choose a
+tool and its required information is present, emit the tool call immediately with no introduction,
+permission question, acknowledgement, or other spoken text.
 After a tool result, interpret it and answer naturally in the caller's language. Preserve all
 numbers and property facts exactly as returned. A booking is confirmed only when
 book_appointment returns ok=true.
@@ -203,16 +205,38 @@ class CallContext:
 
 def parse_tool_call(text: str) -> ToolCall | None:
     match = re.search(r"<tool_call>\s*", text, re.IGNORECASE)
-    if not match:
+    if match:
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(text[match.end() :])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
+            return None
+        arguments = payload.get("arguments", {})
+        return ToolCall(payload["name"], arguments) if isinstance(arguments, dict) else None
+
+    native = re.search(
+        r"<\|tool_call>\s*call:([A-Za-z_][\w]*)\s*\{(.*?)\}\s*<tool_call\|>",
+        text,
+        re.DOTALL,
+    )
+    if not native:
         return None
-    try:
-        payload, _ = json.JSONDecoder().raw_decode(text[match.end() :])
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
-        return None
-    arguments = payload.get("arguments", {})
-    return ToolCall(payload["name"], arguments) if isinstance(arguments, dict) else None
+    arguments: dict[str, object] = {}
+    for item in re.split(r",\s*(?=[A-Za-z_]\w*\s*:)", native.group(2).strip()):
+        if not item:
+            continue
+        key, separator, value = item.partition(":")
+        if not separator or not re.fullmatch(r"[A-Za-z_]\w*", key.strip()):
+            return None
+        value = value.strip().strip('"\'')
+        if re.fullmatch(r"-?\d+", value):
+            arguments[key.strip()] = int(value)
+        elif value.casefold() in {"true", "false"}:
+            arguments[key.strip()] = value.casefold() == "true"
+        else:
+            arguments[key.strip()] = value
+    return ToolCall(native.group(1), arguments)
 
 
 def tool_call_message(call: ToolCall) -> str:

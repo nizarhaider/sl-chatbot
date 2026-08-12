@@ -146,7 +146,12 @@ class LocalGemmaLLM:
         local_date = datetime.now(ZoneInfo("Asia/Colombo")).date().isoformat()
         return {
             "role": "system",
-            "content": f"{SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\nSri Lanka date: {local_date}.",
+            "content": (
+                f"{SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\nSri Lanka date: {local_date}.\n\n"
+                "Before responding, silently verify two things: the reply or post-tool answer "
+                "matches the latest caller language exactly, and a tool is emitted immediately "
+                "when the caller has already supplied enough information."
+            ),
         }
 
     def _get_model(self):
