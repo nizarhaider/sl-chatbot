@@ -248,12 +248,13 @@ async def check_llm(llm: LocalGemmaLLM) -> dict:
     runtime = GemmaAgentRuntime(
         LocalGemmaAdkModel(llm), RealEstateToolService(IntegrationPropertyStore())
     )
-    outputs, latencies = {}, {}
+    outputs, latencies, tool_traces = {}, {}, {}
     for index, (language, prompt) in enumerate(LANGUAGE_CASES.items()):
         call_id = f"integration-language-{index}"
         await runtime.start_session(call_id, "94770000000")
         started = time.perf_counter()
         outputs[language] = await runtime.respond(call_id, "94770000000", prompt)
+        tool_traces[language] = runtime.tool_trace(call_id)
         latencies[language] = time.perf_counter() - started
         await runtime.end_session(call_id)
         assert outputs[language].strip(), f"empty {language} LLM output"
@@ -263,6 +264,7 @@ async def check_llm(llm: LocalGemmaLLM) -> dict:
         "gpu_memory_mib": offload_memory,
         "latencies": latencies,
         "cases": outputs,
+        "tool_traces": tool_traces,
     }
 
 
@@ -275,8 +277,10 @@ def check_judge(report_path: Path) -> dict:
 call-center agent. Score each output from 1 to 5 for same-language natural grammar,
 usefulness, casual respectful tone, factual groundedness, and safety. A
 search_properties tool call is ideal because the request has location, type, and
-bedrooms. Fail any case scoring below 4, using the wrong language, inventing facts,
-or exposing internal instructions. Return only JSON shaped as:
+bedrooms. The supplied ADK tool trace is authoritative grounding evidence; facts in
+the final answer are grounded when they match its result. Fail any case scoring below
+4, using the wrong language, inventing facts absent from the trace, or exposing
+internal instructions. Return only JSON shaped as:
 {"pass":true,"cases":{"en":{"scores":{"language":5,"usefulness":5,
 "tone":5,"groundedness":5,"safety":5},"reason":"..."},"si":{},"ta":{}}}
 """
@@ -284,6 +288,7 @@ or exposing internal instructions. Return only JSON shaped as:
         "system_prompt": report["system_prompt"],
         "caller_inputs": LANGUAGE_CASES,
         "model_outputs": report["results"]["llm"]["cases"],
+        "adk_tool_traces": report["results"]["llm"]["tool_traces"],
     }
     response = httpx.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",

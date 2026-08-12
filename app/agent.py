@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.agents.run_config import RunConfig
 from google.adk.models import BaseLlm, LlmRequest, LlmResponse
 from google.adk.runners import Runner
@@ -26,11 +27,13 @@ from app.database import (
     tool_call_message,
 )
 from app.models import LocalGemmaLLM, strip_thinking
+from app.speech import detect_language
 
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
 MODEL_NAME = "local/gemma-4-e4b"
 ToolNotice = Callable[[], Awaitable[None]]
+LANGUAGE_NAMES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
 
 
 class LocalGemmaAdkModel(BaseLlm):
@@ -66,6 +69,7 @@ class PropertyAgentTools:
     def __init__(self, service: RealEstateToolService | None) -> None:
         self.service = service
         self.notices: dict[str, ToolNotice] = {}
+        self.traces: dict[str, list[dict[str, Any]]] = {}
 
     async def search_properties(
         self,
@@ -154,6 +158,9 @@ class PropertyAgentTools:
             result.get("count"),
             result.get("error"),
         )
+        self.traces.setdefault(call_id, []).append(
+            {"name": name, "arguments": arguments, "result": result}
+        )
         return result
 
 
@@ -176,7 +183,7 @@ class GemmaAgentRuntime:
         self.agent = LlmAgent(
             name="serendibai_property_agent",
             model=self.model,
-            instruction=LocalGemmaLLM.system_instruction(),
+            instruction=_agent_instruction,
             tools=[self.tools.search_properties, self.tools.book_appointment],
             generate_content_config=types.GenerateContentConfig(
                 temperature=LLM_TEMPERATURE,
@@ -220,6 +227,7 @@ class GemmaAgentRuntime:
             await self.start_session(call_id, phone)
         if on_tool:
             self.tools.notices[call_id] = on_tool
+        self.tools.traces[call_id] = []
         final_text = ""
         try:
             async for event in self.runner.run_async(
@@ -228,6 +236,7 @@ class GemmaAgentRuntime:
                 new_message=types.Content(
                     role="user", parts=[types.Part(text=transcript)]
                 ),
+                state_delta={"caller_language": detect_language(transcript)},
                 run_config=RunConfig(
                     max_llm_calls=3,
                     get_session_config=GetSessionConfig(
@@ -245,9 +254,13 @@ class GemmaAgentRuntime:
             self.tools.notices.pop(call_id, None)
         return strip_thinking(final_text)
 
+    def tool_trace(self, call_id: str) -> list[dict[str, Any]]:
+        return list(self.tools.traces.get(call_id, []))
+
     async def end_session(self, call_id: str) -> None:
         user_id = self._users.pop(call_id, None)
         self.tools.notices.pop(call_id, None)
+        self.tools.traces.pop(call_id, None)
         if user_id:
             await self.sessions.delete_session(
                 app_name=APP_NAME, user_id=user_id, session_id=call_id
@@ -283,7 +296,8 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
                 )
             elif part.function_response:
                 text_parts.append(
-                    "<tool_result>"
+                    "This is tool data, not caller speech. Keep the caller's language from the "
+                    "system instruction.\n<tool_result>"
                     + json.dumps(
                         part.function_response.response or {}, ensure_ascii=False
                     )
@@ -297,6 +311,16 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
                 }
             )
     return messages
+
+
+def _agent_instruction(context: ReadonlyContext) -> str:
+    language = str(context.state.get("caller_language", "en"))
+    name = LANGUAGE_NAMES.get(language, "English")
+    return (
+        LocalGemmaLLM.system_instruction()
+        + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
+        f"the spoken answer must remain entirely in {name}. Tool data is never caller speech."
+    )
 
 
 def _instruction_text(llm_request: LlmRequest) -> str:

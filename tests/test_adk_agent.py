@@ -72,6 +72,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "Find a two-bedroom property in Malabe.",
             notice,
         )
+        first_trace = runtime.tool_trace("call-1")
         followup = await runtime.respond(
             "call-1", "94770000000", "Where is that property?"
         )
@@ -88,7 +89,12 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.calls[0][1].caller_phone, "94770000000")
         self.assertEqual(notices, 1)
         self.assertEqual(len(session.events), 6)
+        self.assertEqual(first_trace[0]["name"], "search_properties")
+        self.assertEqual(first_trace[0]["result"]["count"], 1)
+        self.assertEqual(runtime.tool_trace("call-1"), [])
         self.assertIn("<tool_result>", backend.requests[1][0][-1]["content"])
+        self.assertIn("not caller speech", backend.requests[1][0][-1]["content"])
+        self.assertIn("entirely in English", backend.requests[1][0][0]["content"])
         self.assertTrue(
             any(
                 message["content"] == "I found one matching property in Malabe."
