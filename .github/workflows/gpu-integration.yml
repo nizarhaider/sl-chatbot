@@ -86,7 +86,8 @@ jobs:
               host=$(printf '%s' "$row" | jq -r '.public_ipaddr // empty')
               port=$(printf '%s' "$row" | jq -r '.ports["22/tcp"][0].HostPort // empty')
               if test -n "$host" && test -n "$port" && ssh -o BatchMode=yes \
-                -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
+                -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+                -o StrictHostKeyChecking=accept-new \
                 -i "$RUNNER_TEMP/vast-ci" -p "$port" "root@$host" true 2>/dev/null; then
                 echo "VAST_HOST=$host" >> "$GITHUB_ENV"
                 echo "VAST_PORT=$port" >> "$GITHUB_ENV"
@@ -103,19 +104,31 @@ jobs:
       - name: Prepare the GPU workspace
         run: |
           remote="root@$VAST_HOST"
-          transport="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $RUNNER_TEMP/vast-ci -p $VAST_PORT"
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+          git archive --format=tar.gz -o "$RUNNER_TEMP/sl-chatbot.tar.gz" HEAD
+          ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o StrictHostKeyChecking=accept-new \
             -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
-            'mkdir -p /workspace/sl-chatbot'
-          rsync -az --delete -e "$transport" --exclude .git --exclude .venv \
-            ./ "$remote:/workspace/sl-chatbot/"
+            'rm -rf /workspace/sl-chatbot && mkdir -p /workspace/sl-chatbot'
+          for attempt in 1 2 3; do
+            if scp -q -o ConnectTimeout=20 -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new \
+              -i "$RUNNER_TEMP/vast-ci" -P "$VAST_PORT" \
+              "$RUNNER_TEMP/sl-chatbot.tar.gz" "$remote:/workspace/"; then
+              break
+            fi
+            test "$attempt" -lt 3
+            sleep 10
+          done
           install -m 600 /dev/null "$RUNNER_TEMP/hf.env"
           printf 'HF_TOKEN=%s\n' "$HF_TOKEN" > "$RUNNER_TEMP/hf.env"
-          scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
+          scp -q -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
             -P "$VAST_PORT" "$RUNNER_TEMP/hf.env" "$remote:/workspace/sl-chatbot/.env"
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+          ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o StrictHostKeyChecking=accept-new \
             -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
-            'cd /workspace/sl-chatbot && timeout 10m uv sync --extra server --frozen'
+            'tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot && \
+             cd /workspace/sl-chatbot && timeout 10m uv sync --extra server --frozen'
 
       - name: Stage 2 · Webhook
         run: |

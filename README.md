@@ -57,7 +57,7 @@ Every pull request into `main` rents the cheapest compatible Vast.ai RTX 30/40-s
 6. OmniVoice produces non-silent, plausible-duration speech in all three languages and stays faster than real time;
 7. a representative full-model workload continuously samples GPU memory/utilization and fails on CUDA OOM or peak VRAM above 16,384 MiB.
 
-The workflow uploads its combined JSON report and WAV samples for 14 days. Its cleanup step destroys the Vast instance and removes the temporary SSH key even after a failure. Configure repository secrets `VAST_AI_API_KEY` (prefer a scoped CI key with user/instance/SSH-key permissions) and `HF_TOKEN` (read-only), then require the `GPU integration tests` status check on `main`. Run one stage on a CUDA host with:
+Only a clean archive of committed files and the read-only Hugging Face token are sent to the host; the local `.env` and its other credentials are never copied. The workflow uploads its combined JSON report and WAV samples for 14 days. Its cleanup step destroys the Vast instance and removes the temporary SSH key even after a failure. Configure repository secrets `VAST_AI_API_KEY` (prefer a scoped CI key with user/instance/SSH-key permissions) and `HF_TOKEN` (read-only), then require the `GPU integration tests` status check on `main`. Run one stage on a CUDA host with:
 
 ```bash
 uv sync --extra server --frozen
