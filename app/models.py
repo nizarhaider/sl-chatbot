@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -119,19 +120,38 @@ class LocalGemmaLLM:
                 continuation or [],
             )
 
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> dict:
+        """Run one serialized llama.cpp chat turn for the ADK model adapter."""
+        async with self._lock:
+            return await asyncio.to_thread(self._chat, messages, tools or [])
+
     def _generate(self, transcript, history, continuation) -> str:
-        response = self._get_model().create_chat_completion(
-            messages=[
+        message = self._chat(
+            [
                 self._system_message(),
                 *history,
                 {"role": "user", "content": transcript},
                 *continuation,
-            ],
+            ]
+        )
+        return strip_thinking(message.get("content") or "")
+
+    def _chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        response = self._get_model().create_chat_completion(
+            messages=messages,
+            tools=tools or None,
+            tool_choice="auto" if tools else None,
             temperature=LLM_TEMPERATURE,
             max_tokens=LLM_MAX_TOKENS,
         )
-        text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return strip_thinking(text)
+        message = response.get("choices", [{}])[0].get("message", {})
+        return (
+            dict(message) if isinstance(message, dict) else json.loads(message.json())
+        )
 
     def _prime(self) -> None:
         """Evaluate the stable system prefix once before the first live turn."""
@@ -143,16 +163,18 @@ class LocalGemmaLLM:
 
     @staticmethod
     def _system_message() -> dict[str, str]:
+        return {"role": "system", "content": LocalGemmaLLM.system_instruction()}
+
+    @staticmethod
+    def system_instruction() -> str:
         local_date = datetime.now(ZoneInfo("Asia/Colombo")).date().isoformat()
-        return {
-            "role": "system",
-            "content": (
-                f"{SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\nSri Lanka date: {local_date}.\n\n"
-                "Before responding, silently verify two things: the reply or post-tool answer "
-                "matches the latest caller language exactly, and a tool is emitted immediately "
-                "when the caller has already supplied enough information."
-            ),
-        }
+        return (
+            f"{SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\nSri Lanka date: {local_date}.\n\n"
+            "Before responding, silently verify three things: the reply or post-tool answer "
+            "matches the latest caller language exactly; a tool is called immediately when "
+            "the caller has supplied enough information; and no property fact, customer "
+            "detail, appointment date, or appointment time was invented."
+        )
 
     def _get_model(self):
         if self._llm is not None:

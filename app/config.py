@@ -13,7 +13,7 @@ LLM_BATCH = 512
 LLM_THREADS = 8
 LLM_TEMPERATURE = 0.0
 LLM_MAX_TOKENS = 96
-LLM_HISTORY_MESSAGES = 8
+LLM_HISTORY_MESSAGES = 12
 
 # Speech recognition.
 ASR_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
@@ -32,20 +32,23 @@ TTS_REFERENCE_TEXT = (
 TTS_STEPS = 20
 TTS_SPEED = 0.98
 
-PROGRESS_DELAY_SECONDS = 2.25
+PROGRESS_DELAY_SECONDS = 6
 PROGRESS_REPEAT_SECONDS = 10
 PROGRESS_LINES = {
     "si": (
         "හ්ම්, පොඩ්ඩක් ඉන්න. මම බලලා කියන්නම්.",
-        "තව පොඩි වෙලාවක් දෙන්න. මම තාම බලන ගමන්.",
+        "හරි, මට පොඩි වෙලාවක් දෙන්න. විස්තර ටික බලන්නම්.",
+        "තව පොඩ්ඩක් ඉන්න. මම ඒක check කරන ගමන්.",
     ),
     "ta": (
         "ம், ஒரு நிமிடம். நான் பார்த்துச் சொல்கிறேன்.",
-        "இன்னும் கொஞ்சம் நேரம் கொடுங்கள். நான் இன்னும் பார்த்துக்கொண்டிருக்கிறேன்.",
+        "சரி, கொஞ்சம் நேரம் கொடுங்கள். விவரங்களைப் பார்க்கிறேன்.",
+        "இன்னும் கொஞ்சம் பொறுங்கள். நான் அதைச் சரிபார்க்கிறேன்.",
     ),
     "en": (
         "Hmm, give me a moment. I'll check that.",
-        "I need a little more time. I'm still checking.",
+        "Sure, give me a moment while I check the details.",
+        "Just another moment, I'm still checking that.",
     ),
 }
 
@@ -77,5 +80,7 @@ SYSTEM_PROMPT = (
     "acknowledgement is not a property request; respond naturally and ask how you can help without "
     "suggesting a topic. When an actual request lacks information needed to act, ask one concise "
     "follow-up question. When enough information is present, act immediately instead of asking "
-    "whether you can help or repeating the request."
+    "whether you can help or repeating the request. Never suggest or assume a viewing date or "
+    "time the caller did not request. If the caller changes a date or time, use the newest request "
+    "and discard the old one."
 )

@@ -1,8 +1,8 @@
 # SerendibAI WhatsApp Voice Bot
 
-A local-GPU WhatsApp voice agent:
+A local-GPU WhatsApp voice agent with Google ADK orchestration:
 
-`WhatsApp WebRTC -> Sinhala Whisper -> Gemma -> OmniVoice V5 -> WebRTC`
+`WhatsApp WebRTC -> Sinhala Whisper -> ADK + Gemma -> OmniVoice V5 -> WebRTC`
 
 Neon owns calls, transcripts, properties, and appointments. Hugging Face owns
 datasets and model weights. This repository contains only runtime code, small
@@ -14,7 +14,8 @@ training entrypoints, CI, and this runbook.
 | --- | --- |
 | `app/config.py` | Model pins, prompt, voice, and timing settings |
 | `app/models.py` | ASR, LLM, and TTS adapters |
-| `app/pipeline.py` | One conversational turn and tool loop |
+| `app/agent.py` | Google ADK sessions, local Gemma adapter, and function tools |
+| `app/pipeline.py` | Voice turn, interruption, and playback flow |
 | `app/database.py` | Neon calls, transcripts, property search, and booking |
 | `app/whatsapp.py` | Meta webhook and WebRTC signaling |
 | `scripts/vast.sh` | Rent, deploy, inspect, or destroy production |
@@ -22,9 +23,10 @@ training entrypoints, CI, and this runbook.
 | `scripts/infer.py` | Local voice-only Gradio UI |
 | `tests/gpu_integration.py` | Staged production quality gate |
 
-Edit `app/config.py` first for behavior changes. Do not add intent keyword
-routes or canned property logic; the model chooses tools and the runtime only
-validates and executes them.
+Edit `app/config.py` first for behavior changes. Google ADK owns conversational
+history, agent state, and function dispatch for each active call. Do not add
+intent keyword routes or canned property logic; Gemma chooses ADK tools and the
+existing database service validates their arguments and effects.
 
 ## Setup
 
@@ -115,17 +117,29 @@ The workflow uploads its JSON report and audio samples, then always destroys the
 test instance. It sends only a read-only Hugging Face token to the GPU. Required
 GitHub secrets are `VAST_AI_API_KEY`, `HF_TOKEN`, and `GEMINI_API_KEY`.
 
+The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys every
+Vast instance on the account. This intentionally includes production and any CI
+instance active at that moment.
+
 ## Data ownership
 
 - Add and edit listings in Neon/dashboard. Server startup never seeds or
   overwrites inventory.
-- Calls and transcripts are durable in Neon; active call state is in memory.
+- Calls and transcripts are durable in Neon; Google ADK keeps each active call's
+  session events and tool state in memory for the life of that call.
 - Model weights, datasets, checkpoints, and generated audio stay in cloud
   storage.
 - Secrets stay in `.env` or GitHub Secrets and are never committed.
 
 ## Major changes
 
+- **2026-08-12:** Moved local Gemma orchestration to Google ADK. ADK now owns
+  per-call session memory, model/tool events, and dispatch of the existing Neon
+  property search and appointment functions.
+- **2026-08-12:** Added a two-hour GitHub cost guard that destroys every Vast
+  instance. Rotated multilingual progress phrases, delayed non-tool filler,
+  preserved tool results across turns, retried malformed tool calls, and tightened
+  the model contract for caller-selected appointment dates and confirmed bookings.
 - **2026-08-12:** Removed boot-time property schema/seeding after confirming the
   16 production listings in Neon. Reduced the LLM trainer to its reproducible
   cloud-dataset job, merged the CI judge into the staged test runner, restricted

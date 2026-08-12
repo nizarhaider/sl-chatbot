@@ -11,7 +11,9 @@ import sys
 import threading
 import time
 import wave
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -20,6 +22,7 @@ import httpx
 import numpy as np
 from fastapi import FastAPI
 
+from app.agent import GemmaAgentRuntime, LocalGemmaAdkModel
 from app.config import TTS_DATASET, TTS_DATASET_REVISION
 from app.database import CallContext, RealEstateToolService, ToolCall
 from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS
@@ -41,7 +44,7 @@ TTS_CASES = {
 VRAM_LIMIT_MIB = 16 * 1024
 JUDGE_MODEL = "gemini-3.6-flash"
 PROPERTY_FIXTURE = {
-    "property_id": "horizon-residencies-malabe",
+    "property_id": "11111111-1111-4111-8111-111111111111",
     "name": "Horizon Residencies",
     "location": "Malabe",
     "property_type": "apartment",
@@ -56,8 +59,10 @@ class IntegrationPropertyStore:
 
     def __init__(self) -> None:
         self.rows = [PROPERTY_FIXTURE]
+        self.calls: list[tuple[str, dict, CallContext | None]] = []
 
     def search(self, arguments: dict) -> list[dict]:
+        self.calls.append(("search_properties", arguments, None))
         rows = self.rows
         for field in ("location", "property_type"):
             if value := str(arguments.get(field, "")).casefold().strip():
@@ -67,6 +72,7 @@ class IntegrationPropertyStore:
         return rows[:5]
 
     def book(self, arguments: dict, context: CallContext) -> dict:
+        self.calls.append(("book_appointment", arguments, context))
         return {
             "status": "booked",
             "property_id": arguments["property_id"],
@@ -239,11 +245,17 @@ async def check_llm(llm: LocalGemmaLLM) -> dict:
     assert offload_memory >= 512, (
         f"LLM GPU offload unavailable: only {offload_memory} MiB VRAM in use"
     )
+    runtime = GemmaAgentRuntime(
+        LocalGemmaAdkModel(llm), RealEstateToolService(IntegrationPropertyStore())
+    )
     outputs, latencies = {}, {}
-    for language, prompt in LANGUAGE_CASES.items():
+    for index, (language, prompt) in enumerate(LANGUAGE_CASES.items()):
+        call_id = f"integration-language-{index}"
+        await runtime.start_session(call_id, "94770000000")
         started = time.perf_counter()
-        outputs[language] = await llm.generate(prompt, [], [])
+        outputs[language] = await runtime.respond(call_id, "94770000000", prompt)
         latencies[language] = time.perf_counter() - started
+        await runtime.end_session(call_id)
         assert outputs[language].strip(), f"empty {language} LLM output"
         assert latencies[language] <= 12, f"{language} LLM too slow"
     return {
@@ -302,38 +314,83 @@ or exposing internal instructions. Return only JSON shaped as:
 
 async def check_tools(llm: LocalGemmaLLM) -> dict:
     await llm.prewarm()
-    service = RealEstateToolService(IntegrationPropertyStore())
+    store = IntegrationPropertyStore()
+    service = RealEstateToolService(store)
+    runtime = GemmaAgentRuntime(LocalGemmaAdkModel(llm), service)
     cases = {
         "search_properties": "Find me a two-bedroom apartment in Malabe.",
         "book_appointment": (
-            "Book property horizon-residencies-malabe for Nimal Perera at "
+            "Book property 11111111-1111-4111-8111-111111111111 for Nimal Perera at "
             "2099-01-01T10:00:00+05:30."
         ),
     }
     results, latencies = {}, {}
-    from app.database import parse_tool_call
 
-    for expected_tool, prompt in cases.items():
+    for index, (expected_tool, prompt) in enumerate(cases.items()):
+        call_id = f"integration-adk-{index}"
+        await runtime.start_session(call_id, "94770000000")
         started = time.perf_counter()
-        raw = await llm.generate(prompt, [], [])
+        response = await runtime.respond(call_id, "94770000000", prompt)
         latencies[expected_tool] = time.perf_counter() - started
-        call = parse_tool_call(raw)
-        assert call and call.name == expected_tool, (
-            f"expected {expected_tool}, got {raw}"
+        await runtime.end_session(call_id)
+        assert store.calls and store.calls[-1][0] == expected_tool, (
+            f"ADK did not dispatch {expected_tool}: {response}"
         )
-        result = await service.execute(
-            call, CallContext("integration-test", "94770000000")
-        )
-        assert result["ok"] is True, result
+        _, arguments, context = store.calls[-1]
+        assert response.strip(), f"empty post-tool response for {expected_tool}"
         if expected_tool == "search_properties":
-            assert result["count"] >= 1, result
-            assert any(row["location"] == "Malabe" for row in result["properties"]), (
-                result
-            )
+            assert arguments.get("location") == "Malabe", arguments
+            assert int(arguments.get("bedrooms", 0)) == 2, arguments
         else:
-            assert result["appointment"]["property_id"] == "horizon-residencies-malabe"
-            assert result["appointment"]["customer_name"] == "Nimal Perera"
-        results[expected_tool] = {"call": call.arguments, "result": result}
+            assert arguments.get("property_id") == PROPERTY_FIXTURE["property_id"]
+            assert arguments.get("customer_name") == "Nimal Perera"
+            assert context and context.caller_phone == "94770000000"
+        results[expected_tool] = {
+            "arguments": arguments,
+            "post_tool_response": response,
+        }
+
+    followup_call_id = "integration-adk-followup"
+    await runtime.start_session(followup_call_id, "94770000000")
+    search_response = await runtime.respond(
+        followup_call_id,
+        "94770000000",
+        "Tell me about Horizon Residencies.",
+    )
+    assert store.calls[-1][0] == "search_properties", search_response
+    bookings_before = sum(name == "book_appointment" for name, _, _ in store.calls)
+    missing_name_response = await runtime.respond(
+        followup_call_id,
+        "94770000000",
+        "I want to arrange a viewing tomorrow at 4 pm.",
+    )
+    assert missing_name_response.strip(), missing_name_response
+    assert (
+        sum(name == "book_appointment" for name, _, _ in store.calls) == bookings_before
+    ), "ADK booked without the caller's name"
+
+    today = datetime.now(ZoneInfo("Asia/Colombo")).date()
+    next_tuesday = today + timedelta(days=8 - today.weekday())
+    booking_prompt = (
+        "Not tomorrow. Book it next Tuesday at 4 pm instead. My name is Nimal Perera."
+    )
+    booking_response = await runtime.respond(
+        followup_call_id, "94770000000", booking_prompt
+    )
+    await runtime.end_session(followup_call_id)
+    assert store.calls[-1][0] == "book_appointment", booking_response
+    _, booking_arguments, booking_context = store.calls[-1]
+    assert booking_arguments.get("property_id") == PROPERTY_FIXTURE["property_id"]
+    assert booking_arguments.get("customer_name") == "Nimal Perera"
+    appointment = str(booking_arguments.get("appointment_at", ""))
+    assert appointment.startswith(next_tuesday.isoformat()), appointment
+    assert booking_context and booking_context.caller_phone == "94770000000"
+    results["booking_correction"] = {
+        "requested_date": next_tuesday.isoformat(),
+        "arguments": booking_arguments,
+        "post_tool_response": booking_response,
+        "missing_name_response": missing_name_response,
+    }
     unknown = await service.execute(
         ToolCall("unknown_tool", {}), CallContext("integration-test", "")
     )

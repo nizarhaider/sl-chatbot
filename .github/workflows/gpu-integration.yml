@@ -1,15 +1,46 @@
-name: Production quality gate
+name: Vast guard and production quality gate
 
 on:
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 */2 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  destroy-vast-instances:
+    if: github.event_name == 'schedule'
+    name: Destroy all Vast instances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: false
+
+      - name: Destroy every instance on the account
+        env:
+          VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
+        run: |
+          test -n "$VAST_AI_API_KEY"
+          instances=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
+          ids=$(printf '%s' "$instances" | jq -r '.[].id')
+          if test -z "$ids"; then
+            echo "No Vast instances are active."
+            exit 0
+          fi
+          failed=0
+          for id in $ids; do
+            echo "Destroying Vast instance $id"
+            uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+              destroy instance "$id" -y || failed=1
+          done
+          exit "$failed"
+
   gpu-integration:
+    if: github.event_name != 'schedule'
     name: GPU integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
