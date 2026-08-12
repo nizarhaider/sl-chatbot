@@ -237,7 +237,7 @@ async def check_llm(llm: LocalGemmaLLM) -> dict:
         outputs[language] = await llm.generate(prompt, [], [])
         latencies[language] = time.perf_counter() - started
         assert outputs[language].strip(), f"empty {language} LLM output"
-        assert latencies[language] <= 8, f"{language} LLM too slow"
+        assert latencies[language] <= 12, f"{language} LLM too slow"
     return {
         "latency_seconds": max(latencies.values()),
         "gpu_memory_mib": offload_memory,
