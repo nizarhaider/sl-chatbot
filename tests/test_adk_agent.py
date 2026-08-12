@@ -109,6 +109,10 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "answer entirely in English", backend.requests[2][0][-1]["content"]
         )
+        self.assertNotIn(
+            "මිල ලක්ෂ විසි අටයි.",
+            [message["content"] for message in backend.requests[2][0]],
+        )
         self.assertIn("LKR 28,000,000", backend.requests[2][0][-1]["content"])
         self.assertTrue(
             any(

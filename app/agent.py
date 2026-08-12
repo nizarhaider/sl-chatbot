@@ -68,7 +68,6 @@ class LocalGemmaAdkModel(BaseLlm):
             message = await self._backend.chat(
                 [
                     *messages,
-                    {"role": "assistant", "content": message.get("content") or ""},
                     {
                         "role": "user",
                         "content": _correction_prompt(messages, violations),
@@ -450,8 +449,9 @@ def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
     if language == "ta":
         return (
             "அழைப்பாளரின் சமீபத்திய கோரிக்கைக்கு நேரடியாகப் பதிலளிக்கவும். முந்தைய பதிலை "
-            "மீண்டும் சொல்ல வேண்டாம். தமிழில் ஒன்று முதல் மூன்று பயனுள்ள குறுகிய வாக்கியங்கள் "
-            "பேசவும்."
+            "மீண்டும் சொல்ல வேண்டாம். தமிழ் எழுத்துகளை மட்டும் பயன்படுத்தி ஒன்று முதல் மூன்று "
+            "பயனுள்ள குறுகிய வாக்கியங்கள் பேசவும். சிங்கள எழுத்துகளை ஒருபோதும் பயன்படுத்த வேண்டாம்; "
+            "ஆங்கிலப் பெயர்களும் எண்களும் மட்டும் விதிவிலக்கு."
             + price_rule
         )
     return (
