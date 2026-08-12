@@ -19,6 +19,7 @@ Property search, bookings, call status, and transcripts are stored in Neon. Mode
 | `app/main.py` | changing startup, shutdown, logging, or health checks |
 | `scripts/vast.sh` | renting/configuring the webhook GPU |
 | `scripts/finetune.sh` | reproducing an OmniVoice fine-tune |
+| `scripts/finetune_llm.py` | preparing data or reproducing the Gemma fine-tune |
 | `scripts/infer.py` | running voice-only Gradio inference locally |
 
 The runtime configuration is intentionally centralized in `app/config.py`. Secrets go only in `.env`.
@@ -54,7 +55,7 @@ chmod +x scripts/vast.sh
 ./scripts/vast.sh rent
 ```
 
-The command selects the cheapest matching offer, rents it, syncs this repository plus `.env`, installs the `server` dependency profile, starts FastAPI and ngrok in `tmux`, waits for model prewarming, and prints the `/webhook` URL. Preview the offer without renting:
+The command selects the cheapest matching offer, rents it, syncs this repository plus `.env`, installs the `server` dependency profile, starts supervised FastAPI and ngrok services, waits for model prewarming, and prints the `/webhook` URL. Preview the offer without renting:
 
 ```bash
 DRY_RUN=true ./scripts/vast.sh rent
@@ -120,5 +121,26 @@ uv run --extra server uvicorn app.main:app --host 127.0.0.1 --port 8081
 curl -fsS http://127.0.0.1:8081/
 curl -fsS 'http://127.0.0.1:8081/webhook?hub.mode=subscribe&hub.verify_token=YOUR_VERIFY_TOKEN&hub.challenge=12345'
 ```
+
+## Major changes
+
+Add a dated entry here whenever a change affects the production model, training data or workflow, deployment architecture, database/API contract, or caller-visible behavior. Routine refactors and dependency bumps do not need entries.
+
+### 2026-08-12
+
+- Replaced the stock conversation model with the private, revision-pinned Gemma 4 E4B Sinhala call-center Q4_K_M model. Added the reproducible dataset/LoRA training script and kept datasets, adapters, converted weights, and checkpoints in cloud storage.
+- Grounded property searches against explicit caller property names and locations so model guesses cannot silently override what the caller said.
+- Moved the Vast.ai webhook and ngrok tunnel to supervised, automatically restarting services.
+- Fixed the live call loop after production testing: language selection is immediate, the system prompt is pre-cached, the greeting is shorter, and outbound speech is queued before echo suppression so the bot no longer transcribes itself as the caller.
+
+### 2026-08-11
+
+- Reduced the repository to the lean voice runtime and one primary README. Archived legacy comparisons and large local artifacts to S3.
+- Promoted revision-pinned OmniVoice V5 for speech generation and retained only its cloud dataset/model references locally.
+
+### 2026-08-02
+
+- Added durable WhatsApp call status and transcript storage in Neon.
+- Added Neon-backed property search and viewing-booking tools plus the one-command Vast.ai deployment workflow.
 
 Archived legacy comparisons, bundled voices, and the old local MLflow database are recoverable from `s3://serendibai-models/sl-chatbot-legacy/2026-08-11/`.
