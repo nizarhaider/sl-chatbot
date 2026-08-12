@@ -34,9 +34,13 @@ jobs:
       - name: Register an ephemeral SSH key
         run: |
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vast-ci"
-          result=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
-            create ssh-key "$RUNNER_TEMP/vast-ci.pub" -y)
-          key_id=$(printf '%s' "$result" | jq -r '.key.id // .id')
+          public_key=$(cat "$RUNNER_TEMP/vast-ci.pub")
+          uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+            create ssh-key "$public_key" -y
+          marker=$(cut -d' ' -f2 "$RUNNER_TEMP/vast-ci.pub")
+          keys=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show ssh-keys)
+          key_id=$(printf '%s' "$keys" | jq -r --arg marker "$marker" \
+            '.[] | select(.public_key | contains($marker)) | .id' | tail -n 1)
           test "$key_id" != null
           echo "VAST_SSH_KEY_ID=$key_id" >> "$GITHUB_ENV"
 
