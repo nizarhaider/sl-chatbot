@@ -64,6 +64,9 @@ jobs:
           test -n "$HF_TOKEN"
           test -n "$GEMINI_API_KEY"
 
+      - name: Validate Google ADK orchestration contract
+        run: uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
+
       - name: Stage 1 · Register key and rent the cheapest 16 GB+ GPU
         run: |
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vast-ci"
@@ -178,7 +181,7 @@ jobs:
       - name: Stage 3 · Sinhala ASR
         run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage asr
 
-      - name: Stage 4 · Multilingual LLM
+      - name: Stage 4 · ADK-managed multilingual Gemma
         run: |
           $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage llm
           scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
@@ -193,7 +196,7 @@ jobs:
             "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json"
           exit "$judge_status"
 
-      - name: Stage 5 · LLM tool calls
+      - name: Stage 5 · ADK session memory and tool loop
         run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage tools
 
       - name: Stage 6 · OmniVoice

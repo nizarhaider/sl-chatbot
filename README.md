@@ -108,8 +108,8 @@ It rents one temporary 16 GB+ Vast GPU and verifies:
 
 1. webhook verification;
 2. Sinhala ASR against pinned audio;
-3. system-prompted English, Sinhala, and Tamil LLM responses with a Gemini judge;
-4. model-selected property search and booking tool calls;
+3. ADK-managed English, Sinhala, and Tamil Gemma responses with a Gemini judge;
+4. ADK session memory plus model-selected property search and booking function calls;
 5. audible, faster-than-real-time OmniVoice output in all three languages;
 6. a representative load below 16,384 MiB VRAM.
 
