@@ -105,10 +105,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<tool_result>", backend.requests[1][0][-1]["content"])
         self.assertIn("not caller speech", backend.requests[1][0][-1]["content"])
         self.assertIn("entirely in English", backend.requests[1][0][0]["content"])
-        self.assertIn(
-            "Active inventory locations are: Malabe, Nugegoda",
-            backend.requests[0][0][0]["content"],
-        )
+        self.assertIn("omit location for a broad request", backend.requests[0][0][0]["content"])
         self.assertIn(
             "answer entirely in English", backend.requests[2][0][-1]["content"]
         )

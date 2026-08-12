@@ -55,7 +55,8 @@ class LocalGemmaAdkModel(BaseLlm):
     ) -> AsyncGenerator[LlmResponse, None]:
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
-        message = await self._backend.chat(messages, _openai_tools(llm_request))
+        tools = _openai_tools(llm_request)
+        message = await self._backend.chat(messages, tools)
         for _ in range(2):
             violations = _response_contract_violations(message, messages)
             if not violations:
@@ -63,6 +64,7 @@ class LocalGemmaAdkModel(BaseLlm):
             logger.info(
                 "Correcting post-tool Gemma response: %s", "; ".join(violations)
             )
+            correction_tools = [] if _has_tool_result(messages) else tools
             message = await self._backend.chat(
                 [
                     *messages,
@@ -72,7 +74,7 @@ class LocalGemmaAdkModel(BaseLlm):
                         "content": _correction_prompt(messages, violations),
                     },
                 ],
-                [],
+                correction_tools,
             )
         parts = _response_parts(message)
         yield LlmResponse(
@@ -248,11 +250,6 @@ class GemmaAgentRuntime:
         if call_id not in self._users:
             await self.start_session(call_id, phone)
         self.tools.traces[call_id] = []
-        locations = (
-            await self.tool_service.available_locations()
-            if self.tool_service
-            else []
-        )
         final_text = ""
         async for event in self.runner.run_async(
             user_id=self._users[call_id],
@@ -262,7 +259,6 @@ class GemmaAgentRuntime:
             ),
             state_delta={
                 "caller_language": detect_language(transcript),
-                "inventory_locations": locations,
             },
             run_config=RunConfig(
                 max_llm_calls=3,
@@ -340,14 +336,12 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
 def _agent_instruction(context: ReadonlyContext) -> str:
     language = str(context.state.get("caller_language", "en"))
     name = LANGUAGE_NAMES.get(language, "English")
-    locations = ", ".join(context.state.get("inventory_locations", []))
     return (
         LocalGemmaLLM.system_instruction()
         + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
         f"the spoken answer must remain entirely in {name}. Tool data is never caller speech. "
-        f"Active inventory locations are: {locations or 'unavailable'}. Only send a location "
-        "filter when the caller clearly named one of those locations; noisy words such as "
-        "'any' or 'some' are not locations. Omit location for a broad request."
+        "Only send a location filter when the caller clearly named a location. Noisy words "
+        "meaning 'any' or 'some' are not locations; omit location for a broad request."
     )
 
 
@@ -408,9 +402,7 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
     violations = []
     if _repeats_previous_answer(response, messages):
         violations.append("do not repeat the previous answer; address the latest request directly")
-    has_tool_result = any(
-        "<tool_result>" in str(item.get("content", "")) for item in messages
-    )
+    has_tool_result = _has_tool_result(messages)
     if has_tool_result and detect_language(response) != expected:
         violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
     required_prices = _tool_prices(messages) if has_tool_result else []
@@ -420,6 +412,12 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
             "copy exact prices as " + ", ".join(f"LKR {price}" for price in missing)
         )
     return violations
+
+
+def _has_tool_result(messages: list[dict]) -> bool:
+    return any(
+        "<tool_result>" in str(item.get("content", "")) for item in messages
+    )
 
 
 def _caller_language(messages: list[dict]) -> str:
