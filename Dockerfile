@@ -17,7 +17,7 @@ WORKDIR /opt/serendibai/build
 COPY pyproject.toml uv.lock ./
 RUN uv sync --extra server --frozen --no-install-project
 
-COPY app/__init__.py app/config.py ./app/
+COPY app/config.py ./app/
 RUN --mount=type=secret,id=hf_token,required=true \
     HF_TOKEN="$(cat /run/secrets/hf_token)" /opt/serendibai/venv/bin/python - <<'PY'
 from huggingface_hub import hf_hub_download, snapshot_download
