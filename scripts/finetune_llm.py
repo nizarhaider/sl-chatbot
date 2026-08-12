@@ -270,6 +270,48 @@ def tool_examples() -> list[dict]:
                 ],
             }
         )
+
+    behavior_rows = [
+        ("සිංහල", "මම SerendibAI කෙනෙක්, Homelands Properties වෙනුවෙන් කතා කරනවා. ඔබට කොහොමද උදව් කරන්න ඕනේ?"),
+        ("English", "I'm calling from SerendibAI on behalf of Homelands Properties. How can I help?"),
+        ("ඔකේ", "හරි, ඔබට කොහොමද උදව් කරන්න ඕනේ?"),
+        ("හරි", "හරි, ඔබට කොහොමද උදව් කරන්න ඕනේ?"),
+        ("Okay", "Sure. How can I help?"),
+        ("Yes", "Sure. How can I help?"),
+    ]
+    for index, (caller, agent) in enumerate(behavior_rows):
+        rows.append(
+            {
+                "source": "serendib_behavior_examples",
+                "source_id": f"behavior-{index}",
+                "messages": [
+                    message("system", TOOL_SYSTEM_PROMPT),
+                    message("user", caller),
+                    message("assistant", agent),
+                ],
+            }
+        )
+
+    named_properties = [
+        ("Ocean Breeze", "Ocean Breeze Apartments"),
+        ("Horizon Residencies", "Horizon Residencies"),
+        ("Green Acres", "Green Acres"),
+        ("Lakeview Villas", "Lakeview Villas"),
+    ]
+    for index, (caller_name, query) in enumerate(named_properties):
+        arguments = {"query": query}
+        tool_call = f'<tool_call>{json.dumps({"name": "search_properties", "arguments": arguments}, separators=(",", ":"))}</tool_call>'
+        rows.append(
+            {
+                "source": "serendib_tool_examples",
+                "source_id": f"tool-named-{index}",
+                "messages": [
+                    message("system", TOOL_SYSTEM_PROMPT),
+                    message("user", f"{caller_name} ගැන විස්තර ඕනේ."),
+                    message("assistant", tool_call),
+                ],
+            }
+        )
     return rows
 
 

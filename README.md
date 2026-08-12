@@ -129,10 +129,10 @@ Add a dated entry here whenever a change affects the production model, training 
 ### 2026-08-12
 
 - Replaced the stock conversation model with the private, revision-pinned Gemma 4 E4B Sinhala call-center Q4_K_M model. Added the reproducible dataset/LoRA training script and kept datasets, adapters, converted weights, and checkpoints in cloud storage.
-- Grounded property searches against explicit caller property names and locations so model guesses cannot silently override what the caller said.
 - Moved the Vast.ai webhook and ngrok tunnel to supervised, automatically restarting services.
-- Fixed the live call loop after production testing: language selection is immediate, the system prompt is pre-cached, the greeting is shorter, and outbound speech is queued before echo suppression so the bot no longer transcribes itself as the caller.
-- Hardened live property conversations after a second call test: acknowledgements and explicit searches bypass the LLM, database prices are spoken exactly in millions, tool results no longer require a second model pass, vague inventory questions ask for location/type, and end-of-turn silence was reduced.
+- Fixed live audio turn handling after production testing: the system prompt is pre-cached, the greeting is shorter, end-of-turn silence is reduced, and outbound speech is queued before echo suppression so the bot no longer transcribes itself as the caller.
+- Removed transcript keyword routing and canned intent responses. The fine-tuned model now owns language choice, acknowledgements, property intent/filter extraction, tool selection, tool-result interpretation, and final wording; runtime code only validates and executes tool calls.
+- Expanded the reproducible LLM training data with model-level acknowledgement, language-choice, and named-property tool examples after production evaluation exposed overly proactive replies.
 
 ### 2026-08-11
 

@@ -61,22 +61,22 @@ PROPERTIES = (
     ),
 )
 
-LOCATION_ALIASES = {
-    "Malabe": ("malabe", "මාලබේ", "මලබේ"),
-    "Piliyandala": ("piliyandala", "පිළියන්දල"),
-    "Kurunegala": ("kurunegala", "කුරුණෑගල"),
-    "Dehiwala": ("dehiwala", "දෙහිවල"),
-}
-
 TOOL_INSTRUCTIONS = """
 Property facts and viewing appointments are available only through tools. Never invent inventory,
-prices, availability, or confirmations. Emit exactly one tool block when needed:
-<tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>
+prices, availability, locations, or confirmations. Infer the caller's intent and filters from the
+full conversation. Ask a natural follow-up question when required information is missing. Emit
+exactly one tool block containing valid JSON when a tool is needed.
 
 Tools:
 - search_properties: optional query, location, property_type, bedrooms, max_price_lkr.
 - book_appointment: required property_id, customer_name, appointment_at (ISO 8601).
-A booking is confirmed only when book_appointment returns ok=true.
+Call search_properties as soon as the caller names a property or supplies any search filter; the
+remaining search fields are optional. Put a named property in query. Include only filters supported
+by the conversation and never invent one. Write location and property_type tool arguments in
+English even when the caller speaks Sinhala. Greetings and acknowledgements are not searches.
+After a tool result, interpret it and answer naturally in the caller's language. Preserve all
+numbers and property facts exactly as returned. A booking is confirmed only when
+book_appointment returns ok=true.
 """.strip()
 
 
@@ -111,24 +111,6 @@ def tool_call_message(call: ToolCall) -> str:
         {"name": call.name, "arguments": call.arguments}, separators=(",", ":")
     )
     return f"<tool_call>{payload}</tool_call>"
-
-
-def ground_search_call(transcript: str, call: ToolCall) -> ToolCall:
-    """Prefer explicit caller terms over an LLM's inferred search filters."""
-    if call.name != "search_properties":
-        return call
-    text = transcript.casefold()
-    arguments = dict(call.arguments)
-    for slug, name, location, property_type, *_ in PROPERTIES:
-        brand = " ".join(name.casefold().split()[:2])
-        if name.casefold() in text or brand in text or slug.replace("-", " ") in text:
-            arguments.update(query=name, location=location, property_type=property_type)
-            return ToolCall(call.name, arguments)
-    for location, aliases in LOCATION_ALIASES.items():
-        if any(alias in text for alias in aliases):
-            arguments["location"] = location
-            break
-    return ToolCall(call.name, arguments)
 
 
 @dataclass

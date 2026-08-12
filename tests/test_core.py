@@ -7,20 +7,11 @@ from app.database import (
     ToolCall,
     appointment_time,
     format_transcript,
-    ground_search_call,
     parse_tool_call,
     tool_call_message,
 )
 from app.models import is_noise_text, strip_thinking
-from app.pipeline import (
-    TurnPipeline,
-    acknowledgement_reply,
-    direct_search_call,
-    inventory_clarification_reply,
-    language_selection_reply,
-    property_result_reply,
-    repetitive,
-)
+from app.pipeline import TurnPipeline, repetitive
 from app.whatsapp import refine_sdp
 
 
@@ -101,20 +92,6 @@ def test_tool_call_round_trip_and_malformed_closer() -> None:
     assert parse_tool_call("<tool_call>not-json</tool_call>") is None
 
 
-def test_explicit_property_and_location_override_llm_search_guess() -> None:
-    wrong = ToolCall("search_properties", {"location": "Malabe"})
-
-    ocean = ground_search_call("Ocean Breeze දෙහිවල විස්තර", wrong)
-    kurunegala = ground_search_call("කුරුණෑගල land එකක්", wrong)
-
-    assert ocean.arguments == {
-        "query": "Ocean Breeze Apartments",
-        "location": "Dehiwala",
-        "property_type": "apartment",
-    }
-    assert kurunegala.arguments == {"location": "Kurunegala"}
-
-
 def test_tool_service_booking_and_unknown_tool() -> None:
     store = FakePropertyStore()
     service = RealEstateToolService(store)
@@ -141,12 +118,13 @@ def test_pipeline_searches_then_books_without_speaking_tool_json() -> None:
         [
             '<tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>',
             '<tool_call>{"name":"book_appointment","arguments":{"property_id":"property-1"}}</tool_call>',
+            "Your viewing is booked.",
         ]
     )
 
     response = asyncio.run(pipeline._respond("call-1", "94770000000", "Book a viewing"))
 
-    assert response == "Your viewing for the property is confirmed for the requested time."
+    assert response == "Your viewing is booked."
     assert [call.name for call, _ in pipeline.tools.calls] == [
         "search_properties",
         "book_appointment",
@@ -157,18 +135,8 @@ def test_pipeline_searches_then_books_without_speaking_tool_json() -> None:
 
 def test_pipeline_rejects_malformed_tool_json() -> None:
     pipeline = bare_pipeline(["<tool_call>not-json</tool_call>"])
-    response = asyncio.run(pipeline._respond("call-1", "", "Help me"))
+    response = asyncio.run(pipeline._respond("call-1", "", "Find a house"))
     assert response == "Sorry, I couldn't complete that request. Please try again."
-
-
-def test_language_selection_skips_the_llm() -> None:
-    pipeline = bare_pipeline([])
-
-    response = asyncio.run(pipeline._respond("call-1", "", "ආ සිංහල"))
-
-    assert response == "හරි, අපි සිංහලෙන් කතා කරමු. ඔබට කොහොමද උදව් කරන්න ඕනේ?"
-    assert pipeline.llm.continuations == []
-    assert language_selection_reply("Can we speak English about a house?") is None
 
 
 def test_spoken_audio_is_queued_before_echo_guard_runs() -> None:
@@ -181,36 +149,6 @@ def test_spoken_audio_is_queued_before_echo_guard_runs() -> None:
 
     chunks = asyncio.run(exercise())
     assert chunks == [(b"\0\0" * 240, 24_000)]
-
-
-def test_acknowledgement_does_not_invent_a_property_topic() -> None:
-    assert acknowledgement_reply("ඔකේ") == "හරි, ඔබට මොන වගේ දේකට උදව් ඕනේද?"
-    assert acknowledgement_reply("okay") == "Sure. What can I help you with?"
-    assert acknowledgement_reply("okay, show me a house") is None
-
-
-def test_explicit_property_search_skips_the_llm_and_formats_exact_price() -> None:
-    call = direct_search_call("මට Malabe apartment එකක් ඕනේ")
-    response = property_result_reply(
-        {
-            "ok": True,
-            "properties": [
-                {
-                    "name": "Horizon Residencies",
-                    "location": "Malabe",
-                    "bedrooms": 2,
-                    "price_lkr": 28_000_000,
-                }
-            ],
-        },
-        "මට Malabe apartment එකක් ඕනේ",
-    )
-
-    assert call is not None
-    assert call.arguments == {"location": "Malabe", "property_type": "apartment"}
-    assert "මිල රුපියල් මිලියන 28" in response
-    assert "ලක්ෂ 28" not in response
-    assert inventory_clarification_reply("මොකක් තියෙන්නේ?") is not None
 
 
 def test_call_log_keeps_neon_copy_readable() -> None:
