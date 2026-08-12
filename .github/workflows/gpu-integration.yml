@@ -162,18 +162,30 @@ jobs:
             -P "$VAST_PORT" "$RUNNER_TEMP/hf.env" "$remote:/workspace/sl-chatbot/.env"
           ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
-            'tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot && \
-             cd /workspace/sl-chatbot && timeout 15m uv sync --extra server --frozen && \
-             find .venv/lib/python3.11/site-packages/nvidia -type d -name lib \
-               -print | paste -sd: - > .cuda-library-path && \
-             printf "%s\n" \
-               "#!/usr/bin/env bash" \
-               "set -euo pipefail" \
-               "cd /workspace/sl-chatbot" \
-               "export LD_LIBRARY_PATH=\"\$(cat .cuda-library-path):\${LD_LIBRARY_PATH:-}\"" \
-               "PYTHONPATH=. .venv/bin/dotenv -f .env run -- .venv/bin/python tests/gpu_integration.py \"\$1\"" \
-               > run-stage && chmod +x run-stage'
+            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" 'bash -se' <<'REMOTE'
+          tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot
+          cd /workspace/sl-chatbot
+          sync_ok=false
+          for attempt in 1 2 3; do
+            if timeout 15m uv sync --extra server --frozen; then
+              sync_ok=true
+              break
+            fi
+            echo "uv sync attempt $attempt failed; retrying" >&2
+            sleep 15
+          done
+          test "$sync_ok" = true
+          find .venv/lib/python3.11/site-packages/nvidia -type d -name lib \
+            -print | paste -sd: - > .cuda-library-path
+          printf "%s\n" \
+            "#!/usr/bin/env bash" \
+            "set -euo pipefail" \
+            "cd /workspace/sl-chatbot" \
+            "export LD_LIBRARY_PATH=\"\$(cat .cuda-library-path):\${LD_LIBRARY_PATH:-}\"" \
+            "PYTHONPATH=. .venv/bin/dotenv -f .env run -- .venv/bin/python tests/gpu_integration.py \"\$1\"" \
+            > run-stage
+          chmod +x run-stage
+          REMOTE
 
       - name: Stage 2 · Webhook
         run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage webhook
