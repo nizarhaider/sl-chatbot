@@ -102,7 +102,7 @@ class LocalGemmaLLM:
         self._lock = asyncio.Lock()
 
     async def prewarm(self) -> None:
-        await asyncio.to_thread(self._get_model)
+        await asyncio.to_thread(self._prime)
 
     async def generate(
         self,
@@ -119,15 +119,9 @@ class LocalGemmaLLM:
             )
 
     def _generate(self, transcript, history, continuation) -> str:
-        local_time = datetime.now(ZoneInfo("Asia/Colombo")).isoformat(
-            timespec="minutes"
-        )
         response = self._get_model().create_chat_completion(
             messages=[
-                {
-                    "role": "system",
-                    "content": f"{SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\nSri Lanka time: {local_time}.",
-                },
+                self._system_message(),
                 *history,
                 {"role": "user", "content": transcript},
                 *continuation,
@@ -137,6 +131,22 @@ class LocalGemmaLLM:
         )
         text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
         return strip_thinking(text)
+
+    def _prime(self) -> None:
+        """Evaluate the stable system prefix once before the first live turn."""
+        self._get_model().create_chat_completion(
+            messages=[self._system_message(), {"role": "user", "content": " "}],
+            temperature=0,
+            max_tokens=1,
+        )
+
+    @staticmethod
+    def _system_message() -> dict[str, str]:
+        local_date = datetime.now(ZoneInfo("Asia/Colombo")).date().isoformat()
+        return {
+            "role": "system",
+            "content": f"{SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\nSri Lanka date: {local_date}.",
+        }
 
     def _get_model(self):
         if self._llm is not None:

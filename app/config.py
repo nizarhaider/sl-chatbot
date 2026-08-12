@@ -9,10 +9,10 @@ LLM_REVISION = "e0174ff3e4959695e671e10f2302954ca6e55a9c"
 LLM_FILENAME = "serendib-gemma-4-e4b-sinhala-callcenter-q4_k_m.gguf"
 LLM_GPU_LAYERS = 42
 LLM_CONTEXT = 2048
-LLM_BATCH = 128
+LLM_BATCH = 512
 LLM_THREADS = 8
 LLM_TEMPERATURE = 0.2
-LLM_MAX_TOKENS = 1024
+LLM_MAX_TOKENS = 256
 LLM_HISTORY_MESSAGES = 8
 
 # Speech recognition.
@@ -53,5 +53,6 @@ SYSTEM_PROMPT = (
     "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
     "The caller has already heard a language-selection greeting. Reply in the same language as "
     "the caller's latest speech unless they clearly ask to switch languages. If they only choose "
-    "a language, introduce yourself in one casual line."
+    "a language, introduce yourself in one casual line. Keep each spoken reply to one short "
+    "sentence unless a tool result requires more detail."
 )

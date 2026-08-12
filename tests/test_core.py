@@ -12,7 +12,7 @@ from app.database import (
     tool_call_message,
 )
 from app.models import is_noise_text, strip_thinking
-from app.pipeline import TurnPipeline, repetitive
+from app.pipeline import TurnPipeline, language_selection_reply, repetitive
 from app.whatsapp import refine_sdp
 
 
@@ -55,6 +55,20 @@ class FakeCallStore:
 
     def save(self, call: dict) -> None:
         self.calls.append(call)
+
+
+class FakeTTS:
+    async def speak(self, text, on_audio_chunk):
+        on_audio_chunk(b"\0\0" * 240, 24_000)
+        return 0.01
+
+
+class FakeOutputTrack:
+    def __init__(self) -> None:
+        self.chunks = []
+
+    def add_pcm(self, chunk, sample_rate):
+        self.chunks.append((chunk, sample_rate))
 
 
 def bare_pipeline(responses: list[str]) -> TurnPipeline:
@@ -138,6 +152,28 @@ def test_pipeline_rejects_malformed_tool_json() -> None:
     pipeline = bare_pipeline(["<tool_call>not-json</tool_call>"])
     response = asyncio.run(pipeline._respond("call-1", "", "Find a house"))
     assert response == "Sorry, I couldn't complete that request. Please try again."
+
+
+def test_language_selection_skips_the_llm() -> None:
+    pipeline = bare_pipeline([])
+
+    response = asyncio.run(pipeline._respond("call-1", "", "ආ සිංහල"))
+
+    assert response == "හරි, අපි සිංහලෙන් කතා කරමු. ඔබට කොහොමද උදව් කරන්න ඕනේ?"
+    assert pipeline.llm.continuations == []
+    assert language_selection_reply("Can we speak English about a house?") is None
+
+
+def test_spoken_audio_is_queued_before_echo_guard_runs() -> None:
+    async def exercise():
+        pipeline = TurnPipeline.__new__(TurnPipeline)
+        pipeline.tts = FakeTTS()
+        output = FakeOutputTrack()
+        await pipeline._speak("call-1", "Hello", output, {"call-1": 0})
+        return output.chunks
+
+    chunks = asyncio.run(exercise())
+    assert chunks == [(b"\0\0" * 240, 24_000)]
 
 
 def test_call_log_keeps_neon_copy_readable() -> None:

@@ -168,6 +168,8 @@ class TurnPipeline:
         )
 
     async def _respond(self, call_id: str, phone: str, transcript: str) -> str:
+        if reply := language_selection_reply(transcript):
+            return reply
         history = list(self.history.get(call_id, []))
         continuation: list[dict[str, str]] = []
         context = CallContext(call_id, phone)
@@ -215,11 +217,10 @@ class TurnPipeline:
         if not text:
             return 0
         generation = generations.get(call_id, 0)
-        loop = asyncio.get_running_loop()
 
         def forward(chunk: bytes, sample_rate: int) -> None:
             if generations.get(call_id, 0) == generation:
-                loop.call_soon_threadsafe(output_track.add_pcm, chunk, sample_rate)
+                output_track.add_pcm(chunk, sample_rate)
 
         seconds = await self.tts.speak(text, forward)
         return seconds if generations.get(call_id, 0) == generation else 0
@@ -300,6 +301,20 @@ def repetitive(text: str) -> bool:
         if any(grams.count(gram) >= 3 for gram in set(grams)):
             return True
     return False
+
+
+def language_selection_reply(transcript: str) -> str | None:
+    """Answer a bare language choice immediately without invoking the LLM."""
+    text = re.sub(r"[^\w\u0D80-\u0DFF\u0B80-\u0BFF]+", " ", transcript.casefold()).strip()
+    if not text or len(text) > 40 or len(text.split()) > 4:
+        return None
+    if "සිංහල" in text or "sinhala" in text:
+        return "හරි, අපි සිංහලෙන් කතා කරමු. ඔබට කොහොමද උදව් කරන්න ඕනේ?"
+    if "english" in text:
+        return "Sure, let's speak in English. How can I help you?"
+    if "தமிழ்" in text or "tamil" in text:
+        return "சரி, தமிழில் பேசலாம். நான் உங்களுக்கு எப்படி உதவலாம்?"
+    return None
 
 
 voice_agent = VoiceAgent()
