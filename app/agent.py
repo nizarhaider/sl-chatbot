@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
@@ -53,9 +54,28 @@ class LocalGemmaAdkModel(BaseLlm):
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
         del stream  # The phone runtime consumes complete, non-streaming turns.
-        message = await self._backend.chat(
-            _chat_messages(llm_request), _openai_tools(llm_request)
-        )
+        messages = _chat_messages(llm_request)
+        message = await self._backend.chat(messages, _openai_tools(llm_request))
+        if violations := _response_contract_violations(message, messages):
+            logger.info(
+                "Correcting post-tool Gemma response: %s", "; ".join(violations)
+            )
+            message = await self._backend.chat(
+                [
+                    *messages,
+                    {"role": "assistant", "content": message.get("content") or ""},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Rewrite only the final spoken answer. Fix these violations: "
+                            + "; ".join(violations)
+                            + ". Use only facts in the tool result, with no commentary about "
+                            "these instructions."
+                        ),
+                    },
+                ],
+                [],
+            )
         parts = _response_parts(message)
         yield LlmResponse(
             content=types.Content(role="model", parts=parts),
@@ -370,3 +390,48 @@ def _response_parts(message: dict) -> list[types.Part]:
     if not parts:
         parts.append(types.Part(text=text))
     return parts
+
+
+def _response_contract_violations(message: dict, messages: list[dict]) -> list[str]:
+    if message.get("tool_calls") or not any(
+        "<tool_result>" in str(item.get("content", "")) for item in messages
+    ):
+        return []
+    response = strip_thinking(message.get("content") or "")
+    caller_text = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages)
+            if item.get("role") == "user"
+            and "<tool_result>" not in str(item.get("content", ""))
+        ),
+        "",
+    )
+    expected = detect_language(caller_text)
+    violations = []
+    if detect_language(response) != expected:
+        violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
+    required_prices = _tool_prices(messages)
+    missing = [price for price in required_prices if price not in response]
+    if missing:
+        violations.append(
+            "copy exact prices as " + ", ".join(f"LKR {price}" for price in missing)
+        )
+    return violations
+
+
+def _tool_prices(messages: list[dict]) -> list[str]:
+    prices: list[str] = []
+    for message in messages:
+        content = str(message.get("content", ""))
+        for match in re.finditer(
+            r"<tool_result>(.*?)</tool_result>", content, re.DOTALL
+        ):
+            try:
+                result = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+            for row in result.get("properties", []):
+                if isinstance(row.get("price_lkr"), int):
+                    prices.append(f"{row['price_lkr']:,}")
+    return list(dict.fromkeys(prices))

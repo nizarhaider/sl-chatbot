@@ -29,7 +29,9 @@ class FakeGemmaBackend:
                     }
                 ],
             }
-        return {"content": "I found one matching property in Malabe."}
+        if len(self.requests) == 2:
+            return {"content": "මිල ලක්ෂ විසි අටයි."}
+        return {"content": "I found one matching property for LKR 28,000,000."}
 
 
 class FakePropertyService:
@@ -48,7 +50,12 @@ class FakePropertyService:
             "ok": True,
             "count": 1,
             "properties": [
-                {"property_id": "property-1", "location": "Malabe", "bedrooms": 2}
+                {
+                    "property_id": "property-1",
+                    "location": "Malabe",
+                    "bedrooms": 2,
+                    "price_lkr": 28_000_000,
+                }
             ],
         }
 
@@ -82,8 +89,8 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             session_id="call-1",
         )
 
-        self.assertEqual(response, "I found one matching property in Malabe.")
-        self.assertEqual(followup, "I found one matching property in Malabe.")
+        self.assertEqual(response, "I found one matching property for LKR 28,000,000.")
+        self.assertEqual(followup, "I found one matching property for LKR 28,000,000.")
         self.assertEqual(service.calls[0][0].name, "search_properties")
         self.assertEqual(service.calls[0][0].arguments["bedrooms"], 2)
         self.assertEqual(service.calls[0][1].caller_phone, "94770000000")
@@ -95,10 +102,15 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<tool_result>", backend.requests[1][0][-1]["content"])
         self.assertIn("not caller speech", backend.requests[1][0][-1]["content"])
         self.assertIn("entirely in English", backend.requests[1][0][0]["content"])
+        self.assertIn(
+            "answer entirely in English", backend.requests[2][0][-1]["content"]
+        )
+        self.assertIn("LKR 28,000,000", backend.requests[2][0][-1]["content"])
         self.assertTrue(
             any(
-                message["content"] == "I found one matching property in Malabe."
-                for message in backend.requests[2][0]
+                message["content"]
+                == "I found one matching property for LKR 28,000,000."
+                for message in backend.requests[3][0]
             )
         )
         self.assertEqual(
