@@ -1,0 +1,133 @@
+name: Production acceptance
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  vast-gpu-acceptance:
+    name: Vast GPU acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      VAST_TEMPLATE_HASH: 18e97fc6703dea11057cee364a8eaa8c
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: false
+
+      - name: Validate CI credentials
+        run: |
+          test -n "$VAST_AI_API_KEY"
+          test -n "$HF_TOKEN"
+
+      - name: Register an ephemeral SSH key
+        run: |
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vast-ci"
+          result=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+            create ssh-key "$RUNNER_TEMP/vast-ci.pub" -y)
+          key_id=$(printf '%s' "$result" | jq -r '.key.id // .id')
+          test "$key_id" != null
+          echo "VAST_SSH_KEY_ID=$key_id" >> "$GITHUB_ENV"
+
+      - name: Rent the cheapest suitable GPU
+        run: |
+          query='num_gpus=1 gpu_ram>=16 cpu_arch=amd64 disk_space>=40 cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true'
+          offers=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+            search offers "$query" --storage 40 --order dph --limit 200)
+          offer_id=$(printf '%s' "$offers" | jq -r \
+            '[.[] | select(.gpu_name | test("^RTX (4070|30[0-9]{2})"; "i"))] | min_by(.dph_total) | .id')
+          test "$offer_id" != null
+          if ! result=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+            create instance "$offer_id" --template_hash "$VAST_TEMPLATE_HASH" \
+            --disk 40 --label "serendibai-ci-${GITHUB_RUN_ID}" --ssh --direct --cancel-unavail); then
+            existing=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
+            instance_id=$(printf '%s' "$existing" | jq -r \
+              --arg label "serendibai-ci-${GITHUB_RUN_ID}" '.[] | select(.label==$label) | .id' | head -n 1)
+            if test -n "$instance_id"; then
+              echo "VAST_INSTANCE_ID=$instance_id" >> "$GITHUB_ENV"
+            fi
+            exit 1
+          fi
+          instance_id=$(printf '%s' "$result" | jq -r '.new_contract')
+          test "$instance_id" != null
+          echo "VAST_INSTANCE_ID=$instance_id" >> "$GITHUB_ENV"
+
+      - name: Wait for SSH
+        run: |
+          chmod 600 "$RUNNER_TEMP/vast-ci"
+          for attempt in $(seq 1 180); do
+            state=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+              show instance "$VAST_INSTANCE_ID")
+            host=$(printf '%s' "$state" | jq -r 'if type=="array" then .[0] else . end | .public_ipaddr // empty')
+            port=$(printf '%s' "$state" | jq -r 'if type=="array" then .[0] else . end | .ports["22/tcp"][0].HostPort // empty')
+            if test -n "$host" && test -n "$port" && ssh -o BatchMode=yes \
+              -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
+              -i "$RUNNER_TEMP/vast-ci" -p "$port" "root@$host" true 2>/dev/null; then
+              echo "VAST_HOST=$host" >> "$GITHUB_ENV"
+              echo "VAST_PORT=$port" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Run the five acceptance checks
+        run: |
+          remote="root@$VAST_HOST"
+          transport="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $RUNNER_TEMP/vast-ci -p $VAST_PORT"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
+            'mkdir -p /workspace/sl-chatbot'
+          rsync -az --delete -e "$transport" --exclude .git --exclude .venv \
+            ./ "$remote:/workspace/sl-chatbot/"
+          install -m 600 /dev/null "$RUNNER_TEMP/hf.env"
+          printf 'HF_TOKEN=%s\n' "$HF_TOKEN" > "$RUNNER_TEMP/hf.env"
+          scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
+            -P "$VAST_PORT" "$RUNNER_TEMP/hf.env" "$remote:/workspace/sl-chatbot/.env"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "$remote" \
+            'cd /workspace/sl-chatbot && uv sync --extra server --frozen && \
+             PYTHONPATH=. .venv/bin/dotenv -f .env run -- .venv/bin/python tests/acceptance.py'
+          scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
+            -P "$VAST_PORT" "$remote:/workspace/sl-chatbot/acceptance-report.json" .
+          scp -qr -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
+            -P "$VAST_PORT" "$remote:/workspace/sl-chatbot/acceptance-audio" .
+
+      - name: AI-judge English, Sinhala, and Tamil responses
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --frozen python scripts/judge_acceptance.py acceptance-report.json
+
+      - name: Upload report and audible samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-acceptance-${{ github.run_id }}
+          path: |
+            acceptance-report.json
+            acceptance-audio/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Destroy GPU and remove SSH key
+        if: always()
+        run: |
+          if test -n "${VAST_INSTANCE_ID:-}"; then
+            uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+              destroy instance "$VAST_INSTANCE_ID" -y
+          fi
+          if test -n "${VAST_SSH_KEY_ID:-}"; then
+            uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
+              delete ssh-key "$VAST_SSH_KEY_ID"
+          fi
