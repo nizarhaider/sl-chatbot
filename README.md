@@ -47,12 +47,12 @@ uv run python -m compileall -q app scripts tests
 
 ## Production quality gate
 
-Every pull request into `main` rents the cheapest suitable Vast.ai GPU with at least 16 GB VRAM, copies the repository once, then makes a separate SSH call for each integration-test stage. A stage prints status `200` when it passes; any other result stops the quality gate:
+Every pull request into `main` rents the cheapest compatible Vast.ai RTX 30/40-series GPU with at least 16 GB VRAM, copies the repository once, then makes a separate SSH call for each integration-test stage. A stage prints status `200` when it passes; any other result stops the quality gate:
 
-1. rent and connect to the cheapest available verified GPU offer with at least 16 GB VRAM;
+1. rent and connect to the cheapest compatible verified GPU offer with at least 16 GB VRAM;
 2. the FastAPI webhook starts and completes Meta's verification handshake;
 3. the pinned Sinhala ASR transcribes a fixed, revision-pinned call-center recording;
-4. the production Gemma wrapper, including its real system/tool prompt, answers call-center requests in English, Sinhala, and Tamil, then GitHub Models grades language, usefulness, tone, groundedness, and safety;
+4. the production Gemma wrapper verifies CUDA offload, then answers call-center requests in English, Sinhala, and Tamil with its real system/tool prompt; GitHub Models grades language, usefulness, tone, groundedness, and safety;
 5. the model selects and the runtime executes both `search_properties` and `book_appointment` against an in-memory copy of the production tool contract;
 6. OmniVoice produces non-silent, plausible-duration speech in all three languages and stays faster than real time;
 7. a representative full-model workload continuously samples GPU memory/utilization and fails on CUDA OOM or peak VRAM above 16,384 MiB.

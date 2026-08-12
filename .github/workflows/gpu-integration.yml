@@ -50,7 +50,7 @@ jobs:
           offers=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
             search offers "$query" --storage 40 --order dph --limit 200)
           offer_ids=$(printf '%s' "$offers" | jq -r \
-            'sort_by(.dph_total) | .[:3] | .[].id')
+            '[.[] | select(.gpu_name | test("^RTX (40[0-9]{2}|30[0-9]{2})"; "i"))] | sort_by(.dph_total) | .[:3] | .[].id')
           test -n "$offer_ids"
           attempt_number=0
           for offer_id in $offer_ids; do

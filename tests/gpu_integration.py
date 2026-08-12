@@ -227,6 +227,10 @@ def check_asr(asr: LocalWhisperASR) -> dict:
 
 async def check_llm(llm: LocalGemmaLLM) -> dict:
     await llm.prewarm()
+    offload_memory = gpu_memory_used_mib()
+    assert offload_memory >= 512, (
+        f"LLM GPU offload unavailable: only {offload_memory} MiB VRAM in use"
+    )
     outputs, latencies = {}, {}
     for language, prompt in LANGUAGE_CASES.items():
         started = time.perf_counter()
@@ -236,6 +240,7 @@ async def check_llm(llm: LocalGemmaLLM) -> dict:
         assert latencies[language] <= 8, f"{language} LLM too slow"
     return {
         "latency_seconds": max(latencies.values()),
+        "gpu_memory_mib": offload_memory,
         "latencies": latencies,
         "cases": outputs,
     }
@@ -350,6 +355,19 @@ def sample_gpu(stop: threading.Event, samples: list[tuple[int, int]]) -> None:
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         stop.wait(0.1)
+
+
+def gpu_memory_used_mib() -> int:
+    output = subprocess.check_output(
+        [
+            "nvidia-smi",
+            "--query-gpu=memory.used",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        timeout=5,
+    )
+    return max(int(row.strip()) for row in output.splitlines() if row.strip())
 
 
 def write_wav(path: Path, waveform: np.ndarray, sample_rate: int) -> None:
