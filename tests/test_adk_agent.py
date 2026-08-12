@@ -151,6 +151,27 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["available_locations"], ["Malabe", "Nugegoda"])
         self.assertEqual(locations["locations"], ["Malabe", "Nugegoda"])
 
+    async def test_booking_rejects_model_placeholder_name(self) -> None:
+        class Store:
+            def book(self, arguments, context):
+                raise AssertionError("invalid booking reached the store")
+
+        service = RealEstateToolService(Store())
+        result = await service.execute(
+            ToolCall(
+                "book_appointment",
+                {
+                    "property_id": "property-1",
+                    "customer_name": "caller",
+                    "appointment_at": "2099-01-01T10:00:00+05:30",
+                },
+            ),
+            CallContext("call-1", "94770000000"),
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Ask the caller for their name", result["error"])
+
     def test_language_selection_accepts_repeated_choice_only(self) -> None:
         self.assertEqual(selected_language("sinhala sinhala"), "si")
         self.assertEqual(selected_language("தமிழ்"), "ta")

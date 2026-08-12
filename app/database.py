@@ -415,7 +415,9 @@ class RealEstateToolService:
                 locations = await self.available_locations()
                 return {"ok": True, "locations": locations, "count": len(locations)}
             if call.name == "book_appointment":
-                row = await asyncio.to_thread(self.store.book, call.arguments, context)
+                arguments = dict(call.arguments)
+                arguments["customer_name"] = validated_customer_name(arguments)
+                row = await asyncio.to_thread(self.store.book, arguments, context)
                 return {"ok": True, "appointment": row}
             return {"ok": False, "error": f"Unknown tool: {call.name}"}
         except ValueError as exc:
@@ -453,6 +455,20 @@ def required(arguments: dict, name: str) -> str:
     value = str(arguments.get(name, "")).strip()
     if not value:
         raise ValueError(f"Missing required argument: {name}")
+    return value
+
+
+def validated_customer_name(arguments: dict) -> str:
+    value = required(arguments, "customer_name")
+    if value.casefold() in {
+        "caller",
+        "customer",
+        "the caller",
+        "the customer",
+        "unknown",
+        "user",
+    }:
+        raise ValueError("Missing customer_name. Ask the caller for their name.")
     return value
 
 

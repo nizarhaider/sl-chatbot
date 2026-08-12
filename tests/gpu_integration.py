@@ -84,6 +84,9 @@ class IntegrationPropertyStore:
             "caller_phone": context.caller_phone,
         }
 
+    def close(self) -> None:
+        return None
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
