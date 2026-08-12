@@ -8,6 +8,7 @@ __pycache__
 *.log
 .DS_Store
 run_logs/
+gpu-integration-*
 *.wav
 *.mp3
 *.safetensors

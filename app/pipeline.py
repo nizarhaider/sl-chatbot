@@ -154,7 +154,10 @@ class TurnPipeline:
             async with notice_lock:
                 if notice_count and not followup:
                     return
-                if followup and time.perf_counter() - last_notice < PROGRESS_REPEAT_SECONDS:
+                if (
+                    followup
+                    and time.perf_counter() - last_notice < PROGRESS_REPEAT_SECONDS
+                ):
                     return
                 line = PROGRESS_LINES[language][1 if followup else 0]
                 call_log.add(call_id, "assistant", line)
@@ -264,7 +267,7 @@ class TurnPipeline:
                 return None, None
             try:
                 frame = receive.result()
-            except Exception as exc:  # noqa: BLE001 - closed media backend.
+            except Exception as exc:
                 logger.info("Input ended during slow turn for %s: %s", call_id, exc)
                 response_task.cancel()
                 raise
