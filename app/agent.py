@@ -56,7 +56,10 @@ class LocalGemmaAdkModel(BaseLlm):
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
         message = await self._backend.chat(messages, _openai_tools(llm_request))
-        if violations := _response_contract_violations(message, messages):
+        for _ in range(2):
+            violations = _response_contract_violations(message, messages)
+            if not violations:
+                break
             logger.info(
                 "Correcting post-tool Gemma response: %s", "; ".join(violations)
             )
@@ -66,12 +69,7 @@ class LocalGemmaAdkModel(BaseLlm):
                     {"role": "assistant", "content": message.get("content") or ""},
                     {
                         "role": "user",
-                        "content": (
-                            "Rewrite only the final spoken answer. Fix these violations: "
-                            + "; ".join(violations)
-                            + ". Use only facts in the tool result, with no commentary about "
-                            "these instructions."
-                        ),
+                        "content": _correction_prompt(messages, violations),
                     },
                 ],
                 [],
@@ -398,16 +396,7 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
     ):
         return []
     response = strip_thinking(message.get("content") or "")
-    caller_text = next(
-        (
-            str(item.get("content", ""))
-            for item in reversed(messages)
-            if item.get("role") == "user"
-            and "<tool_result>" not in str(item.get("content", ""))
-        ),
-        "",
-    )
-    expected = detect_language(caller_text)
+    expected = _caller_language(messages)
     violations = []
     if detect_language(response) != expected:
         violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
@@ -418,6 +407,42 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
             "copy exact prices as " + ", ".join(f"LKR {price}" for price in missing)
         )
     return violations
+
+
+def _caller_language(messages: list[dict]) -> str:
+    caller_text = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages)
+            if item.get("role") == "user"
+            and "<tool_result>" not in str(item.get("content", ""))
+        ),
+        "",
+    )
+    return detect_language(caller_text)
+
+
+def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
+    language = _caller_language(messages)
+    prices = ", ".join(f'"LKR {price}"' for price in _tool_prices(messages))
+    if language == "si":
+        return (
+            "අවසාන කථන පිළිතුර පමණක් නැවත ලියන්න. මුළු පිළිතුරම සිංහලෙන් තබන්න. "
+            f"මිල හරියටම {prices} ලෙස ඉලක්කම්වලින් copy කරන්න. මිල ලක්ෂවලට හෝ "
+            "වචනවලට හරවන්න එපා. Tool result එකේ facts පමණක් භාවිතා කරන්න."
+        )
+    if language == "ta":
+        return (
+            "இறுதி பேச்சுப் பதிலை மட்டும் மீண்டும் எழுதுங்கள். முழுப் பதிலும் தமிழில் இருக்க "
+            f"வேண்டும். விலையை இலக்கங்களில் சரியாக {prices} என்று copy செய்யுங்கள். விலையை "
+            "லட்சங்களாகவோ சொற்களாகவோ மாற்ற வேண்டாம். Tool result facts மட்டும் பயன்படுத்துங்கள்."
+        )
+    return (
+        "Rewrite only the final spoken answer entirely in English. Fix these violations: "
+        + "; ".join(violations)
+        + ". Copy exact prices in digits, do not convert them to lakhs or words, and use only "
+        "facts in the tool result."
+    )
 
 
 def _tool_prices(messages: list[dict]) -> list[str]:
