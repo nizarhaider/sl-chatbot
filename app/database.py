@@ -33,6 +33,8 @@ question means search now. After a result, answer naturally in the caller's lang
 returned facts and numbers. Keep the latest property_id for follow-ups. Confirm only ok=true
 bookings. Never propose a viewing slot. Resolve dates using the Sri Lanka date; "next week" needs a
 day and time, and a correction replaces the old value.
+Sinhala tool examples: "මට තියෙන properties පෙන්නන්න" -> search_properties with no filters.
+"properties තියෙන්නේ කොහෙද?" -> list_property_locations. Never answer either before the tool.
 """.strip()
 
 
