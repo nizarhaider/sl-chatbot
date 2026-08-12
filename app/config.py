@@ -17,6 +17,7 @@ LLM_HISTORY_MESSAGES = 12
 
 # Speech recognition.
 ASR_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
+ASR_REVISION = "9fbeaaf862c4befbcf9481338004255a8576e888"
 ASR_LANGUAGE = "sinhala"
 
 # SerendibAI OmniVoice V5 and its exact training reference.

@@ -15,6 +15,7 @@ import numpy as np
 from app.config import (
     ASR_LANGUAGE,
     ASR_MODEL,
+    ASR_REVISION,
     LLM_BATCH,
     LLM_CONTEXT,
     LLM_FILENAME,
@@ -86,9 +87,12 @@ class LocalWhisperASR:
 
         dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
         logger.info("Loading Whisper %s on %s", ASR_MODEL, self.device)
-        self._processor = AutoProcessor.from_pretrained(ASR_MODEL)
+        self._processor = AutoProcessor.from_pretrained(
+            ASR_MODEL, revision=ASR_REVISION
+        )
         self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
             ASR_MODEL,
+            revision=ASR_REVISION,
             dtype=dtype,
             low_cpu_mem_usage=True,
             use_safetensors=True,

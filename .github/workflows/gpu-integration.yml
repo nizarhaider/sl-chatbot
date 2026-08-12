@@ -67,6 +67,15 @@ jobs:
       - name: Validate Google ADK orchestration contract
         run: uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
 
+      - name: Validate five-minute production setup contract
+        run: |
+          bash -n scripts/vast.sh
+          grep -F 'SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-300}"' scripts/vast.sh
+          grep -F 'test -f /opt/serendibai/runtime-ready' scripts/vast.sh
+          grep -F 'HF_HOME=/opt/serendibai/hf-cache' Dockerfile
+          setup_body=$(sed -n '/^setup() {/,/^rent() {/p' scripts/vast.sh)
+          ! grep -qE 'apt-get|uv sync|snapshot_download|hf_hub_download' <<<"$setup_body"
+
       - name: Stage 1 · Register key and rent the cheapest 16 GB+ GPU
         run: |
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vast-ci"

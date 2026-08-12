@@ -53,9 +53,12 @@ uv run python -m compileall -q app scripts tests
 ./scripts/vast.sh rent
 ```
 
-This rents the cheapest matching 16 GB+ Vast GPU, sends only committed runtime
-files and required runtime credentials, starts supervised FastAPI/ngrok
-processes, and prints the webhook URL. The instance remains billable.
+This rents the cheapest matching 16 GB+ Vast GPU from the private prebuilt
+runtime image, sends only committed app files and required runtime credentials,
+starts supervised FastAPI/ngrok processes, and prints the webhook URL. The image
+already contains the locked server environment and pinned model snapshots, so
+setup from SSH-ready to healthy is limited to five minutes. After the new server
+is healthy, any older `serendibai-whatsapp` instance is destroyed.
 
 ```bash
 DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
@@ -65,6 +68,11 @@ DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
 ```
 
 Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`.
+
+The private `ghcr.io/nizarhaider/sl-chatbot-runtime:main` image is rebuilt after
+runtime dependency or model-pin changes on `main`. Deployment requires a
+`GH_TOKEN` with package-read access; CI uses `HF_TOKEN` only as a build secret and
+does not store it in the image.
 
 ## Fine-tune
 

@@ -1,0 +1,15 @@
+.git
+.env
+.venv
+.adk
+__pycache__
+run_logs
+gpu-integration-*
+*.db
+*.log
+*.wav
+*.mp3
+*.safetensors
+*.ckpt
+checkpoints
+
