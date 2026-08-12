@@ -18,6 +18,7 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       VAST_TEMPLATE_HASH: 18e97fc6703dea11057cee364a8eaa8c
+      SSH: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
 
     steps:
       - uses: actions/checkout@v6
@@ -131,66 +132,44 @@ jobs:
             'tar -xzf /workspace/sl-chatbot.tar.gz -C /workspace/sl-chatbot && \
              cd /workspace/sl-chatbot && timeout 15m uv sync --extra server --frozen && \
              find .venv/lib/python3.11/site-packages/nvidia -type d -name lib \
-               -print | paste -sd: - > .cuda-library-path'
+               -print | paste -sd: - > .cuda-library-path && \
+             printf "%s\n" \
+               "#!/usr/bin/env bash" \
+               "set -euo pipefail" \
+               "cd /workspace/sl-chatbot" \
+               "export LD_LIBRARY_PATH=\"\$(cat .cuda-library-path):\${LD_LIBRARY_PATH:-}\"" \
+               "PYTHONPATH=. .venv/bin/dotenv -f .env run -- .venv/bin/python tests/gpu_integration.py \"\$1\"" \
+               > run-stage && chmod +x run-stage'
 
       - name: Stage 2 · Webhook
-        run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" \
-            'cd /workspace/sl-chatbot && export LD_LIBRARY_PATH="$(cat .cuda-library-path):${LD_LIBRARY_PATH:-}" && \
-             PYTHONPATH=. .venv/bin/dotenv -f .env run -- \
-             .venv/bin/python tests/gpu_integration.py webhook'
+        run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage webhook
 
       - name: Stage 3 · Sinhala ASR
-        run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" \
-            'cd /workspace/sl-chatbot && export LD_LIBRARY_PATH="$(cat .cuda-library-path):${LD_LIBRARY_PATH:-}" && \
-             PYTHONPATH=. .venv/bin/dotenv -f .env run -- \
-             .venv/bin/python tests/gpu_integration.py asr'
+        run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage asr
 
       - name: Stage 4 · Multilingual LLM
         run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" \
-            'cd /workspace/sl-chatbot && export LD_LIBRARY_PATH="$(cat .cuda-library-path):${LD_LIBRARY_PATH:-}" && \
-             PYTHONPATH=. .venv/bin/dotenv -f .env run -- \
-             .venv/bin/python tests/gpu_integration.py llm'
+          $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage llm
           scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
             -P "$VAST_PORT" "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json" .
 
       - name: Stage 4 · AI-judge all three languages
         run: |
           judge_status=0
-          uv run --frozen python scripts/judge_integration.py gpu-integration-report.json || judge_status=$?
+          GEMINI_API_KEY="$GEMINI_API_KEY" uv run --frozen python tests/gpu_integration.py judge || judge_status=$?
           scp -q -o StrictHostKeyChecking=accept-new -i "$RUNNER_TEMP/vast-ci" \
             -P "$VAST_PORT" gpu-integration-report.json \
             "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json"
           exit "$judge_status"
 
       - name: Stage 5 · LLM tool calls
-        run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" \
-            'cd /workspace/sl-chatbot && export LD_LIBRARY_PATH="$(cat .cuda-library-path):${LD_LIBRARY_PATH:-}" && \
-             PYTHONPATH=. .venv/bin/dotenv -f .env run -- \
-             .venv/bin/python tests/gpu_integration.py tools'
+        run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage tools
 
       - name: Stage 6 · OmniVoice
-        run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" \
-            'cd /workspace/sl-chatbot && export LD_LIBRARY_PATH="$(cat .cuda-library-path):${LD_LIBRARY_PATH:-}" && \
-             PYTHONPATH=. .venv/bin/dotenv -f .env run -- \
-             .venv/bin/python tests/gpu_integration.py omnivoice'
+        run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage omnivoice
 
       - name: Stage 7 · GPU load and 16 GiB budget
-        run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" \
-            'cd /workspace/sl-chatbot && export LD_LIBRARY_PATH="$(cat .cuda-library-path):${LD_LIBRARY_PATH:-}" && \
-             PYTHONPATH=. .venv/bin/dotenv -f .env run -- \
-             .venv/bin/python tests/gpu_integration.py load'
+        run: $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage load
 
       - name: Collect stage report and audible samples
         if: always()

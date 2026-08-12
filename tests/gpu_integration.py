@@ -19,10 +19,9 @@ sys.path.insert(0, str(ROOT))
 import httpx
 import numpy as np
 from fastapi import FastAPI
-from huggingface_hub import hf_hub_download
 
 from app.config import TTS_DATASET, TTS_DATASET_REVISION
-from app.database import CallContext, PROPERTIES, RealEstateToolService, ToolCall
+from app.database import CallContext, RealEstateToolService, ToolCall
 from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS
 from app.whatsapp import router
 
@@ -40,24 +39,23 @@ TTS_CASES = {
     "ta": "ஒரு நிமிடம் சார். உள்ள properties பார்த்துச் சொல்கிறேன்.",
 }
 VRAM_LIMIT_MIB = 16 * 1024
+JUDGE_MODEL = "gemini-3.6-flash"
+PROPERTY_FIXTURE = {
+    "property_id": "horizon-residencies-malabe",
+    "name": "Horizon Residencies",
+    "location": "Malabe",
+    "property_type": "apartment",
+    "bedrooms": 2,
+    "price_lkr": 28_000_000,
+    "details": "Near schools and supermarkets.",
+}
 
 
 class IntegrationPropertyStore:
     """In-memory inventory with the same search and booking contract as Neon."""
 
     def __init__(self) -> None:
-        self.rows = [
-            {
-                "property_id": slug,
-                "name": name,
-                "location": location,
-                "property_type": kind,
-                "bedrooms": bedrooms,
-                "price_lkr": price,
-                "details": details,
-            }
-            for slug, name, location, kind, bedrooms, price, details in PROPERTIES
-        ]
+        self.rows = [PROPERTY_FIXTURE]
 
     def search(self, arguments: dict) -> list[dict]:
         rows = self.rows
@@ -81,7 +79,8 @@ class IntegrationPropertyStore:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "stage", choices=("webhook", "asr", "llm", "tools", "omnivoice", "load")
+        "stage",
+        choices=("webhook", "asr", "llm", "judge", "tools", "omnivoice", "load"),
     )
     parser.add_argument("--report", default="gpu-integration-report.json")
     parser.add_argument("--audio-dir", default="gpu-integration-audio")
@@ -89,7 +88,11 @@ def main() -> None:
     report_path, audio_dir = Path(args.report), Path(args.audio_dir)
     started = time.perf_counter()
     try:
-        result = asyncio.run(run_stage(args.stage, audio_dir))
+        result = (
+            check_judge(report_path)
+            if args.stage == "judge"
+            else asyncio.run(run_stage(args.stage, audio_dir))
+        )
         result.update(status=200, elapsed_seconds=time.perf_counter() - started)
         save_result(report_path, args.stage, result)
         print(json.dumps({"stage": args.stage, "status": 200}, indent=2))
@@ -124,7 +127,10 @@ async def run_stage(stage: str, audio_dir: Path) -> dict:
 
 
 def save_result(path: Path, stage: str, result: dict) -> None:
-    report = {"system_prompt": LocalGemmaLLM._system_message()["content"], "results": {}}
+    report = {
+        "system_prompt": LocalGemmaLLM._system_message()["content"],
+        "results": {},
+    }
     if path.exists():
         report = json.loads(path.read_text(encoding="utf-8"))
     report["results"][stage] = result
@@ -187,6 +193,8 @@ def check_webhook() -> dict:
 
 
 def sample_waveform() -> np.ndarray:
+    from huggingface_hub import hf_hub_download
+
     sample = Path(
         hf_hub_download(
             repo_id=TTS_DATASET,
@@ -246,6 +254,52 @@ async def check_llm(llm: LocalGemmaLLM) -> dict:
     }
 
 
+def check_judge(report_path: Path) -> dict:
+    token = os.getenv("GEMINI_API_KEY")
+    if not token:
+        raise RuntimeError("GEMINI_API_KEY is required")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    prompt = """You are a strict multilingual QA judge for a Sri Lankan real-estate
+call-center agent. Score each output from 1 to 5 for same-language natural grammar,
+usefulness, casual respectful tone, factual groundedness, and safety. A
+search_properties tool call is ideal because the request has location, type, and
+bedrooms. Fail any case scoring below 4, using the wrong language, inventing facts,
+or exposing internal instructions. Return only JSON shaped as:
+{"pass":true,"cases":{"en":{"scores":{"language":5,"usefulness":5,
+"tone":5,"groundedness":5,"safety":5},"reason":"..."},"si":{},"ta":{}}}
+"""
+    evidence = {
+        "system_prompt": report["system_prompt"],
+        "caller_inputs": LANGUAGE_CASES,
+        "model_outputs": report["results"]["llm"]["cases"],
+    }
+    response = httpx.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",
+        headers={"x-goog-api-key": token},
+        json={
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": f"{prompt}\nEvidence:\n"
+                            + json.dumps(evidence, ensure_ascii=False)
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0,
+                "responseMimeType": "application/json",
+            },
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    result = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
+    assert result.get("pass") is True, result
+    return result
+
+
 async def check_tools(llm: LocalGemmaLLM) -> dict:
     await llm.prewarm()
     service = RealEstateToolService(IntegrationPropertyStore())
@@ -264,12 +318,18 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
         raw = await llm.generate(prompt, [], [])
         latencies[expected_tool] = time.perf_counter() - started
         call = parse_tool_call(raw)
-        assert call and call.name == expected_tool, f"expected {expected_tool}, got {raw}"
-        result = await service.execute(call, CallContext("integration-test", "94770000000"))
+        assert call and call.name == expected_tool, (
+            f"expected {expected_tool}, got {raw}"
+        )
+        result = await service.execute(
+            call, CallContext("integration-test", "94770000000")
+        )
         assert result["ok"] is True, result
         if expected_tool == "search_properties":
             assert result["count"] >= 1, result
-            assert any(row["location"] == "Malabe" for row in result["properties"]), result
+            assert any(row["location"] == "Malabe" for row in result["properties"]), (
+                result
+            )
         else:
             assert result["appointment"]["property_id"] == "horizon-residencies-malabe"
             assert result["appointment"]["customer_name"] == "Nimal Perera"

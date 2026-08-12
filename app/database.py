@@ -20,154 +20,6 @@ from psycopg_pool import ConnectionPool
 logger = logging.getLogger(__name__)
 COLOMBO = ZoneInfo("Asia/Colombo")
 CALL_NAMESPACE = uuid.UUID("70b37a94-aefa-4c52-a5f8-916272bd5f8c")
-PROPERTY_NAMESPACE = uuid.UUID("a1c78a4d-7d09-4d29-b24b-7c427ab7912f")
-
-PROPERTIES = (
-    (
-        "horizon-residencies-malabe",
-        "Horizon Residencies",
-        "Malabe",
-        "apartment",
-        2,
-        28_000_000,
-        "Near schools and supermarkets.",
-    ),
-    (
-        "lakeview-villas-piliyandala",
-        "Lakeview Villas",
-        "Piliyandala",
-        "villa",
-        3,
-        48_000_000,
-        "Garden, parking, and lake access.",
-    ),
-    (
-        "green-acres-kurunegala",
-        "Green Acres",
-        "Kurunegala",
-        "land",
-        None,
-        9_500_000,
-        "Ten-perch residential land with clear title; bank loans supported.",
-    ),
-    (
-        "ocean-breeze-apartments-dehiwala",
-        "Ocean Breeze Apartments",
-        "Dehiwala",
-        "apartment",
-        2,
-        32_000_000,
-        "One and two-bedroom units with sea views; ready soon.",
-    ),
-    (
-        "city-gardens-rajagiriya",
-        "City Gardens",
-        "Rajagiriya",
-        "apartment",
-        3,
-        41_500_000,
-        "Three-bedroom apartment with two parking spaces and gym access.",
-    ),
-    (
-        "capital-heights-battaramulla",
-        "Capital Heights",
-        "Battaramulla",
-        "apartment",
-        2,
-        35_000_000,
-        "Two-bedroom apartment near the administrative district; ready to occupy.",
-    ),
-    (
-        "urban-nest-nugegoda",
-        "Urban Nest",
-        "Nugegoda",
-        "apartment",
-        2,
-        29_500_000,
-        "Apartment close to public transport, shopping, and schools.",
-    ),
-    (
-        "palm-court-mount-lavinia",
-        "Palm Court",
-        "Mount Lavinia",
-        "apartment",
-        3,
-        46_000_000,
-        "Three-bedroom apartment within walking distance of the beach.",
-    ),
-    (
-        "orchard-villas-kottawa",
-        "Orchard Villas",
-        "Kottawa",
-        "villa",
-        4,
-        57_000_000,
-        "Four-bedroom gated villa with garden, parking, and solar hot water.",
-    ),
-    (
-        "lake-road-homes-maharagama",
-        "Lake Road Homes",
-        "Maharagama",
-        "house",
-        3,
-        38_500_000,
-        "Detached family home with three bedrooms and covered parking.",
-    ),
-    (
-        "canal-view-homes-negombo",
-        "Canal View Homes",
-        "Negombo",
-        "house",
-        3,
-        34_000_000,
-        "Three-bedroom house with garden, ten minutes from Negombo town.",
-    ),
-    (
-        "hill-country-residences-kandy",
-        "Hill Country Residences",
-        "Kandy",
-        "apartment",
-        2,
-        31_500_000,
-        "Two-bedroom apartment with hill views and backup power.",
-    ),
-    (
-        "southern-breeze-villas-galle",
-        "Southern Breeze Villas",
-        "Galle",
-        "villa",
-        3,
-        52_000_000,
-        "Three-bedroom villa with pool access, near Galle town.",
-    ),
-    (
-        "sunset-gardens-matara",
-        "Sunset Gardens",
-        "Matara",
-        "house",
-        3,
-        30_000_000,
-        "New three-bedroom house with parking and a small garden.",
-    ),
-    (
-        "tech-park-lands-malabe",
-        "Tech Park Lands",
-        "Malabe",
-        "land",
-        None,
-        12_500_000,
-        "Eight-perch residential plots near the technology corridor; clear title.",
-    ),
-    (
-        "expressway-lands-homagama",
-        "Expressway Lands",
-        "Homagama",
-        "land",
-        None,
-        8_800_000,
-        "Ten-perch residential plots with road, water, and electricity access.",
-    ),
-)
 
 TOOL_INSTRUCTIONS = """
 Property facts and viewing appointments are available only through tools. Never invent inventory,
@@ -219,7 +71,7 @@ def parse_tool_call(text: str) -> ToolCall | None:
             else None
         )
 
-    cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text, flags=re.I)
+    cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text, flags=re.IGNORECASE)
     try:
         payload = json.loads(cleaned)
     except (json.JSONDecodeError, TypeError):
@@ -251,7 +103,7 @@ def parse_tool_call(text: str) -> ToolCall | None:
         key, separator, value = item.partition(":")
         if not separator or not re.fullmatch(r"[A-Za-z_]\w*", key.strip()):
             return None
-        value = value.strip().strip('"\'')
+        value = value.strip().strip("\"'")
         if re.fullmatch(r"-?\d+", value):
             arguments[key.strip()] = int(value)
         elif value.casefold() in {"true", "false"}:
@@ -276,7 +128,7 @@ def normalize_tool_value(value):
     quote_token = '<|"|>'
     if cleaned.startswith(quote_token) and cleaned.endswith(quote_token):
         cleaned = cleaned[len(quote_token) : -len(quote_token)]
-    return cleaned.strip('"\'')
+    return cleaned.strip("\"'")
 
 
 def tool_call_message(call: ToolCall) -> str:
@@ -440,57 +292,6 @@ class PropertyStore:
         self.pool.open(wait=True, timeout=15)
         with self.pool.connection() as connection:
             self.mapping = _load_mapping(connection, self.phone_number_id)
-            customer_id, _ = self.mapping
-            connection.execute(
-                """
-                create table if not exists real_estate_properties (
-                    id uuid primary key, customer_id uuid not null references customers(id) on delete cascade,
-                    slug text not null, name text not null, location text not null, property_type text not null,
-                    bedrooms integer, price_lkr bigint not null, details text not null,
-                    status text not null default 'active', created_at timestamptz not null default now(),
-                    unique (customer_id, slug)
-                )
-                """
-            )
-            connection.execute(
-                """
-                create table if not exists property_appointments (
-                    id uuid primary key, customer_id uuid not null references customers(id) on delete cascade,
-                    whatsapp_number_id uuid not null references whatsapp_numbers(id) on delete cascade,
-                    property_id uuid not null references real_estate_properties(id), call_id text not null,
-                    customer_phone text, customer_name text not null, appointment_at timestamptz not null,
-                    status text not null default 'booked', created_at timestamptz not null default now()
-                )
-                """
-            )
-            connection.execute(
-                """create unique index if not exists property_appointments_booked_slot_idx
-                on property_appointments (property_id, appointment_at) where status='booked'"""
-            )
-            for row in PROPERTIES:
-                slug, name, location, kind, bedrooms, price, details = row
-                connection.execute(
-                    """
-                    insert into real_estate_properties
-                        (id, customer_id, slug, name, location, property_type, bedrooms, price_lkr, details)
-                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    on conflict (customer_id, slug) do update set
-                        name=excluded.name, location=excluded.location,
-                        property_type=excluded.property_type, bedrooms=excluded.bedrooms,
-                        price_lkr=excluded.price_lkr, details=excluded.details, status='active'
-                    """,
-                    (
-                        uuid.uuid5(PROPERTY_NAMESPACE, f"{customer_id}:{slug}"),
-                        customer_id,
-                        slug,
-                        name,
-                        location,
-                        kind,
-                        bedrooms,
-                        price,
-                        details,
-                    ),
-                )
 
     def close(self) -> None:
         self.pool.close()

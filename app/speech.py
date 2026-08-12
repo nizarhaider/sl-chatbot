@@ -106,7 +106,9 @@ def normalize_for_tts(text: str, language: str | None = None) -> tuple[str, str]
     language = language or detect_language(text)
     spoken = re.sub(r"\s+", " ", text).strip().rstrip(",;:")
     for written, pronunciation in PLACE_NAMES.get(language, {}).items():
-        spoken = re.sub(rf"\b{re.escape(written)}\b", pronunciation, spoken, flags=re.I)
+        spoken = re.sub(
+            rf"\b{re.escape(written)}\b", pronunciation, spoken, flags=re.IGNORECASE
+        )
     if language == "si":
         spoken = re.sub(
             r"(?<![A-Za-z0-9.])\d[\d,]*(?:\.\d+)?",
