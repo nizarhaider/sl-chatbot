@@ -132,6 +132,7 @@ Add a dated entry here whenever a change affects the production model, training 
 - Grounded property searches against explicit caller property names and locations so model guesses cannot silently override what the caller said.
 - Moved the Vast.ai webhook and ngrok tunnel to supervised, automatically restarting services.
 - Fixed the live call loop after production testing: language selection is immediate, the system prompt is pre-cached, the greeting is shorter, and outbound speech is queued before echo suppression so the bot no longer transcribes itself as the caller.
+- Hardened live property conversations after a second call test: acknowledgements and explicit searches bypass the LLM, database prices are spoken exactly in millions, tool results no longer require a second model pass, vague inventory questions ask for location/type, and end-of-turn silence was reduced.
 
 ### 2026-08-11
 
