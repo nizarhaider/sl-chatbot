@@ -11,24 +11,25 @@ permissions:
   contents: read
 
 jobs:
-  destroy-vast-instances:
+  destroy-stale-ci-instances:
     if: github.event_name == 'schedule'
-    name: Destroy all Vast instances
+    name: Destroy stale CI Vast instances
     runs-on: ubuntu-latest
     steps:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: false
 
-      - name: Destroy every instance on the account
+      - name: Destroy CI instances only
         env:
           VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
         run: |
           test -n "$VAST_AI_API_KEY"
           instances=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
-          ids=$(printf '%s' "$instances" | jq -r '.[].id')
+          ids=$(printf '%s' "$instances" | jq -r \
+            '.[] | select((.label // "") | startswith("serendibai-ci-")) | .id')
           if test -z "$ids"; then
-            echo "No Vast instances are active."
+            echo "No stale CI Vast instances are active."
             exit 0
           fi
           failed=0

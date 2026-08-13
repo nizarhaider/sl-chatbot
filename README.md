@@ -125,9 +125,9 @@ The workflow uploads its JSON report and audio samples, then always destroys the
 test instance. It sends only a read-only Hugging Face token to the GPU. Required
 GitHub secrets are `VAST_AI_API_KEY`, `HF_TOKEN`, and `GEMINI_API_KEY`.
 
-The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys every
-Vast instance on the account. This intentionally includes production and any CI
-instance active at that moment.
+The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys stale
+instances whose label starts with `serendibai-ci-`. It never destroys the hosted
+`serendibai-whatsapp` production instance.
 
 ## Data ownership
 
