@@ -57,7 +57,7 @@ class LocalGemmaAdkModel(BaseLlm):
         messages = _chat_messages(llm_request)
         tools = _openai_tools(llm_request)
         message = await self._backend.chat(messages, tools)
-        for _ in range(2):
+        for _ in range(1):
             violations = _response_contract_violations(message, messages)
             if not violations:
                 break
@@ -75,6 +75,12 @@ class LocalGemmaAdkModel(BaseLlm):
                 ],
                 correction_tools,
             )
+        violations = _response_contract_violations(message, messages)
+        if violations and _has_tool_result(messages):
+            logger.info(
+                "Using grounded response fallback: %s", "; ".join(violations)
+            )
+            message = {"content": _grounded_fallback(messages), "tool_calls": []}
         parts = _response_parts(message)
         yield LlmResponse(
             content=types.Content(role="model", parts=parts),
@@ -496,3 +502,75 @@ def _tool_prices(messages: list[dict]) -> list[str]:
                 if isinstance(row.get("price_lkr"), int):
                     prices.append(f"{row['price_lkr']:,}")
     return list(dict.fromkeys(prices))
+
+
+def _grounded_fallback(messages: list[dict]) -> str:
+    """Render a concise answer when Gemma cannot satisfy the post-tool contract."""
+    language = _caller_language(messages)
+    result = _latest_tool_result(messages)
+    properties = result.get("properties") or []
+    if properties:
+        lines = []
+        for row in properties[:3]:
+            name = str(row.get("name") or "Property")
+            location = str(row.get("location") or "Sri Lanka")
+            property_type = str(row.get("property_type") or "property")
+            bedrooms = row.get("bedrooms")
+            price = row.get("price_lkr")
+            beds = str(bedrooms) if bedrooms is not None else "—"
+            amount = f"{price:,}" if isinstance(price, int) else "—"
+            if language == "si":
+                lines.append(
+                    f"{name} කියන්නේ {location} ප්‍රදේශයේ තියෙන නිදන කාමර {beds}ක "
+                    f"{property_type} එකක්; මිල LKR {amount}."
+                )
+            elif language == "ta":
+                lines.append(
+                    f"{name} என்பது {location} பகுதியில் உள்ள {beds} படுக்கையறைகள் கொண்ட "
+                    f"{property_type}; விலை LKR {amount}."
+                )
+            else:
+                lines.append(
+                    f"{name} is a {beds}-bedroom {property_type} in {location}, "
+                    f"listed at LKR {amount}."
+                )
+        return " ".join(lines)
+
+    locations = result.get("locations") or result.get("available_locations") or []
+    if locations:
+        joined = ", ".join(map(str, locations))
+        if language == "si":
+            return f"දැනට properties තියෙන්නේ මේ ප්‍රදේශවලයි: {joined}."
+        if language == "ta":
+            return f"தற்போது இந்த இடங்களில் properties உள்ளன: {joined}."
+        return f"Properties are currently available in: {joined}."
+
+    if appointment := result.get("appointment"):
+        name = str(appointment.get("property_name") or "the property")
+        when = str(appointment.get("appointment_at") or "the requested time")
+        if language == "si":
+            return f"{name} බලන්න {when} වෙලාවට appointment එක වෙන් කළා."
+        if language == "ta":
+            return f"{name} பார்வைக்கு {when} நேரத்தில் appointment பதிவு செய்யப்பட்டது."
+        return f"Your viewing for {name} is booked for {when}."
+
+    if language == "si":
+        return "ඒ වැඩේ සම්පූර්ණ කරන්න බැරි වුණා. අවශ්‍ය විස්තර නැවත කියන්න."
+    if language == "ta":
+        return "அதை முடிக்க முடியவில்லை. தேவையான விவரங்களை மீண்டும் சொல்லுங்கள்."
+    return "I couldn't complete that. Please repeat the required details."
+
+
+def _latest_tool_result(messages: list[dict]) -> dict:
+    for message in reversed(messages):
+        content = str(message.get("content", ""))
+        matches = list(
+            re.finditer(r"<tool_result>(.*?)</tool_result>", content, re.DOTALL)
+        )
+        if matches:
+            try:
+                result = json.loads(matches[-1].group(1))
+            except json.JSONDecodeError:
+                return {}
+            return result if isinstance(result, dict) else {}
+    return {}

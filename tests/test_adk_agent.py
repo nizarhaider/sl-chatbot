@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from app.agent import APP_NAME, GemmaAgentRuntime, LocalGemmaAdkModel
+from app.agent import (
+    APP_NAME,
+    GemmaAgentRuntime,
+    LocalGemmaAdkModel,
+    _grounded_fallback,
+)
 from app.database import CallContext, RealEstateToolService, ToolCall
 from app.speech import selected_language
 
@@ -180,6 +185,24 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected_language("sinhala sinhala"), "si")
         self.assertEqual(selected_language("தமிழ்"), "ta")
         self.assertIsNone(selected_language("I want an English-style apartment"))
+
+    def test_grounded_fallback_preserves_tamil_and_exact_price(self) -> None:
+        messages = [
+            {"role": "user", "content": "மலபேயில் இரண்டு படுக்கையறை வீடு வேண்டும்"},
+            {
+                "role": "user",
+                "content": '<tool_result>{"ok":true,"properties":['
+                '{"name":"Horizon Residencies","location":"Malabe",'
+                '"property_type":"apartment","bedrooms":2,'
+                '"price_lkr":28000000}]}</tool_result>',
+            },
+        ]
+
+        response = _grounded_fallback(messages)
+
+        self.assertIn("LKR 28,000,000", response)
+        self.assertIn("படுக்கையறைகள்", response)
+        self.assertNotRegex(response, r"[\u0D80-\u0DFF]")
 
 
 if __name__ == "__main__":
