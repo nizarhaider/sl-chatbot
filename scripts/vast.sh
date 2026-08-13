@@ -143,7 +143,7 @@ stdout_logfile=/workspace/sl-chatbot/run_logs/server.log
 redirect_stderr=true
 
 [program:sl-ngrok]
-command=/usr/local/bin/ngrok http $APP_PORT --log=stdout
+command=/usr/local/bin/ngrok http $APP_PORT --pooling-enabled --log=stdout
 directory=/workspace/sl-chatbot
 autostart=true
 autorestart=true
@@ -161,13 +161,16 @@ REMOTE
   while true; do
     if ssh "${connection[@]}" "$remote" "curl -fsS http://127.0.0.1:$APP_PORT/ >/dev/null" 2>/dev/null; then
       public_url="$(ssh "${connection[@]}" "$remote" \
-        "curl -fsS http://127.0.0.1:4040/api/tunnels | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"tunnels\"][0][\"public_url\"])'")"
-      elapsed=$((SECONDS - setup_started))
-      test "$elapsed" -le "$SETUP_LIMIT_SECONDS" || fail "Server setup took ${elapsed}s; limit is ${SETUP_LIMIT_SECONDS}s"
-      log "Server setup completed in ${elapsed}s"
-      log "Webhook URL: $public_url/webhook"
-      log "Logs: ssh -i $SSH_KEY -p $port $remote 'tail -f /workspace/sl-chatbot/run_logs/server.log'"
-      return
+        "curl -fsS http://127.0.0.1:4040/api/tunnels | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data[\"tunnels\"][0][\"public_url\"] if data[\"tunnels\"] else \"\")'" \
+        2>/dev/null || true)"
+      if [ -n "$public_url" ]; then
+        elapsed=$((SECONDS - setup_started))
+        test "$elapsed" -le "$SETUP_LIMIT_SECONDS" || fail "Server setup took ${elapsed}s; limit is ${SETUP_LIMIT_SECONDS}s"
+        log "Server setup completed in ${elapsed}s"
+        log "Webhook URL: $public_url/webhook"
+        log "Logs: ssh -i $SSH_KEY -p $port $remote 'tail -f /workspace/sl-chatbot/run_logs/server.log'"
+        return
+      fi
     fi
     elapsed=$((SECONDS - setup_started))
     if [ "$elapsed" -ge "$SETUP_LIMIT_SECONDS" ]; then
