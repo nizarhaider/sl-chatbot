@@ -34,7 +34,9 @@ stage() {
   log "Deploying the committed runtime to $host"
   git archive --format=tar HEAD app pyproject.toml uv.lock README.md |
     ssh "${connection[@]}" "$remote" \
-      'rm -rf /workspace/sl-chatbot && mkdir -p /workspace/sl-chatbot/run_logs && tar -xf - -C /workspace/sl-chatbot'
+      'mkdir -p /workspace/sl-chatbot/run_logs && rm -rf /workspace/sl-chatbot/app && \
+       rm -f /workspace/sl-chatbot/pyproject.toml /workspace/sl-chatbot/uv.lock \
+         /workspace/sl-chatbot/README.md && tar -xf - -C /workspace/sl-chatbot'
   runtime_env="$(mktemp)"
   trap "rm -f '$runtime_env'" EXIT
   .venv/bin/python - <<'PY' >"$runtime_env"
@@ -64,9 +66,9 @@ provision() {
   ssh "${connection[@]}" "$remote" 'bash -s' <<'REMOTE'
 set -euo pipefail
 cd /workspace/sl-chatbot
-export UV_CACHE_DIR=/workspace/.cache/uv
 export HF_HOME=/workspace/.cache/huggingface
-mkdir -p "$UV_CACHE_DIR" "$HF_HOME"
+export UV_NO_CACHE=1
+mkdir -p "$HF_HOME"
 if ! command -v ngrok >/dev/null; then
   curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz |
     tar -xz -C /usr/local/bin
@@ -134,7 +136,7 @@ cat >/etc/supervisor/conf.d/serendibai.conf <<EOF
 [program:sl-webhook]
 command=/workspace/sl-chatbot/.venv/bin/dotenv -f .env run -- /workspace/sl-chatbot/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT
 directory=/workspace/sl-chatbot
-environment=HF_HOME="/workspace/.cache/huggingface",UV_CACHE_DIR="/workspace/.cache/uv"
+environment=HF_HOME="/workspace/.cache/huggingface"
 autostart=true
 autorestart=true
 startsecs=15

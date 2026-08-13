@@ -68,10 +68,11 @@ DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
 ./scripts/vast.sh destroy INSTANCE_ID      # stop billing
 ```
 
-Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`. `uv` keeps its
-download cache at `/workspace/.cache/uv`; `--no-build` makes deployment fail
-instead of compiling a missing wheel. Model downloads are cached separately at
-`/workspace/.cache/huggingface` for retries on the same instance.
+Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`. The configured
+package indexes serve the locked binary wheels; `--no-build` makes deployment
+fail instead of compiling a missing wheel. The installed `.venv` is preserved on
+code redeploys, while wheel archives are discarded to avoid storing a second
+10 GB copy. Models remain cached at `/workspace/.cache/huggingface`.
 
 ## Fine-tune
 
