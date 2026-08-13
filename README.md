@@ -53,12 +53,13 @@ uv run python -m compileall -q app scripts tests
 ./scripts/vast.sh rent
 ```
 
-This rents the cheapest matching 16 GB+ Vast GPU from the private prebuilt
-runtime image, sends only committed app files and required runtime credentials,
-starts supervised FastAPI/ngrok processes, and prints the webhook URL. The image
-already contains the locked server environment and pinned model snapshots, so
-setup from SSH-ready to healthy is limited to five minutes. After the new server
-is healthy, any older `serendibai-whatsapp` instance is destroyed.
+This rents a fast, reliable 16 GB+ Vast GPU from the standard PyTorch template,
+sends only committed app files and required runtime credentials, downloads the
+locked prebuilt Linux wheels and pinned Hugging Face model snapshots, then starts
+supervised FastAPI/ngrok processes and prints the webhook URL. No custom image is
+built or pulled. Download provisioning is reported separately; the subsequent
+server setup and model-loading phase is limited to five minutes. After the new
+server is healthy, any older `serendibai-whatsapp` instance is destroyed.
 
 ```bash
 DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
@@ -67,12 +68,10 @@ DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
 ./scripts/vast.sh destroy INSTANCE_ID      # stop billing
 ```
 
-Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`.
-
-The private `ghcr.io/nizarhaider/sl-chatbot-runtime:main` image is rebuilt after
-runtime dependency or model-pin changes on `main`. Deployment requires a
-`GH_TOKEN` with package-read access; CI uses `HF_TOKEN` only as a build secret and
-does not store it in the image.
+Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`. `uv` keeps its
+download cache at `/workspace/.cache/uv`; `--no-build` makes deployment fail
+instead of compiling a missing wheel. Model downloads are cached separately at
+`/workspace/.cache/huggingface` for retries on the same instance.
 
 ## Fine-tune
 
