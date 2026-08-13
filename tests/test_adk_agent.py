@@ -9,6 +9,7 @@ from app.agent import (
     GemmaAgentRuntime,
     LocalGemmaAdkModel,
     _grounded_fallback,
+    _is_post_tool_turn,
 )
 from app.database import CallContext, RealEstateToolService, ToolCall
 from app.speech import selected_language
@@ -205,6 +206,16 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("LKR 28,000,000", response)
         self.assertIn("படுக்கையறைகள்", response)
         self.assertNotRegex(response, r"[\u0D80-\u0DFF]")
+
+    def test_historical_tool_result_does_not_disable_followup_tools(self) -> None:
+        messages = [
+            {"role": "user", "content": '<tool_result>{"ok":true}</tool_result>'},
+            {"role": "assistant", "content": "I found one property."},
+            {"role": "user", "content": "Book it for Nimal tomorrow at 4 pm."},
+        ]
+
+        self.assertFalse(_is_post_tool_turn(messages))
+        self.assertTrue(_is_post_tool_turn(messages[:1]))
 
 
 if __name__ == "__main__":

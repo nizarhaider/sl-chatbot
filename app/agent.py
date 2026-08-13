@@ -64,7 +64,7 @@ class LocalGemmaAdkModel(BaseLlm):
             logger.info(
                 "Correcting post-tool Gemma response: %s", "; ".join(violations)
             )
-            correction_tools = [] if _has_tool_result(messages) else tools
+            correction_tools = [] if _is_post_tool_turn(messages) else tools
             message = await self._backend.chat(
                 [
                     *messages,
@@ -76,7 +76,7 @@ class LocalGemmaAdkModel(BaseLlm):
                 correction_tools,
             )
         violations = _response_contract_violations(message, messages)
-        if violations and _has_tool_result(messages):
+        if violations and _is_post_tool_turn(messages):
             logger.info(
                 "Using grounded response fallback: %s", "; ".join(violations)
             )
@@ -423,10 +423,10 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
     violations = []
     if _repeats_previous_answer(response, messages):
         violations.append("do not repeat the previous answer; address the latest request directly")
-    has_tool_result = _has_tool_result(messages)
-    if has_tool_result and detect_language(response) != expected:
+    post_tool_turn = _is_post_tool_turn(messages)
+    if post_tool_turn and detect_language(response) != expected:
         violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
-    required_prices = _tool_prices(messages) if has_tool_result else []
+    required_prices = _tool_prices(messages) if post_tool_turn else []
     missing = [price for price in required_prices if price not in response]
     if missing:
         violations.append(
@@ -435,10 +435,8 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
     return violations
 
 
-def _has_tool_result(messages: list[dict]) -> bool:
-    return any(
-        "<tool_result>" in str(item.get("content", "")) for item in messages
-    )
+def _is_post_tool_turn(messages: list[dict]) -> bool:
+    return bool(messages) and "<tool_result>" in str(messages[-1].get("content", ""))
 
 
 def _caller_language(messages: list[dict]) -> str:
