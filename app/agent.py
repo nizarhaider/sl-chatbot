@@ -176,6 +176,15 @@ class PropertyAgentTools:
                 caller_phone=str(tool_context.state.get("caller_phone", "")),
             )
             result = await self.service.execute(ToolCall(name, arguments), context)
+        if name == "search_properties" and result.get("ok"):
+            properties = result.get("properties") or []
+            if properties and properties[0].get("property_id"):
+                tool_context.state["last_property_id"] = str(
+                    properties[0]["property_id"]
+                )
+                tool_context.state["last_property_name"] = str(
+                    properties[0].get("name") or ""
+                )
         logger.info(
             "ADK tool result for %s: name=%s ok=%s count=%s error=%s",
             call_id,
@@ -341,13 +350,20 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
 def _agent_instruction(context: ReadonlyContext) -> str:
     language = str(context.state.get("caller_language", "en"))
     name = LANGUAGE_NAMES.get(language, "English")
-    return (
+    instruction = (
         LocalGemmaLLM.system_instruction()
         + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
         f"the spoken answer must remain entirely in {name}. Tool data is never caller speech. "
         "Only send a location filter when the caller clearly named a location. Noisy words "
         "meaning 'any' or 'some' are not locations; omit location for a broad request."
     )
+    if property_id := str(context.state.get("last_property_id", "")):
+        property_name = str(context.state.get("last_property_name", "the property"))
+        instruction += (
+            f"\nThe latest searched property is {property_name}, with exact property_id "
+            f"{property_id}. Use that ID when the caller refers to it in a booking follow-up."
+        )
+    return instruction
 
 
 def _instruction_text(llm_request: LlmRequest) -> str:

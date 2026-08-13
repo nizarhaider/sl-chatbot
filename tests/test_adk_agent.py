@@ -104,6 +104,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.calls[0][0].arguments["bedrooms"], 2)
         self.assertEqual(service.calls[0][1].caller_phone, "94770000000")
         self.assertEqual(len(session.events), 6)
+        self.assertEqual(session.state["last_property_id"], "property-1")
         self.assertEqual(first_trace[0]["name"], "search_properties")
         self.assertEqual(first_trace[0]["result"]["count"], 1)
         self.assertEqual(runtime.tool_trace("call-1"), [])
@@ -126,6 +127,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 for message in backend.requests[3][0]
             )
         )
+        self.assertIn("exact property_id property-1", backend.requests[3][0][0]["content"])
         self.assertEqual(
             {tool["function"]["name"] for tool in backend.requests[0][1]},
             {"search_properties", "list_property_locations", "book_appointment"},
