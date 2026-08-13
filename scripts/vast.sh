@@ -134,7 +134,7 @@ test -n "${NGROK_AUTH_TOKEN:-}"
 ngrok config add-authtoken "$NGROK_AUTH_TOKEN" >/dev/null
 cat >/etc/supervisor/conf.d/serendibai.conf <<EOF
 [program:sl-webhook]
-command=/workspace/sl-chatbot/.venv/bin/dotenv -f .env run -- /workspace/sl-chatbot/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT
+command=/workspace/sl-chatbot/.venv/bin/dotenv -f .env run -- /workspace/sl-chatbot/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT --no-access-log
 directory=/workspace/sl-chatbot
 environment=HF_HOME="/workspace/.cache/huggingface"
 autostart=true

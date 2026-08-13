@@ -74,6 +74,7 @@ jobs:
           grep -F 'uv sync --extra server --frozen --no-build --no-install-project' scripts/vast.sh
           grep -F 'snapshot_download(repo_id=ASR_MODEL, revision=ASR_REVISION)' scripts/vast.sh
           grep -F 'ngrok http $APP_PORT --pooling-enabled' scripts/vast.sh
+          grep -F 'uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT --no-access-log' scripts/vast.sh
           setup_body=$(sed -n '/^setup() {/,/^deploy() {/p' scripts/vast.sh)
           ! grep -qE 'apt-get|uv sync|snapshot_download|hf_hub_download' <<<"$setup_body"
 
