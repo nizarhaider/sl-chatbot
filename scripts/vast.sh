@@ -198,7 +198,7 @@ rent() {
     .venv/bin/python -c '
 import json,re,sys
 rows=[r for r in json.load(sys.stdin) if re.search(r"^RTX (?:4070|30[0-9]{2})", str(r.get("gpu_name", "")), re.I)]
-rows=[r for r in rows if float(r.get("inet_down", 0)) >= 2500 and float(r.get("disk_bw", 0)) >= 1500 and float(r.get("reliability", 0)) >= 0.99]
+rows=[r for r in rows if float(r.get("inet_down", 0)) >= 2500 and float(r.get("disk_bw", 0)) >= 1500 and float(r.get("reliability", 0)) >= 0.998]
 if not rows: raise SystemExit("No eligible offer is available")
 r=min(rows, key=lambda x: float(x["dph_total"]))
 print(r["id"], r["gpu_name"].replace(" ", "_"), r["dph_total"])
