@@ -16,6 +16,7 @@ from app.config import (
     ASR_LANGUAGE,
     ASR_MODEL,
     ASR_REVISION,
+    ERROR_RESPONSES,
     GREETING_PARTS,
     LANGUAGE_ACKNOWLEDGEMENTS,
     LLM_BATCH,
@@ -297,6 +298,8 @@ class OmniVoiceTTS:
         for text, language in GREETING_PARTS:
             self._cache_phrase(text, language)
         for language, text in LANGUAGE_ACKNOWLEDGEMENTS.items():
+            self._cache_phrase(text, language)
+        for language, text in ERROR_RESPONSES.items():
             self._cache_phrase(text, language)
         logger.info("OmniVoice call prompts cached")
 

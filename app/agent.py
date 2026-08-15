@@ -190,8 +190,8 @@ class PropertyAgentTools:
                     properties[0].get("name") or ""
                 )
             else:
-                tool_context.state.pop("last_property_id", None)
-                tool_context.state.pop("last_property_name", None)
+                tool_context.state["last_property_id"] = ""
+                tool_context.state["last_property_name"] = ""
         logger.info(
             "ADK tool result for %s: name=%s ok=%s count=%s error=%s",
             call_id,
