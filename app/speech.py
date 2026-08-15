@@ -139,6 +139,16 @@ def is_broad_property_request(text: str) -> bool:
     return bool(PROPERTY_WORDS.search(text)) and not PROPERTY_SPECIFICS.search(text)
 
 
+def known_location(text: str) -> str | None:
+    """Return the English inventory location named by the caller."""
+    folded = text.casefold()
+    for names in PLACE_NAMES.values():
+        for english, localized in names.items():
+            if english.casefold() in folded or localized in text:
+                return english
+    return None
+
+
 def normalize_for_tts(text: str, language: str | None = None) -> tuple[str, str]:
     language = language or detect_language(text)
     spoken = re.sub(r"\s+", " ", text).strip().rstrip(",;:")

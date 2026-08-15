@@ -29,7 +29,7 @@ from app.database import (
     tool_call_message,
 )
 from app.models import LocalGemmaLLM, strip_thinking
-from app.speech import detect_language, is_broad_property_request
+from app.speech import detect_language, is_broad_property_request, known_location
 
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
@@ -56,7 +56,22 @@ class LocalGemmaAdkModel(BaseLlm):
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
         tools = _openai_tools(llm_request)
-        if is_broad_property_request(_latest_caller_text(messages)):
+        if location := _location_followup(messages):
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_properties",
+                            "arguments": {
+                                "query": _latest_caller_text(messages),
+                                "location": location,
+                            },
+                        }
+                    }
+                ],
+            }
+        elif is_broad_property_request(_latest_caller_text(messages)):
             message = {
                 "content": _location_question(_caller_language(messages)),
                 "tool_calls": [],
@@ -487,6 +502,24 @@ def _location_question(language: str) -> str:
     if language == "ta":
         return "சரி. நீங்கள் எந்த பகுதியில் property பார்க்க விரும்புகிறீர்கள்?"
     return "Sure. Which location would you prefer for the property?"
+
+
+def _location_followup(messages: list[dict]) -> str | None:
+    location = known_location(_latest_caller_text(messages))
+    previous = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages[:-1])
+            if item.get("role") == "assistant"
+        ),
+        "",
+    )
+    questions = (_location_question(language) for language in ("en", "si", "ta"))
+    return (
+        location
+        if location and any(question in previous for question in questions)
+        else None
+    )
 
 
 def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
