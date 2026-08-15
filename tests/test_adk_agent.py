@@ -251,8 +251,11 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertIn("Ask the caller for their name", result["error"])
 
-    def test_language_selection_accepts_repeated_choice_only(self) -> None:
+    def test_language_selection_accepts_short_natural_choices(self) -> None:
         self.assertEqual(selected_language("sinhala sinhala"), "si")
+        self.assertEqual(selected_language("හැමයට සිංහල"), "si")
+        self.assertEqual(selected_language("English please"), "en")
+        self.assertEqual(selected_language("I would like to speak Tamil"), "ta")
         self.assertEqual(selected_language("தமிழ்"), "ta")
         self.assertIsNone(selected_language("I want an English-style apartment"))
 
@@ -420,6 +423,35 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             [event["text"] for event in plain_transcript],
             ["Who are you?", "I'm SerendibAI."],
         )
+
+    async def test_language_selection_introduces_agent_before_any_request(self) -> None:
+        spoken = []
+
+        class ASR:
+            def transcribe(self, waveform):
+                return "හැමයට සිංහල"
+
+        class Agent:
+            async def respond(self, *args, **kwargs):
+                raise AssertionError("language selection must not reach the agent")
+
+        class TTS:
+            async def speak(self, text, forward, language):
+                spoken.append((text, language))
+                return 0
+
+        pipeline = object.__new__(TurnPipeline)
+        pipeline.asr, pipeline.agent, pipeline.tts = ASR(), Agent(), TTS()
+        call_id = "language-introduction-test"
+        call_log.calls.pop(call_id, None)
+
+        await pipeline._handle_turn(
+            call_id, "", None, None, {call_id: 0}, 0, b"\x01\x00" * 9_600
+        )
+
+        self.assertEqual(spoken, [(LANGUAGE_ACKNOWLEDGEMENTS["si"], "si")])
+        transcript = call_log.calls.pop(call_id).transcript
+        self.assertEqual(transcript[1]["text"], LANGUAGE_ACKNOWLEDGEMENTS["si"])
 
     async def test_agent_error_returns_spoken_fallback(self) -> None:
         class FailingAgent:

@@ -135,9 +135,22 @@ def selected_language(text: str) -> str | None:
         "si": {"sinhala", "sinhalese", "සිංහල"},
         "ta": {"tamil", "தமிழ்"},
     }
-    for language, names in choices.items():
-        if all(word in names for word in words):
-            return language
+    matches = [
+        language
+        for language, names in choices.items()
+        if any(word in names for word in words)
+    ]
+    if len(matches) != 1:
+        return None
+    language = matches[0]
+    if all(word in choices[language] for word in words):
+        return language
+    if (
+        len(words) <= 7
+        and not PROPERTY_WORDS.search(text)
+        and not PROPERTY_SPECIFICS.search(text)
+    ):
+        return language
     return None
 
 
