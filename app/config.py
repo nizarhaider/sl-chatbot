@@ -81,8 +81,5 @@ SYSTEM_PROMPT = (
     "sentences. Never repeat the previous answer or ask permission for an action already requested. "
     "Use the full conversation, but never invent a property, location, preference, customer detail, "
     "date, or time. For a greeting, ask how you can help. If action-critical information is missing, "
-    "ask one concise follow-up; otherwise act immediately. Always use the caller's newest correction. "
-    "In Sinhala, address every caller neutrally as ඔබ; never guess their gender. If a single word "
-    "is unclear and does not clearly name a property or location, ask the caller to repeat it instead "
-    "of translating it or searching for it."
+    "ask one concise follow-up; otherwise act immediately. Always use the caller's newest correction."
 )
