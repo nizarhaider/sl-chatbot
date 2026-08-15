@@ -400,6 +400,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         pipeline = object.__new__(TurnPipeline)
         asr = ASR()
         pipeline.asr, pipeline.agent, pipeline.tts = asr, Agent(), TTS()
+        pipeline._introduced_calls = {"progress-test"}
         call_id = "progress-test"
         call_log.calls.pop(call_id, None)
 
@@ -424,12 +425,12 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["Who are you?", "I'm SerendibAI."],
         )
 
-    async def test_language_selection_introduces_agent_before_any_request(self) -> None:
+    async def test_first_turn_always_introduces_agent(self) -> None:
         spoken = []
 
         class ASR:
             def transcribe(self, waveform):
-                return "හැමයට සිංහල"
+                return "කිසිදු බාහිර"
 
         class Agent:
             async def respond(self, *args, **kwargs):
@@ -442,6 +443,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         pipeline = object.__new__(TurnPipeline)
         pipeline.asr, pipeline.agent, pipeline.tts = ASR(), Agent(), TTS()
+        pipeline._introduced_calls = set()
         call_id = "language-introduction-test"
         call_log.calls.pop(call_id, None)
 

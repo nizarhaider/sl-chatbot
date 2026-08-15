@@ -37,6 +37,7 @@ class TurnPipeline:
         self.asr = LocalWhisperASR()
         self.agent = GemmaAgentRuntime()
         self.tts = tts or OmniVoiceTTS()
+        self._introduced_calls: set[str] = set()
 
     async def prewarm(self) -> None:
         await asyncio.to_thread(self.asr.prewarm)
@@ -54,6 +55,7 @@ class TurnPipeline:
         output_track: OutboundAudioTrack,
         playback_generation: dict[str, int],
     ) -> None:
+        self._introduced_calls.discard(call_id)
         await self.agent.start_session(call_id, phone)
         try:
             await asyncio.sleep(GREETING_DELAY_SECONDS)
@@ -71,6 +73,7 @@ class TurnPipeline:
                 call_id, phone, input_track, output_track, playback_generation
             )
         finally:
+            self._introduced_calls.discard(call_id)
             await self.agent.end_session(call_id)
 
     async def _listen(
@@ -138,7 +141,10 @@ class TurnPipeline:
         logger.info("Turn transcript for %s: %s", call_id, transcript)
         call_log.add(call_id, "caller", transcript)
 
-        if choice := selected_language(transcript):
+        choice = selected_language(transcript)
+        if choice or call_id not in self._introduced_calls:
+            choice = choice or detect_language(transcript)
+            self._introduced_calls.add(call_id)
             response = LANGUAGE_ACKNOWLEDGEMENTS[choice]
             logger.info("Turn language selected for %s: %s", call_id, choice)
             call_log.add(call_id, "assistant", response)
