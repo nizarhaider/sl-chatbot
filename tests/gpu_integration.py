@@ -394,7 +394,7 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
     narrowed_trace = runtime.tool_trace(broad_call_id)
     await runtime.end_session(broad_call_id)
     assert narrowed_trace and narrowed_trace[0]["name"] == "search_properties", (
-        narrowed_response
+        f"location follow-up did not dispatch search_properties: {narrowed_response}"
     )
     assert narrowed_trace[0]["arguments"].get("location") == "Malabe", narrowed_trace
     results["broad_clarification"] = {

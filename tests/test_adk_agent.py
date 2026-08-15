@@ -13,6 +13,7 @@ from app.agent import (
     PropertyAgentTools,
     _grounded_fallback,
     _is_post_tool_turn,
+    _location_followup,
     _response_contract_violations,
 )
 from app.config import GREETING_PARTS, LANGUAGE_ACKNOWLEDGEMENTS, PROGRESS_LINES
@@ -188,6 +189,14 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.calls[0][0].name, "search_properties")
         self.assertEqual(service.calls[0][0].arguments["location"], "Malabe")
         await runtime.end_session("call-location")
+
+    def test_location_followup_uses_previous_caller_intent(self) -> None:
+        messages = [
+            {"role": "user", "content": "මට තියෙන properties මොනවාද?"},
+            {"role": "user", "content": "මාලබේ පැත්තෙන්."},
+        ]
+
+        self.assertEqual(_location_followup(messages), "Malabe")
 
     async def test_location_inventory_request_is_deterministic(self) -> None:
         backend, service = FakeGemmaBackend(), FakePropertyService()

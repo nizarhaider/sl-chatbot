@@ -527,10 +527,23 @@ def _location_followup(messages: list[dict]) -> str | None:
         ),
         "",
     )
+    previous_caller = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages[:-1])
+            if item.get("role") == "user"
+            and "<tool_result>" not in str(item.get("content", ""))
+        ),
+        "",
+    )
     questions = (_location_question(language) for language in ("en", "si", "ta"))
     return (
         location
-        if location and any(question in previous for question in questions)
+        if location
+        and (
+            any(question in previous for question in questions)
+            or is_broad_property_request(previous_caller)
+        )
         else None
     )
 
