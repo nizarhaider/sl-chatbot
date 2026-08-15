@@ -13,9 +13,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+import httpx
 import psycopg
 from psycopg.errors import OperationalError, UniqueViolation
 from psycopg_pool import ConnectionPool
+
+from app.config import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, PROPERTY_RESULT_LIMIT
+from app.speech import is_broad_property_request
 
 logger = logging.getLogger(__name__)
 COLOMBO = ZoneInfo("Asia/Colombo")
@@ -23,17 +27,19 @@ CALL_NAMESPACE = uuid.UUID("70b37a94-aefa-4c52-a5f8-916272bd5f8c")
 
 TOOL_INSTRUCTIONS = """
 Property facts and bookings come only from tools. Never invent them. Call exactly one function:
-- search_properties for availability, a named property, or any search filter. Empty arguments are
-  valid for broad inventory. Put only a property name in query. Include only caller-stated filters.
+- search_properties for a named property, meaningful preferences, or specific search filters. Put
+  the caller's complete property request in query and include only caller-stated filters.
 - list_property_locations when asked where inventory exists.
 - book_appointment only with a tool-returned property_id plus caller-stated name, date, and time.
-Write location and property_type arguments in English. Greetings are not searches. Once a tool is
+If the caller asks broadly for all or available properties without a location or preference, do not
+call a tool and do not list inventory; ask which location they prefer. Write location and
+property_type arguments in English. Greetings are not searches. Once a tool is
 needed, call it immediately without spoken permission or acknowledgement. "Yes" after your search
 question means search now. After a result, answer naturally in the caller's language using exact
 returned facts and numbers. Keep the latest property_id for follow-ups. Confirm only ok=true
 bookings. Never propose a viewing slot. Resolve dates using the Sri Lanka date; "next week" needs a
 day and time, and a correction replaces the old value.
-Sinhala tool examples: "මට තියෙන properties පෙන්නන්න" -> search_properties with no filters.
+Sinhala example: "මට තියෙන properties පෙන්නන්න" -> ask which location they prefer.
 "properties තියෙන්නේ කොහෙද?" -> list_property_locations. Never answer either before the tool.
 """.strip()
 
@@ -270,7 +276,12 @@ class CallLog:
 
 
 class PropertyStore:
-    def __init__(self, database_url: str, phone_number_id: str) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        phone_number_id: str,
+        embedder: GeminiEmbedder | None = None,
+    ) -> None:
         self.phone_number_id = phone_number_id
         self.pool = ConnectionPool(
             database_url,
@@ -282,11 +293,20 @@ class PropertyStore:
             kwargs={"connect_timeout": 10},
         )
         self.mapping: tuple[str, str] | None = None
+        self.embedder = embedder or GeminiEmbedder.from_env()
 
     def ensure_ready(self) -> None:
         self.pool.open(wait=True, timeout=15)
         with self.pool.connection() as connection:
             self.mapping = _load_mapping(connection, self.phone_number_id)
+            connection.execute("create extension if not exists vector")
+            connection.execute(
+                f"alter table real_estate_properties add column if not exists embedding vector({EMBEDDING_DIMENSIONS})"
+            )
+            connection.execute(
+                "alter table real_estate_properties add column if not exists embedding_source text"
+            )
+        self._sync_embeddings()
 
     def close(self) -> None:
         self.pool.close()
@@ -298,17 +318,24 @@ class PropertyStore:
             if value := str(arguments.get(column, "")).strip():
                 clauses.append(f"{column} ilike %s")
                 values.append(f"%{value}%")
-        if query := str(arguments.get("query", "")).strip():
-            clauses.append("(name ilike %s or location ilike %s or details ilike %s)")
-            values.extend([f"%{query}%"] * 3)
+        query = str(arguments.get("query", "")).strip()
         if arguments.get("bedrooms") is not None:
             clauses.append("bedrooms >= %s")
             values.append(positive_int(arguments["bedrooms"], "bedrooms"))
         if arguments.get("max_price_lkr") is not None:
             clauses.append("price_lkr <= %s")
             values.append(positive_int(arguments["max_price_lkr"], "max_price_lkr"))
-        sql = f"""select id,name,location,property_type,bedrooms,price_lkr,details
-            from real_estate_properties where {" and ".join(clauses)} order by price_lkr,name limit 5"""
+        if query:
+            vector = self.embedder.embed(query, "RETRIEVAL_QUERY")
+            select = "id,name,location,property_type,bedrooms,price_lkr,details,embedding <=> %s::vector"
+            values.insert(0, vector_literal(vector))
+            clauses.append("embedding is not null")
+            order = "8, price_lkr, name"
+        else:
+            select = "id,name,location,property_type,bedrooms,price_lkr,details,null::double precision"
+            order = "price_lkr, name"
+        sql = f"""select {select} from real_estate_properties
+            where {" and ".join(clauses)} order by {order} limit {PROPERTY_RESULT_LIMIT}"""
         with self.pool.connection() as connection:
             rows = connection.execute(sql, values).fetchall()
         keys = (
@@ -319,8 +346,26 @@ class PropertyStore:
             "bedrooms",
             "price_lkr",
             "details",
+            "semantic_distance",
         )
         return [dict(zip(keys, (str(row[0]), *row[1:]))) for row in rows]
+
+    def _sync_embeddings(self) -> None:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """select id,name,location,property_type,bedrooms,price_lkr,details,embedding_source
+                from real_estate_properties where status='active'"""
+            ).fetchall()
+        for row in rows:
+            source = property_document(row[1:7])
+            if row[7] == source:
+                continue
+            embedding = self.embedder.embed(source, "RETRIEVAL_DOCUMENT")
+            with self.pool.connection() as connection:
+                connection.execute(
+                    "update real_estate_properties set embedding=%s::vector,embedding_source=%s where id=%s",
+                    (vector_literal(embedding), source, row[0]),
+                )
 
     def locations(self) -> list[str]:
         customer_id, _ = self._get_mapping()
@@ -406,7 +451,25 @@ class RealEstateToolService:
     async def execute(self, call: ToolCall, context: CallContext) -> dict:
         try:
             if call.name == "search_properties":
+                query = str(call.arguments.get("query", ""))
+                structured = any(
+                    call.arguments.get(key) not in (None, "")
+                    for key in (
+                        "location",
+                        "property_type",
+                        "bedrooms",
+                        "max_price_lkr",
+                    )
+                )
+                if not structured and (not query or is_broad_property_request(query)):
+                    return {
+                        "ok": True,
+                        "needs_clarification": "location",
+                        "available_locations": await self.available_locations(),
+                    }
                 rows = await asyncio.to_thread(self.store.search, call.arguments)
+                for row in rows:
+                    row.pop("semantic_distance", None)
                 result = {"ok": True, "properties": rows, "count": len(rows)}
                 if not rows:
                     result["available_locations"] = await self.available_locations()
@@ -428,6 +491,50 @@ class RealEstateToolService:
                 "ok": False,
                 "error": "The booking database is temporarily unavailable.",
             }
+
+
+class GeminiEmbedder:
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    @classmethod
+    def from_env(cls) -> GeminiEmbedder:
+        token = os.getenv("GEMINI_API_KEY")
+        if not token:
+            raise RuntimeError("GEMINI_API_KEY is required for property search")
+        return cls(token)
+
+    def embed(self, text: str, task_type: str) -> list[float]:
+        response = httpx.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL}:embedContent",
+            headers={"x-goog-api-key": self.api_key},
+            json={
+                "content": {"parts": [{"text": text}]},
+                "embedContentConfig": {
+                    "taskType": task_type,
+                    "outputDimensionality": EMBEDDING_DIMENSIONS,
+                },
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        values = response.json()["embedding"]["values"]
+        if len(values) != EMBEDDING_DIMENSIONS:
+            raise RuntimeError("Unexpected property embedding dimensions")
+        return values
+
+
+def property_document(row) -> str:
+    name, location, property_type, bedrooms, price_lkr, details = row
+    bedrooms_text = f"{bedrooms} bedrooms" if bedrooms else "bedrooms not applicable"
+    return (
+        f"{name}. Location: {location}. Type: {property_type}. {bedrooms_text}. "
+        f"Price: LKR {price_lkr}. {details}"
+    )
+
+
+def vector_literal(values: list[float]) -> str:
+    return "[" + ",".join(map(str, values)) + "]"
 
 
 def _load_mapping(

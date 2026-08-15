@@ -4,7 +4,7 @@ A local-GPU WhatsApp voice agent with Google ADK orchestration:
 
 `WhatsApp WebRTC -> Sinhala Whisper -> ADK + Gemma -> OmniVoice V5 -> WebRTC`
 
-Neon owns calls, transcripts, properties, and appointments. Hugging Face owns
+Neon owns calls, transcripts, properties, pgvector embeddings, and appointments. Hugging Face owns
 datasets and model weights. This repository contains only runtime code, small
 training entrypoints, CI, and this runbook.
 
@@ -24,9 +24,9 @@ training entrypoints, CI, and this runbook.
 | `tests/gpu_integration.py` | Staged production quality gate |
 
 Edit `app/config.py` first for behavior changes. Google ADK owns conversational
-history, agent state, and function dispatch for each active call. Do not add
-intent keyword routes or canned property logic; Gemma chooses ADK tools and the
-existing database service validates their arguments and effects.
+history, agent state, and function dispatch for each active call. Broad inventory
+requests ask for a location before searching; Gemma chooses ADK tools for specific
+requests and the database service validates their arguments and effects.
 
 ## Setup
 
@@ -34,6 +34,7 @@ Install [uv](https://docs.astral.sh/uv/) and create an uncommitted `.env`:
 
 ```dotenv
 HF_TOKEN=...
+GEMINI_API_KEY=...
 VASTAI_API_KEY=...
 NGROK_AUTH_TOKEN=...
 VERIFY_TOKEN=...

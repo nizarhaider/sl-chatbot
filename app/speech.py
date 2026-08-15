@@ -88,6 +88,22 @@ PLACE_NAMES = {
     },
 }
 
+PROPERTY_WORDS = re.compile(
+    r"\b(?:properties|listings)\b|ප්‍රොපටි|පොපටි|ப்ராப்பர்ட்டிகள்|சொத்துகள்",
+    re.IGNORECASE,
+)
+PROPERTY_SPECIFICS = re.compile(
+    r"\b(?:apartment|house|villa|land|bedrooms?|budget|price|near|with|in)\b|"
+    + "|".join(
+        re.escape(name)
+        for language_names in PLACE_NAMES.values()
+        for pair in language_names.items()
+        for name in pair
+    )
+    + r"|නිදන|කාමර|මිල|ළඟ|ප්‍රදේශ|வீடு|வில்லா|காணி|படுக்கையறை|விலை|பகுதி",
+    re.IGNORECASE,
+)
+
 
 def detect_language(text: str) -> str:
     if re.search(r"[\u0D80-\u0DFF]", text):
@@ -116,6 +132,11 @@ def selected_language(text: str) -> str | None:
         if all(word in names for word in words):
             return language
     return None
+
+
+def is_broad_property_request(text: str) -> bool:
+    """Return true when inventory was requested without a useful preference."""
+    return bool(PROPERTY_WORDS.search(text)) and not PROPERTY_SPECIFICS.search(text)
 
 
 def normalize_for_tts(text: str, language: str | None = None) -> tuple[str, str]:
