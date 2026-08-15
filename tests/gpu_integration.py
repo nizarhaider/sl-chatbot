@@ -165,8 +165,8 @@ def check_webhook() -> dict:
     env = {
         **os.environ,
         "VERIFY_TOKEN": token,
-        "PHONE_NUMBER_ID": "integration-test",
-        "DATABASE_URL": "postgresql://unused",
+        "PHONE_NUMBER_ID": "",
+        "DATABASE_URL": "",
         "WHATSAPP_ACCESS_TOKEN": "unused",
     }
     process = subprocess.Popen(
