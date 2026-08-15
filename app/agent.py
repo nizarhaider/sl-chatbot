@@ -368,12 +368,6 @@ def _agent_instruction(context: ReadonlyContext) -> str:
             f"\nThe latest searched property is {property_name}, with exact property_id "
             f"{property_id}. Use that ID when the caller refers to it in a booking follow-up."
         )
-    else:
-        instruction += (
-            "\nNo property is currently selected from a prior search. Never say 'this property' "
-            "or offer, arrange, or book a viewing unless the caller identifies an exact property "
-            "by name or ID in the latest message. Never invent a date or time."
-        )
     return instruction
 
 
@@ -455,9 +449,9 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
 
 
 def _no_property_selected(messages: list[dict]) -> bool:
-    return any(
+    return not any(
         message.get("role") == "system"
-        and "No property is currently selected" in str(message.get("content", ""))
+        and "exact property_id" in str(message.get("content", ""))
         for message in messages
     )
 
