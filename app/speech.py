@@ -89,7 +89,7 @@ PLACE_NAMES = {
 }
 
 PROPERTY_WORDS = re.compile(
-    r"\b(?:properties|listings)\b|ප්‍රොපටි|පොපටි|ப்ராப்பர்ட்டிகள்|சொத்துகள்",
+    r"\b(?:properties|listings|proyes)\b|ප්‍රොපටි|පොපටි|පොබ්ඩිස්|ப்ராப்பர்ட்டிகள்|சொத்துகள்",
     re.IGNORECASE,
 )
 PROPERTY_SPECIFICS = re.compile(
