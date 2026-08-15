@@ -242,6 +242,11 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_broad_property_request("මට තියෙන properties මොනවාද?"))
         self.assertTrue(
             is_broad_property_request(
+                "ඔයාලා ළඟ තියෙන properties මොනවාද? මට තියෙන ඒවා පෙන්නන්න."
+            )
+        )
+        self.assertTrue(
+            is_broad_property_request(
                 "නමද? නම දන්න යන්නේ ඔය නිකං කියන්නේ මොකක්ද තියෙන්නේ පොබ්ඩිස් ටිකක්"
             )
         )

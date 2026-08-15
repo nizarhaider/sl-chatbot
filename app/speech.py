@@ -108,6 +108,7 @@ PROPERTY_LOCATION_REQUEST = re.compile(
     r"ප්‍රදේශ.*කොහෙද|எந்த\s+(?:இட|பகுதி)|எங்கே",
     re.IGNORECASE,
 )
+PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙන|තියෙන\s+ඒවා\s+පෙන්නන්න")
 
 
 def detect_language(text: str) -> str:
@@ -141,7 +142,9 @@ def selected_language(text: str) -> str | None:
 
 def is_broad_property_request(text: str) -> bool:
     """Return true when inventory was requested without a useful preference."""
-    return bool(PROPERTY_WORDS.search(text)) and not PROPERTY_SPECIFICS.search(text)
+    return bool(PROPERTY_WORDS.search(text)) and bool(
+        PROPERTY_BROAD_INVENTORY.search(text) or not PROPERTY_SPECIFICS.search(text)
+    )
 
 
 def is_property_location_request(text: str) -> bool:

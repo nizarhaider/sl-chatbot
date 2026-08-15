@@ -387,7 +387,9 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
     )
     broad_trace = runtime.tool_trace(broad_call_id)
     assert not broad_trace, broad_trace
-    assert "ප්‍රදේශ" in broad_response, broad_response
+    assert "ප්‍රදේශ" in broad_response, (
+        f"broad Sinhala inventory did not ask for location: {broad_response}"
+    )
     narrowed_response = await runtime.respond(
         broad_call_id, "94770000000", "මාලබේ පැත්තෙන්."
     )
