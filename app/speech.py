@@ -93,14 +93,14 @@ PROPERTY_WORDS = re.compile(
     re.IGNORECASE,
 )
 PROPERTY_SPECIFICS = re.compile(
-    r"\b(?:apartment|house|villa|land|bedrooms?|budget|price|near|with|in)\b|"
+    r"\b(?:apartment|house|villa|land|bedrooms?|budget|price|near|with|in|where|locations?|areas?)\b|"
     + "|".join(
         re.escape(name)
         for language_names in PLACE_NAMES.values()
         for pair in language_names.items()
         for name in pair
     )
-    + r"|නිදන|කාමර|මිල|ළඟ|ප්‍රදේශ|வீடு|வில்லா|காணி|படுக்கையறை|விலை|பகுதி",
+    + r"|නිදන|කාමර|මිල|ළඟ|ප්‍රදේශ|කොහෙද|வீடு|வில்லா|காணி|படுக்கையறை|விலை|பகுதி|எங்கே",
     re.IGNORECASE,
 )
 

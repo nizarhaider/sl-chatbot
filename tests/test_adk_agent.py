@@ -206,6 +206,9 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertFalse(is_broad_property_request("I need an apartment in Malabe"))
+        self.assertFalse(
+            is_broad_property_request("Which locations have properties available?")
+        )
         self.assertFalse(is_broad_property_request("கடல் காட்சியுடன் apartment வேண்டும்"))
 
     def test_grounded_fallback_preserves_tamil_and_exact_price(self) -> None:
