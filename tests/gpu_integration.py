@@ -112,7 +112,7 @@ def main() -> None:
         result.update(status=200, elapsed_seconds=time.perf_counter() - started)
         save_result(report_path, args.stage, result)
         summary = {"stage": args.stage, "status": 200}
-        if args.stage in {"llm", "judge"}:
+        if args.stage in {"llm", "judge", "tools"}:
             summary["cases"] = result["cases"]
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     except Exception as exc:
@@ -413,8 +413,13 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
     location_trace = runtime.tool_trace(location_call_id)
     await runtime.end_session(location_call_id)
     assert location_trace and location_trace[0]["name"] == "list_property_locations", (
-        location_response
+        f"Sinhala location inventory did not dispatch list_property_locations: "
+        f"{location_response}"
     )
+    results["sinhala_location_inventory"] = {
+        "tool": location_trace[0]["name"],
+        "response": location_response,
+    }
 
     followup_call_id = "integration-adk-followup"
     await runtime.start_session(followup_call_id, "94770000000")

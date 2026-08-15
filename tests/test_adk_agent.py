@@ -18,7 +18,12 @@ from app.agent import (
 from app.config import GREETING_PARTS, LANGUAGE_ACKNOWLEDGEMENTS, PROGRESS_LINES
 from app.database import CallContext, RealEstateToolService, ToolCall, call_log
 from app.pipeline import TurnPipeline
-from app.speech import is_broad_property_request, known_location, selected_language
+from app.speech import (
+    is_broad_property_request,
+    is_property_location_request,
+    known_location,
+    selected_language,
+)
 
 
 class FakeGemmaBackend:
@@ -60,6 +65,8 @@ class FakePropertyService:
 
     async def execute(self, call, context) -> dict:
         self.calls.append((call, context))
+        if call.name == "list_property_locations":
+            return {"ok": True, "locations": ["Malabe", "Nugegoda"]}
         return {
             "ok": True,
             "count": 1,
@@ -182,6 +189,19 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.calls[0][0].arguments["location"], "Malabe")
         await runtime.end_session("call-location")
 
+    async def test_location_inventory_request_is_deterministic(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+
+        response = await runtime.respond(
+            "call-locations", "", "ඔයාලගේ properties තියෙන්නේ මොන locations වලද?"
+        )
+
+        self.assertEqual(service.calls[0][0].name, "list_property_locations")
+        self.assertIn("Malabe", response)
+        self.assertEqual(backend.requests, [])
+        await runtime.end_session("call-locations")
+
     async def test_booking_rejects_model_placeholder_name(self) -> None:
         class Store:
             def book(self, arguments, context):
@@ -219,6 +239,12 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_broad_property_request("I need an apartment in Malabe"))
         self.assertFalse(
             is_broad_property_request("Which locations have properties available?")
+        )
+        self.assertTrue(
+            is_property_location_request("Which locations have properties available?")
+        )
+        self.assertTrue(
+            is_property_location_request("ඔයාලගේ properties තියෙන්නේ මොන locations වලද?")
         )
         self.assertFalse(is_broad_property_request("கடல் காட்சியுடன் apartment வேண்டும்"))
         self.assertEqual(known_location("මාලබේ පැත්තෙන්"), "Malabe")

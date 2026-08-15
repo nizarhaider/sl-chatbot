@@ -29,7 +29,12 @@ from app.database import (
     tool_call_message,
 )
 from app.models import LocalGemmaLLM, strip_thinking
-from app.speech import detect_language, is_broad_property_request, known_location
+from app.speech import (
+    detect_language,
+    is_broad_property_request,
+    is_property_location_request,
+    known_location,
+)
 
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
@@ -56,7 +61,17 @@ class LocalGemmaAdkModel(BaseLlm):
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
         tools = _openai_tools(llm_request)
-        if location := _location_followup(messages):
+        caller_text = _latest_caller_text(messages)
+        if _is_post_tool_turn(messages):
+            message = {"content": _grounded_fallback(messages), "tool_calls": []}
+        elif is_property_location_request(caller_text):
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {"function": {"name": "list_property_locations", "arguments": {}}}
+                ],
+            }
+        elif location := _location_followup(messages):
             message = {
                 "content": None,
                 "tool_calls": [
@@ -71,13 +86,11 @@ class LocalGemmaAdkModel(BaseLlm):
                     }
                 ],
             }
-        elif is_broad_property_request(_latest_caller_text(messages)):
+        elif is_broad_property_request(caller_text):
             message = {
                 "content": _location_question(_caller_language(messages)),
                 "tool_calls": [],
             }
-        elif _is_post_tool_turn(messages):
-            message = {"content": _grounded_fallback(messages), "tool_calls": []}
         else:
             message = await self._backend.chat(messages, tools)
             for _ in range(1):
