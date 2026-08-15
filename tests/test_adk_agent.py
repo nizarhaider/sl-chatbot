@@ -14,7 +14,9 @@ from app.agent import (
     _is_post_tool_turn,
     _response_contract_violations,
 )
+from app.config import GREETING_PARTS, LANGUAGE_ACKNOWLEDGEMENTS, PROGRESS_LINES
 from app.database import CallContext, RealEstateToolService, ToolCall
+from app.pipeline import TurnPipeline
 from app.speech import selected_language
 
 
@@ -216,6 +218,16 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ඔබතුමිය", response)
 
     async def test_broad_results_do_not_select_the_first_property(self) -> None:
+        class State:
+            def __init__(self):
+                self.values = {"call_id": "call-1", "caller_phone": ""}
+
+            def get(self, key, default=None):
+                return self.values.get(key, default)
+
+            def __setitem__(self, key, value):
+                self.values[key] = value
+
         class Service:
             async def execute(self, call, context):
                 return {
@@ -227,12 +239,32 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
                     ],
                 }
 
-        context = SimpleNamespace(state={"call_id": "call-1", "caller_phone": ""})
+        context = SimpleNamespace(state=State())
         tools = PropertyAgentTools(Service())
 
         await tools.search_properties(context)
 
-        self.assertNotIn("last_property_id", context.state)
+        self.assertEqual(context.state.get("last_property_id"), "")
+
+    def test_call_prompts_are_explicit_and_localized(self) -> None:
+        self.assertEqual(GREETING_PARTS[0][0], "For English, say English.")
+        self.assertIn("සිංහල කියන්න", GREETING_PARTS[1][0])
+        self.assertIn("தமிழ் என்று சொல்லுங்கள்", GREETING_PARTS[2][0])
+        for language in ("en", "si", "ta"):
+            self.assertIn("SerendibAI", LANGUAGE_ACKNOWLEDGEMENTS[language])
+            self.assertEqual(len(PROGRESS_LINES[language]), 1)
+
+    async def test_agent_error_returns_spoken_fallback(self) -> None:
+        class FailingAgent:
+            async def respond(self, *args):
+                raise RuntimeError("test failure")
+
+        pipeline = object.__new__(TurnPipeline)
+        pipeline.agent = FailingAgent()
+
+        response = await pipeline._respond("call-1", "", "මොනවාද තියෙන්නේ?")
+
+        self.assertIn("නැවත අහන්න", response)
 
     def test_booking_language_is_rejected_without_a_selected_property(self) -> None:
         messages = [

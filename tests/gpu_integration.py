@@ -58,7 +58,15 @@ class IntegrationPropertyStore:
     """In-memory inventory with the same search and booking contract as Neon."""
 
     def __init__(self) -> None:
-        self.rows = [PROPERTY_FIXTURE]
+        self.rows = [
+            PROPERTY_FIXTURE,
+            {
+                **PROPERTY_FIXTURE,
+                "property_id": "22222222-2222-4222-8222-222222222222",
+                "name": "Nugegoda Heights",
+                "location": "Nugegoda",
+            },
+        ]
         self.calls: list[tuple[str, dict, CallContext | None]] = []
 
     def search(self, arguments: dict) -> list[dict]:

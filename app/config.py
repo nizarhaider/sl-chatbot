@@ -33,24 +33,11 @@ TTS_REFERENCE_TEXT = (
 TTS_STEPS = 20
 TTS_SPEED = 0.98
 
-PROGRESS_DELAY_SECONDS = 4
 PROGRESS_REPEAT_SECONDS = 10
 PROGRESS_LINES = {
-    "si": (
-        "පොඩ්ඩක් ඉන්න.",
-        "මම බලන ගමන්.",
-        "තව පොඩි වෙලාවක්.",
-    ),
-    "ta": (
-        "ஒரு நிமிடம்.",
-        "நான் பார்க்கிறேன்.",
-        "இன்னும் கொஞ்சம் நேரம்.",
-    ),
-    "en": (
-        "One moment.",
-        "I'm checking.",
-        "Just a little longer.",
-    ),
+    "si": ("හරි, මම ඒක බලලා කියන්නම්.",),
+    "ta": ("சரி, நான் அதைப் பார்த்துச் சொல்கிறேன்.",),
+    "en": ("Sure, let me look into that.",),
 }
 
 # Turn detection and playback protection.
@@ -63,14 +50,19 @@ GREETING_DELAY_SECONDS = 0.5
 PLAYBACK_ECHO_TAIL_SECONDS = 0.35
 
 GREETING_PARTS = (
-    ("English.", "en"),
-    ("සිංහල.", "si"),
-    ("தமிழ்.", "ta"),
+    ("For English, say English.", "en"),
+    ("සිංහල සඳහා, සිංහල කියන්න.", "si"),
+    ("தமிழுக்கு, தமிழ் என்று சொல்லுங்கள்.", "ta"),
 )
 LANGUAGE_ACKNOWLEDGEMENTS = {
-    "en": "Okay, this is SerendibAI. How can I help?",
-    "si": "හරි, මේ SerendibAI. ඔබට කොහොමද උදව් කරන්න ඕනේ?",
-    "ta": "சரி, இது SerendibAI. உங்களுக்கு எப்படி உதவலாம்?",
+    "en": "Hello, I'm SerendibAI from Homelands Properties. How can I help?",
+    "si": "ආයුබෝවන්, මම Homelands Properties හි SerendibAI. ඔබට කොහොමද උදව් කරන්න ඕනේ?",
+    "ta": "வணக்கம், நான் Homelands Properties-இன் SerendibAI. உங்களுக்கு எப்படி உதவலாம்?",
+}
+ERROR_RESPONSES = {
+    "en": "Sorry, I couldn't check that. Please ask me again.",
+    "si": "සමාවෙන්න, ඒක බලන්න බැරි වුණා. කරුණාකර නැවත අහන්න.",
+    "ta": "மன்னிக்கவும், அதைச் சரிபார்க்க முடியவில்லை. மீண்டும் கேளுங்கள்.",
 }
 
 SYSTEM_PROMPT = (

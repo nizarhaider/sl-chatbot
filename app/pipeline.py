@@ -15,13 +15,13 @@ from app.agent import GemmaAgentRuntime
 from app.audio import OutboundAudioTrack, VoiceActivity, pcm_rms
 from app.config import (
     END_SILENCE_CHUNKS,
+    ERROR_RESPONSES,
     GREETING_DELAY_SECONDS,
     GREETING_PARTS,
     INPUT_CHUNK_BYTES,
     LANGUAGE_ACKNOWLEDGEMENTS,
     MIN_AUDIO_MS,
     PLAYBACK_ECHO_TAIL_SECONDS,
-    PROGRESS_DELAY_SECONDS,
     PROGRESS_LINES,
     PROGRESS_REPEAT_SECONDS,
     SILENCE_RMS,
@@ -38,7 +38,6 @@ class TurnPipeline:
         self.asr = LocalWhisperASR()
         self.agent = GemmaAgentRuntime()
         self.tts = tts or OmniVoiceTTS()
-        self.progress_index: dict[str, int] = {}
 
     async def prewarm(self) -> None:
         await asyncio.to_thread(self.asr.prewarm)
@@ -74,7 +73,6 @@ class TurnPipeline:
             )
         finally:
             await self.agent.end_session(call_id)
-            self.progress_index.pop(call_id, None)
 
     async def _listen(
         self, call_id, phone, input_track, output_track, playback_generation
@@ -161,58 +159,42 @@ class TurnPipeline:
 
         stage_started = time.perf_counter()
         language = detect_language(transcript)
-        notice_count = 0
-        notice_lock = asyncio.Lock()
 
         async def progress() -> None:
-            nonlocal notice_count
-            async with notice_lock:
-                if notice_count:
-                    return
-                lines = PROGRESS_LINES[language]
-                index = self.progress_index.get(call_id, 0)
-                line = lines[index % len(lines)]
-                self.progress_index[call_id] = index + 1
-                logger.info("Turn progress for %s: %s", call_id, line)
-                seconds = await self._speak(
-                    call_id, line, output_track, generations, language
-                )
-                notice_count += 1
-                await self._discard_echo(input_track, output_track, seconds)
+            line = PROGRESS_LINES[language][0]
+            logger.info("Turn progress for %s: %s", call_id, line)
+            seconds = await self._speak(
+                call_id, line, output_track, generations, language
+            )
+            await self._discard_echo(input_track, output_track, seconds)
 
         response_task = asyncio.create_task(self._respond(call_id, phone, transcript))
         try:
-            try:
-                response = await asyncio.wait_for(
-                    asyncio.shield(response_task), PROGRESS_DELAY_SECONDS
+            await progress()
+            while True:
+                response, interrupted = await self._wait_for_response_or_speech(
+                    response_task,
+                    call_id,
+                    input_track,
+                    output_track,
+                    generations,
+                    PROGRESS_REPEAT_SECONDS,
                 )
-            except TimeoutError:
-                await progress()
-                while True:
-                    response, interrupted = await self._wait_for_response_or_speech(
-                        response_task,
+                if interrupted:
+                    response_task.cancel()
+                    await asyncio.gather(response_task, return_exceptions=True)
+                    await self._handle_turn(
                         call_id,
+                        phone,
                         input_track,
                         output_track,
                         generations,
-                        PROGRESS_REPEAT_SECONDS,
+                        interrupted.started_at,
+                        interrupted.pcm,
                     )
-                    if interrupted:
-                        response_task.cancel()
-                        await asyncio.gather(response_task, return_exceptions=True)
-                        await self._handle_turn(
-                            call_id,
-                            phone,
-                            input_track,
-                            output_track,
-                            generations,
-                            interrupted.started_at,
-                            interrupted.pcm,
-                        )
-                        return
-                    if response is not None:
-                        break
-                    continue
+                    return
+                if response is not None:
+                    break
         finally:
             if not response_task.done():
                 response_task.cancel()
@@ -296,7 +278,11 @@ class TurnPipeline:
                     return None, vad.finish()
 
     async def _respond(self, call_id: str, phone: str, transcript: str) -> str:
-        return await self.agent.respond(call_id, phone, transcript)
+        try:
+            return await self.agent.respond(call_id, phone, transcript)
+        except Exception:
+            logger.exception("Agent response failed for %s", call_id)
+            return ERROR_RESPONSES[detect_language(transcript)]
 
     async def _speak(
         self, call_id, text, output_track, generations, language=None
