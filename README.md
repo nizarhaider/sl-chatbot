@@ -53,9 +53,13 @@ uv run python -m compileall -q app scripts tests
 ./scripts/vast.sh rent
 ```
 
-This rents the cheapest matching 16 GB+ Vast GPU, sends only committed runtime
-files and required runtime credentials, starts supervised FastAPI/ngrok
-processes, and prints the webhook URL. The instance remains billable.
+This rents a fast, reliable 16 GB+ Vast GPU from the standard PyTorch template,
+sends only committed app files and required runtime credentials, downloads the
+locked prebuilt Linux wheels and pinned Hugging Face model snapshots, then starts
+supervised FastAPI/ngrok processes and prints the webhook URL. No custom image is
+built or pulled. Download provisioning is reported separately; the subsequent
+server setup and model-loading phase is limited to five minutes. After the new
+server is healthy, any older `serendibai-whatsapp` instance is destroyed.
 
 ```bash
 DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
@@ -64,7 +68,11 @@ DRY_RUN=true ./scripts/vast.sh rent        # show the selected offer
 ./scripts/vast.sh destroy INSTANCE_ID      # stop billing
 ```
 
-Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`.
+Remote logs are at `/workspace/sl-chatbot/run_logs/server.log`. The configured
+package indexes serve the locked binary wheels; `--no-build` makes deployment
+fail instead of compiling a missing wheel. The installed `.venv` is preserved on
+code redeploys, while wheel archives are discarded to avoid storing a second
+10 GB copy. Models remain cached at `/workspace/.cache/huggingface`.
 
 ## Fine-tune
 
@@ -117,9 +125,9 @@ The workflow uploads its JSON report and audio samples, then always destroys the
 test instance. It sends only a read-only Hugging Face token to the GPU. Required
 GitHub secrets are `VAST_AI_API_KEY`, `HF_TOKEN`, and `GEMINI_API_KEY`.
 
-The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys every
-Vast instance on the account. This intentionally includes production and any CI
-instance active at that moment.
+The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys stale
+instances whose label starts with `serendibai-ci-`. It never destroys the hosted
+`serendibai-whatsapp` production instance.
 
 ## Data ownership
 

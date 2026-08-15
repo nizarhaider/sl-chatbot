@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
+from difflib import SequenceMatcher
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -33,7 +34,6 @@ from app.speech import detect_language
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
 MODEL_NAME = "local/gemma-4-e4b"
-ToolNotice = Callable[[], Awaitable[None]]
 LANGUAGE_NAMES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
 
 
@@ -55,25 +55,32 @@ class LocalGemmaAdkModel(BaseLlm):
     ) -> AsyncGenerator[LlmResponse, None]:
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
-        message = await self._backend.chat(messages, _openai_tools(llm_request))
-        for _ in range(2):
+        tools = _openai_tools(llm_request)
+        message = await self._backend.chat(messages, tools)
+        for _ in range(1):
             violations = _response_contract_violations(message, messages)
             if not violations:
                 break
             logger.info(
                 "Correcting post-tool Gemma response: %s", "; ".join(violations)
             )
+            correction_tools = [] if _is_post_tool_turn(messages) else tools
             message = await self._backend.chat(
                 [
                     *messages,
-                    {"role": "assistant", "content": message.get("content") or ""},
                     {
                         "role": "user",
                         "content": _correction_prompt(messages, violations),
                     },
                 ],
-                [],
+                correction_tools,
             )
+        violations = _response_contract_violations(message, messages)
+        if violations and _is_post_tool_turn(messages):
+            logger.info(
+                "Using grounded response fallback: %s", "; ".join(violations)
+            )
+            message = {"content": _grounded_fallback(messages), "tool_calls": []}
         parts = _response_parts(message)
         yield LlmResponse(
             content=types.Content(role="model", parts=parts),
@@ -86,7 +93,6 @@ class PropertyAgentTools:
 
     def __init__(self, service: RealEstateToolService | None) -> None:
         self.service = service
-        self.notices: dict[str, ToolNotice] = {}
         self.traces: dict[str, list[dict[str, Any]]] = {}
 
     async def search_properties(
@@ -120,6 +126,10 @@ class PropertyAgentTools:
         }
         return await self._execute("search_properties", arguments, tool_context)
 
+    async def list_property_locations(self, tool_context: ToolContext) -> dict:
+        """List every location that currently has active property inventory."""
+        return await self._execute("list_property_locations", {}, tool_context)
+
     async def book_appointment(
         self,
         tool_context: ToolContext,
@@ -148,8 +158,6 @@ class PropertyAgentTools:
         self, name: str, arguments: dict[str, Any], tool_context: ToolContext
     ) -> dict:
         call_id = str(tool_context.state.get("call_id", ""))
-        if notice := self.notices.get(call_id):
-            await notice()
         safe_arguments = {
             key: "[provided]" if key == "customer_name" else value
             for key, value in arguments.items()
@@ -168,6 +176,15 @@ class PropertyAgentTools:
                 caller_phone=str(tool_context.state.get("caller_phone", "")),
             )
             result = await self.service.execute(ToolCall(name, arguments), context)
+        if name == "search_properties" and result.get("ok"):
+            properties = result.get("properties") or []
+            if properties and properties[0].get("property_id"):
+                tool_context.state["last_property_id"] = str(
+                    properties[0]["property_id"]
+                )
+                tool_context.state["last_property_name"] = str(
+                    properties[0].get("name") or ""
+                )
         logger.info(
             "ADK tool result for %s: name=%s ok=%s count=%s error=%s",
             call_id,
@@ -202,7 +219,11 @@ class GemmaAgentRuntime:
             name="serendibai_property_agent",
             model=self.model,
             instruction=_agent_instruction,
-            tools=[self.tools.search_properties, self.tools.book_appointment],
+            tools=[
+                self.tools.search_properties,
+                self.tools.list_property_locations,
+                self.tools.book_appointment,
+            ],
             generate_content_config=types.GenerateContentConfig(
                 temperature=LLM_TEMPERATURE,
                 max_output_tokens=LLM_MAX_TOKENS,
@@ -239,37 +260,33 @@ class GemmaAgentRuntime:
         call_id: str,
         phone: str,
         transcript: str,
-        on_tool: ToolNotice | None = None,
     ) -> str:
         if call_id not in self._users:
             await self.start_session(call_id, phone)
-        if on_tool:
-            self.tools.notices[call_id] = on_tool
         self.tools.traces[call_id] = []
         final_text = ""
-        try:
-            async for event in self.runner.run_async(
-                user_id=self._users[call_id],
-                session_id=call_id,
-                new_message=types.Content(
-                    role="user", parts=[types.Part(text=transcript)]
+        async for event in self.runner.run_async(
+            user_id=self._users[call_id],
+            session_id=call_id,
+            new_message=types.Content(
+                role="user", parts=[types.Part(text=transcript)]
+            ),
+            state_delta={
+                "caller_language": detect_language(transcript),
+            },
+            run_config=RunConfig(
+                max_llm_calls=3,
+                get_session_config=GetSessionConfig(
+                    num_recent_events=LLM_HISTORY_MESSAGES
                 ),
-                state_delta={"caller_language": detect_language(transcript)},
-                run_config=RunConfig(
-                    max_llm_calls=3,
-                    get_session_config=GetSessionConfig(
-                        num_recent_events=LLM_HISTORY_MESSAGES
-                    ),
-                ),
-            ):
-                if event.is_final_response() and event.content:
-                    final_text = " ".join(
-                        part.text.strip()
-                        for part in event.content.parts or []
-                        if part.text and part.text.strip()
-                    )
-        finally:
-            self.tools.notices.pop(call_id, None)
+            ),
+        ):
+            if event.is_final_response() and event.content:
+                final_text = " ".join(
+                    part.text.strip()
+                    for part in event.content.parts or []
+                    if part.text and part.text.strip()
+                )
         return strip_thinking(final_text)
 
     def tool_trace(self, call_id: str) -> list[dict[str, Any]]:
@@ -277,7 +294,6 @@ class GemmaAgentRuntime:
 
     async def end_session(self, call_id: str) -> None:
         user_id = self._users.pop(call_id, None)
-        self.tools.notices.pop(call_id, None)
         self.tools.traces.pop(call_id, None)
         if user_id:
             await self.sessions.delete_session(
@@ -334,11 +350,20 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
 def _agent_instruction(context: ReadonlyContext) -> str:
     language = str(context.state.get("caller_language", "en"))
     name = LANGUAGE_NAMES.get(language, "English")
-    return (
+    instruction = (
         LocalGemmaLLM.system_instruction()
         + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
-        f"the spoken answer must remain entirely in {name}. Tool data is never caller speech."
+        f"the spoken answer must remain entirely in {name}. Tool data is never caller speech. "
+        "Only send a location filter when the caller clearly named a location. Noisy words "
+        "meaning 'any' or 'some' are not locations; omit location for a broad request."
     )
+    if property_id := str(context.state.get("last_property_id", "")):
+        property_name = str(context.state.get("last_property_name", "the property"))
+        instruction += (
+            f"\nThe latest searched property is {property_name}, with exact property_id "
+            f"{property_id}. Use that ID when the caller refers to it in a booking follow-up."
+        )
+    return instruction
 
 
 def _instruction_text(llm_request: LlmRequest) -> str:
@@ -391,22 +416,27 @@ def _response_parts(message: dict) -> list[types.Part]:
 
 
 def _response_contract_violations(message: dict, messages: list[dict]) -> list[str]:
-    if message.get("tool_calls") or not any(
-        "<tool_result>" in str(item.get("content", "")) for item in messages
-    ):
+    if message.get("tool_calls"):
         return []
     response = strip_thinking(message.get("content") or "")
     expected = _caller_language(messages)
     violations = []
-    if detect_language(response) != expected:
+    if _repeats_previous_answer(response, messages):
+        violations.append("do not repeat the previous answer; address the latest request directly")
+    post_tool_turn = _is_post_tool_turn(messages)
+    if post_tool_turn and detect_language(response) != expected:
         violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
-    required_prices = _tool_prices(messages)
+    required_prices = _tool_prices(messages) if post_tool_turn else []
     missing = [price for price in required_prices if price not in response]
     if missing:
         violations.append(
             "copy exact prices as " + ", ".join(f"LKR {price}" for price in missing)
         )
     return violations
+
+
+def _is_post_tool_turn(messages: list[dict]) -> bool:
+    return bool(messages) and "<tool_result>" in str(messages[-1].get("content", ""))
 
 
 def _caller_language(messages: list[dict]) -> str:
@@ -425,24 +455,50 @@ def _caller_language(messages: list[dict]) -> str:
 def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
     language = _caller_language(messages)
     prices = ", ".join(f'"LKR {price}"' for price in _tool_prices(messages))
+    price_rule = (
+        f" Copy prices exactly as {prices}; do not convert them to lakhs or words."
+        if prices
+        else ""
+    )
     if language == "si":
         return (
-            "අවසාන කථන පිළිතුර පමණක් නැවත ලියන්න. මුළු පිළිතුරම සිංහලෙන් තබන්න. "
-            f"මිල හරියටම {prices} ලෙස ඉලක්කම්වලින් copy කරන්න. මිල ලක්ෂවලට හෝ "
-            "වචනවලට හරවන්න එපා. Tool result එකේ facts පමණක් භාවිතා කරන්න."
+            "අලුත්ම caller ඉල්ලීමට සෘජුව පිළිතුරු දෙන්න. කලින් පිළිතුර නැවත කියන්න එපා. "
+            "ප්‍රයෝජනවත් කෙටි වාක්‍ය එකක් සිට තුනක් දක්වා සිංහලෙන් කියන්න."
+            + price_rule
         )
     if language == "ta":
         return (
-            "இறுதி பேச்சுப் பதிலை மட்டும் மீண்டும் எழுதுங்கள். முழுப் பதிலும் தமிழில் இருக்க "
-            f"வேண்டும். விலையை இலக்கங்களில் சரியாக {prices} என்று copy செய்யுங்கள். விலையை "
-            "லட்சங்களாகவோ சொற்களாகவோ மாற்ற வேண்டாம். Tool result facts மட்டும் பயன்படுத்துங்கள்."
+            "அழைப்பாளரின் சமீபத்திய கோரிக்கைக்கு நேரடியாகப் பதிலளிக்கவும். முந்தைய பதிலை "
+            "மீண்டும் சொல்ல வேண்டாம். தமிழ் எழுத்துகளை மட்டும் பயன்படுத்தி ஒன்று முதல் மூன்று "
+            "பயனுள்ள குறுகிய வாக்கியங்கள் பேசவும். சிங்கள எழுத்துகளை ஒருபோதும் பயன்படுத்த வேண்டாம்; "
+            "ஆங்கிலப் பெயர்களும் எண்களும் மட்டும் விதிவிலக்கு."
+            + price_rule
         )
     return (
         "Rewrite only the final spoken answer entirely in English. Fix these violations: "
         + "; ".join(violations)
-        + ". Copy exact prices in digits, do not convert them to lakhs or words, and use only "
-        "facts in the tool result."
+        + ". Give one to three useful short sentences and answer the latest request directly."
+        + price_rule
     )
+
+
+def _repeats_previous_answer(response: str, messages: list[dict]) -> bool:
+    current = " ".join(re.findall(r"\w+", response.casefold()))
+    if not current:
+        return False
+    previous = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages)
+            if item.get("role") == "assistant"
+            and "<tool_call>" not in str(item.get("content", ""))
+        ),
+        "",
+    )
+    prior = " ".join(re.findall(r"\w+", previous.casefold()))
+    if not prior:
+        return False
+    return current == prior or SequenceMatcher(None, current, prior).ratio() >= 0.84
 
 
 def _tool_prices(messages: list[dict]) -> list[str]:
@@ -460,3 +516,75 @@ def _tool_prices(messages: list[dict]) -> list[str]:
                 if isinstance(row.get("price_lkr"), int):
                     prices.append(f"{row['price_lkr']:,}")
     return list(dict.fromkeys(prices))
+
+
+def _grounded_fallback(messages: list[dict]) -> str:
+    """Render a concise answer when Gemma cannot satisfy the post-tool contract."""
+    language = _caller_language(messages)
+    result = _latest_tool_result(messages)
+    properties = result.get("properties") or []
+    if properties:
+        lines = []
+        for row in properties[:3]:
+            name = str(row.get("name") or "Property")
+            location = str(row.get("location") or "Sri Lanka")
+            property_type = str(row.get("property_type") or "property")
+            bedrooms = row.get("bedrooms")
+            price = row.get("price_lkr")
+            beds = str(bedrooms) if bedrooms is not None else "—"
+            amount = f"{price:,}" if isinstance(price, int) else "—"
+            if language == "si":
+                lines.append(
+                    f"{name} කියන්නේ {location} ප්‍රදේශයේ තියෙන නිදන කාමර {beds}ක "
+                    f"{property_type} එකක්; මිල LKR {amount}."
+                )
+            elif language == "ta":
+                lines.append(
+                    f"{name} என்பது {location} பகுதியில் உள்ள {beds} படுக்கையறைகள் கொண்ட "
+                    f"{property_type}; விலை LKR {amount}."
+                )
+            else:
+                lines.append(
+                    f"{name} is a {beds}-bedroom {property_type} in {location}, "
+                    f"listed at LKR {amount}."
+                )
+        return " ".join(lines)
+
+    locations = result.get("locations") or result.get("available_locations") or []
+    if locations:
+        joined = ", ".join(map(str, locations))
+        if language == "si":
+            return f"දැනට properties තියෙන්නේ මේ ප්‍රදේශවලයි: {joined}."
+        if language == "ta":
+            return f"தற்போது இந்த இடங்களில் properties உள்ளன: {joined}."
+        return f"Properties are currently available in: {joined}."
+
+    if appointment := result.get("appointment"):
+        name = str(appointment.get("property_name") or "the property")
+        when = str(appointment.get("appointment_at") or "the requested time")
+        if language == "si":
+            return f"{name} බලන්න {when} වෙලාවට appointment එක වෙන් කළා."
+        if language == "ta":
+            return f"{name} பார்வைக்கு {when} நேரத்தில் appointment பதிவு செய்யப்பட்டது."
+        return f"Your viewing for {name} is booked for {when}."
+
+    if language == "si":
+        return "ඒ වැඩේ සම්පූර්ණ කරන්න බැරි වුණා. අවශ්‍ය විස්තර නැවත කියන්න."
+    if language == "ta":
+        return "அதை முடிக்க முடியவில்லை. தேவையான விவரங்களை மீண்டும் சொல்லுங்கள்."
+    return "I couldn't complete that. Please repeat the required details."
+
+
+def _latest_tool_result(messages: list[dict]) -> dict:
+    for message in reversed(messages):
+        content = str(message.get("content", ""))
+        matches = list(
+            re.finditer(r"<tool_result>(.*?)</tool_result>", content, re.DOTALL)
+        )
+        if matches:
+            try:
+                result = json.loads(matches[-1].group(1))
+            except json.JSONDecodeError:
+                return {}
+            return result if isinstance(result, dict) else {}
+    return {}

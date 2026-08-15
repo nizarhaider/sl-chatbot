@@ -71,6 +71,9 @@ class IntegrationPropertyStore:
             rows = [row for row in rows if (row["bedrooms"] or 0) >= int(bedrooms)]
         return rows[:5]
 
+    def locations(self) -> list[str]:
+        return sorted({str(row["location"]) for row in self.rows})
+
     def book(self, arguments: dict, context: CallContext) -> dict:
         self.calls.append(("book_appointment", arguments, context))
         return {
@@ -80,6 +83,9 @@ class IntegrationPropertyStore:
             "appointment_at": arguments["appointment_at"],
             "caller_phone": context.caller_phone,
         }
+
+    def close(self) -> None:
+        return None
 
 
 def main() -> None:
@@ -324,6 +330,7 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
     runtime = GemmaAgentRuntime(LocalGemmaAdkModel(llm), service)
     cases = {
         "search_properties": "Find me a two-bedroom apartment in Malabe.",
+        "list_property_locations": "Which locations have properties available?",
         "book_appointment": (
             "Book property 11111111-1111-4111-8111-111111111111 for Nimal Perera at "
             "2099-01-01T10:00:00+05:30."
@@ -336,16 +343,20 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
         await runtime.start_session(call_id, "94770000000")
         started = time.perf_counter()
         response = await runtime.respond(call_id, "94770000000", prompt)
+        trace = runtime.tool_trace(call_id)
         latencies[expected_tool] = time.perf_counter() - started
         await runtime.end_session(call_id)
-        assert store.calls and store.calls[-1][0] == expected_tool, (
+        assert trace and trace[0]["name"] == expected_tool, (
             f"ADK did not dispatch {expected_tool}: {response}"
         )
-        _, arguments, context = store.calls[-1]
+        arguments = trace[0]["arguments"]
+        context = store.calls[-1][2] if expected_tool == "book_appointment" else None
         assert response.strip(), f"empty post-tool response for {expected_tool}"
         if expected_tool == "search_properties":
             assert arguments.get("location") == "Malabe", arguments
             assert int(arguments.get("bedrooms", 0)) == 2, arguments
+        elif expected_tool == "list_property_locations":
+            assert not arguments, arguments
         else:
             assert arguments.get("property_id") == PROPERTY_FIXTURE["property_id"]
             assert arguments.get("customer_name") == "Nimal Perera"
@@ -354,6 +365,31 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
             "arguments": arguments,
             "post_tool_response": response,
         }
+
+    broad_call_id = "integration-adk-broad-sinhala"
+    await runtime.start_session(broad_call_id, "94770000000")
+    broad_response = await runtime.respond(
+        broad_call_id,
+        "94770000000",
+        "ඔයාලා ළඟ තියෙන properties මොනවාද? මට තියෙන ඒවා පෙන්නන්න.",
+    )
+    broad_trace = runtime.tool_trace(broad_call_id)
+    await runtime.end_session(broad_call_id)
+    assert broad_trace and broad_trace[0]["name"] == "search_properties", broad_response
+    assert not broad_trace[0]["arguments"].get("location"), broad_trace
+
+    location_call_id = "integration-adk-locations-sinhala"
+    await runtime.start_session(location_call_id, "94770000000")
+    location_response = await runtime.respond(
+        location_call_id,
+        "94770000000",
+        "ඔයාලගේ properties තියෙන්නේ මොන locations වලද?",
+    )
+    location_trace = runtime.tool_trace(location_call_id)
+    await runtime.end_session(location_call_id)
+    assert location_trace and location_trace[0]["name"] == "list_property_locations", (
+        location_response
+    )
 
     followup_call_id = "integration-adk-followup"
     await runtime.start_session(followup_call_id, "94770000000")

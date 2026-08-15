@@ -22,30 +22,19 @@ COLOMBO = ZoneInfo("Asia/Colombo")
 CALL_NAMESPACE = uuid.UUID("70b37a94-aefa-4c52-a5f8-916272bd5f8c")
 
 TOOL_INSTRUCTIONS = """
-Property facts and viewing appointments are available only through tools. Never invent inventory,
-prices, availability, locations, or confirmations. Infer the caller's intent and filters from the
-full conversation. Ask a natural follow-up question when required information is missing. Call
-exactly one available function when a tool is needed.
-
-Tools:
-- search_properties: optional query, location, property_type, bedrooms, max_price_lkr.
-- book_appointment: required property_id, customer_name, appointment_at (ISO 8601).
-Call search_properties as soon as the caller asks what is available, names a property, or supplies
-any search filter. For a broad inventory request, search with empty arguments instead of asking for
-filters first. Put a named property in query. Include only filters supported by the conversation
-and never invent one. Write location and property_type tool arguments in English even when the
-caller speaks another language. Greetings and acknowledgements are not searches. Once you choose a
-tool and its required information is present, call it immediately with no introduction,
-permission question, acknowledgement, or other spoken text.
-After a tool result, interpret it and answer naturally in the caller's language. Preserve all
-numbers and property facts exactly as returned. A booking is confirmed only when
-book_appointment returns ok=true. Keep the property_id from the latest relevant search result for
-booking follow-ups. Never invent or propose an appointment slot. Before booking, collect the
-caller's name plus their requested date and time. Resolve relative dates from the supplied Sri
-Lanka date: "next week" means the following Monday-to-Sunday period, and never means tomorrow
-unless the caller explicitly says tomorrow. If the caller corrects a date or time, discard the old
-value. If they say only "next week," ask which day and time. As soon as property_id,
-customer_name, date, and time are known, call book_appointment.
+Property facts and bookings come only from tools. Never invent them. Call exactly one function:
+- search_properties for availability, a named property, or any search filter. Empty arguments are
+  valid for broad inventory. Put only a property name in query. Include only caller-stated filters.
+- list_property_locations when asked where inventory exists.
+- book_appointment only with a tool-returned property_id plus caller-stated name, date, and time.
+Write location and property_type arguments in English. Greetings are not searches. Once a tool is
+needed, call it immediately without spoken permission or acknowledgement. "Yes" after your search
+question means search now. After a result, answer naturally in the caller's language using exact
+returned facts and numbers. Keep the latest property_id for follow-ups. Confirm only ok=true
+bookings. Never propose a viewing slot. Resolve dates using the Sri Lanka date; "next week" needs a
+day and time, and a correction replaces the old value.
+Sinhala tool examples: "මට තියෙන properties පෙන්නන්න" -> search_properties with no filters.
+"properties තියෙන්නේ කොහෙද?" -> list_property_locations. Never answer either before the tool.
 """.strip()
 
 
@@ -333,6 +322,16 @@ class PropertyStore:
         )
         return [dict(zip(keys, (str(row[0]), *row[1:]))) for row in rows]
 
+    def locations(self) -> list[str]:
+        customer_id, _ = self._get_mapping()
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """select distinct location from real_estate_properties
+                where customer_id=%s and status='active' order by location""",
+                (customer_id,),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def book(self, arguments: dict, context: CallContext) -> dict:
         customer_id, number_id = self._get_mapping()
         property_id = required(arguments, "property_id")
@@ -385,6 +384,7 @@ class PropertyStore:
 class RealEstateToolService:
     def __init__(self, store: PropertyStore) -> None:
         self.store = store
+        self._locations: list[str] = []
 
     @classmethod
     def from_env(cls) -> RealEstateToolService | None:
@@ -393,6 +393,12 @@ class RealEstateToolService:
 
     async def ensure_ready(self) -> None:
         await asyncio.to_thread(self.store.ensure_ready)
+        self._locations = await asyncio.to_thread(self.store.locations)
+
+    async def available_locations(self) -> list[str]:
+        if not self._locations:
+            self._locations = await asyncio.to_thread(self.store.locations)
+        return list(self._locations)
 
     async def close(self) -> None:
         await asyncio.to_thread(self.store.close)
@@ -401,9 +407,17 @@ class RealEstateToolService:
         try:
             if call.name == "search_properties":
                 rows = await asyncio.to_thread(self.store.search, call.arguments)
-                return {"ok": True, "properties": rows, "count": len(rows)}
+                result = {"ok": True, "properties": rows, "count": len(rows)}
+                if not rows:
+                    result["available_locations"] = await self.available_locations()
+                return result
+            if call.name == "list_property_locations":
+                locations = await self.available_locations()
+                return {"ok": True, "locations": locations, "count": len(locations)}
             if call.name == "book_appointment":
-                row = await asyncio.to_thread(self.store.book, call.arguments, context)
+                arguments = dict(call.arguments)
+                arguments["customer_name"] = validated_customer_name(arguments)
+                row = await asyncio.to_thread(self.store.book, arguments, context)
                 return {"ok": True, "appointment": row}
             return {"ok": False, "error": f"Unknown tool: {call.name}"}
         except ValueError as exc:
@@ -441,6 +455,20 @@ def required(arguments: dict, name: str) -> str:
     value = str(arguments.get(name, "")).strip()
     if not value:
         raise ValueError(f"Missing required argument: {name}")
+    return value
+
+
+def validated_customer_name(arguments: dict) -> str:
+    value = required(arguments, "customer_name")
+    if value.casefold() in {
+        "caller",
+        "customer",
+        "the caller",
+        "the customer",
+        "unknown",
+        "user",
+    }:
+        raise ValueError("Missing customer_name. Ask the caller for their name.")
     return value
 
 

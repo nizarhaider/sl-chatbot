@@ -11,24 +11,25 @@ permissions:
   contents: read
 
 jobs:
-  destroy-vast-instances:
+  destroy-stale-ci-instances:
     if: github.event_name == 'schedule'
-    name: Destroy all Vast instances
+    name: Destroy stale CI Vast instances
     runs-on: ubuntu-latest
     steps:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: false
 
-      - name: Destroy every instance on the account
+      - name: Destroy CI instances only
         env:
           VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
         run: |
           test -n "$VAST_AI_API_KEY"
           instances=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
-          ids=$(printf '%s' "$instances" | jq -r '.[].id')
+          ids=$(printf '%s' "$instances" | jq -r \
+            '.[] | select((.label // "") | startswith("serendibai-ci-")) | .id')
           if test -z "$ids"; then
-            echo "No Vast instances are active."
+            echo "No stale CI Vast instances are active."
             exit 0
           fi
           failed=0
@@ -66,6 +67,17 @@ jobs:
 
       - name: Validate Google ADK orchestration contract
         run: uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Validate five-minute production setup contract
+        run: |
+          bash -n scripts/vast.sh
+          grep -F 'SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-300}"' scripts/vast.sh
+          grep -F 'uv sync --extra server --frozen --no-build --no-install-project' scripts/vast.sh
+          grep -F 'snapshot_download(repo_id=ASR_MODEL, revision=ASR_REVISION)' scripts/vast.sh
+          grep -F 'ngrok http $APP_PORT --pooling-enabled' scripts/vast.sh
+          grep -F 'uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT --no-access-log' scripts/vast.sh
+          setup_body=$(sed -n '/^setup() {/,/^deploy() {/p' scripts/vast.sh)
+          ! grep -qE 'apt-get|uv sync|snapshot_download|hf_hub_download' <<<"$setup_body"
 
       - name: Stage 1 · Register key and rent the cheapest 16 GB+ GPU
         run: |

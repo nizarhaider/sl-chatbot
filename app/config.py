@@ -17,6 +17,7 @@ LLM_HISTORY_MESSAGES = 12
 
 # Speech recognition.
 ASR_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
+ASR_REVISION = "9fbeaaf862c4befbcf9481338004255a8576e888"
 ASR_LANGUAGE = "sinhala"
 
 # SerendibAI OmniVoice V5 and its exact training reference.
@@ -32,23 +33,23 @@ TTS_REFERENCE_TEXT = (
 TTS_STEPS = 20
 TTS_SPEED = 0.98
 
-PROGRESS_DELAY_SECONDS = 6
+PROGRESS_DELAY_SECONDS = 4
 PROGRESS_REPEAT_SECONDS = 10
 PROGRESS_LINES = {
     "si": (
-        "හ්ම්, පොඩ්ඩක් ඉන්න. මම බලලා කියන්නම්.",
-        "හරි, මට පොඩි වෙලාවක් දෙන්න. විස්තර ටික බලන්නම්.",
-        "තව පොඩ්ඩක් ඉන්න. මම ඒක check කරන ගමන්.",
+        "පොඩ්ඩක් ඉන්න.",
+        "මම බලන ගමන්.",
+        "තව පොඩි වෙලාවක්.",
     ),
     "ta": (
-        "ம், ஒரு நிமிடம். நான் பார்த்துச் சொல்கிறேன்.",
-        "சரி, கொஞ்சம் நேரம் கொடுங்கள். விவரங்களைப் பார்க்கிறேன்.",
-        "இன்னும் கொஞ்சம் பொறுங்கள். நான் அதைச் சரிபார்க்கிறேன்.",
+        "ஒரு நிமிடம்.",
+        "நான் பார்க்கிறேன்.",
+        "இன்னும் கொஞ்சம் நேரம்.",
     ),
     "en": (
-        "Hmm, give me a moment. I'll check that.",
-        "Sure, give me a moment while I check the details.",
-        "Just another moment, I'm still checking that.",
+        "One moment.",
+        "I'm checking.",
+        "Just a little longer.",
     ),
 }
 
@@ -61,26 +62,24 @@ MIN_AUDIO_MS = 500
 GREETING_DELAY_SECONDS = 0.5
 PLAYBACK_ECHO_TAIL_SECONDS = 0.35
 
-GREETING = "Please say English, සිංහල, or தமிழ்."
+GREETING_PARTS = (
+    ("English.", "en"),
+    ("සිංහල.", "si"),
+    ("தமிழ்.", "ta"),
+)
+LANGUAGE_ACKNOWLEDGEMENTS = {
+    "en": "Okay, this is SerendibAI. How can I help?",
+    "si": "හරි, මේ SerendibAI. ඔබට කොහොමද උදව් කරන්න ඕනේ?",
+    "ta": "சரி, இது SerendibAI. உங்களுக்கு எப்படி உதவலாம்?",
+}
 
 SYSTEM_PROMPT = (
-    "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
-    "The caller has already heard a language-selection greeting. First identify the language of "
-    "the caller's latest message from its words and script. Reply in that exact language unless "
-    "they clearly ask to switch; Tamil input requires Tamil output, Sinhala input requires Sinhala "
-    "output, and English input requires English output. Never default to Sinhala. If the latest "
-    "message only chooses a language, introduce SerendibAI in one casual line without inventing a "
-    "personal name. Do not introduce yourself again for an actual customer request. "
-    "Sound warm and relaxed, not corporate, scripted, or overly enthusiastic. In Sinhala, use "
-    "natural respectful spoken grammar rather than formal written translations; in Tamil and "
-    "English, use the same conversational register. Keep each spoken reply to one short sentence "
-    "unless a tool result requires more detail. Stay grounded in the conversation: do "
-    "not introduce a property, location, preference, or fact the caller did not mention and a "
-    "tool did not return. Decide intent from the full conversation. A greeting or brief "
-    "acknowledgement is not a property request; respond naturally and ask how you can help without "
-    "suggesting a topic. When an actual request lacks information needed to act, ask one concise "
-    "follow-up question. When enough information is present, act immediately instead of asking "
-    "whether you can help or repeating the request. Never suggest or assume a viewing date or "
-    "time the caller did not request. If the caller changes a date or time, use the newest request "
-    "and discard the old one."
+    "You are SerendibAI's casual phone agent for Homelands Properties. Match the latest caller "
+    "language exactly: Sinhala, Tamil, or English, unless they request a switch. The language menu "
+    "already played, so do not reintroduce yourself during a real request. Be warm, natural, and "
+    "respectful, using spoken rather than formal grammar. Answer usefully in one to three short "
+    "sentences. Never repeat the previous answer or ask permission for an action already requested. "
+    "Use the full conversation, but never invent a property, location, preference, customer detail, "
+    "date, or time. For a greeting, ask how you can help. If action-critical information is missing, "
+    "ask one concise follow-up; otherwise act immediately. Always use the caller's newest correction."
 )
