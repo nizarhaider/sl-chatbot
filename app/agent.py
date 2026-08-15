@@ -421,9 +421,9 @@ def _response_parts(message: dict) -> list[types.Part]:
 
 
 def _response_contract_violations(message: dict, messages: list[dict]) -> list[str]:
-    if message.get("tool_calls"):
-        return []
     response = strip_thinking(message.get("content") or "")
+    if message.get("tool_calls") or parse_tool_call(response):
+        return []
     violations = []
     if _repeats_previous_answer(response, messages):
         violations.append(

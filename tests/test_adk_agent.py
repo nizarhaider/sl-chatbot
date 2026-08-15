@@ -250,6 +250,16 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(any("no property is selected" in item for item in violations))
 
+    def test_textual_tool_call_is_not_treated_as_spoken_booking(self) -> None:
+        messages = [{"role": "user", "content": "Book property-1 for Nimal."}]
+        message = {
+            "content": '<tool_call>{"name":"book_appointment","arguments":{'
+            '"property_id":"property-1","customer_name":"Nimal",'
+            '"appointment_at":"2099-01-01T10:00:00+05:30"}}</tool_call>'
+        }
+
+        self.assertEqual(_response_contract_violations(message, messages), [])
+
     def test_historical_tool_result_does_not_disable_followup_tools(self) -> None:
         messages = [
             {"role": "user", "content": '<tool_result>{"ok":true}</tool_result>'},
