@@ -22,13 +22,12 @@ from app.config import (
     LANGUAGE_ACKNOWLEDGEMENTS,
     MIN_AUDIO_MS,
     PLAYBACK_ECHO_TAIL_SECONDS,
-    PROGRESS_LINES,
-    PROGRESS_REPEAT_SECONDS,
+    RESPONSE_POLL_SECONDS,
     SILENCE_RMS,
 )
 from app.database import call_log
 from app.models import LocalWhisperASR, OmniVoiceTTS, is_noise_text
-from app.speech import detect_language, selected_language
+from app.speech import detect_language, selected_language, tool_acknowledgement
 
 logger = logging.getLogger(__name__)
 
@@ -160,27 +159,45 @@ class TurnPipeline:
         stage_started = time.perf_counter()
         language = detect_language(transcript)
 
-        async def progress() -> None:
-            line = PROGRESS_LINES[language][0]
-            logger.info("Turn progress for %s: %s", call_id, line)
+        async def acknowledge(name: str, arguments: dict) -> None:
+            line = tool_acknowledgement(language, name, arguments)
+            logger.info("Turn tool acknowledgement for %s: %s", call_id, line)
             call_log.add(call_id, "assistant", line)
             seconds = await self._speak(
                 call_id, line, output_track, generations, language
             )
             await self._discard_echo(input_track, output_track, seconds)
 
-        response_task = asyncio.create_task(self._respond(call_id, phone, transcript))
+        tool_signal = asyncio.get_running_loop().create_future()
+        acknowledgement_done = asyncio.Event()
+
+        async def on_tool_call(name: str, arguments: dict) -> None:
+            if not tool_signal.done():
+                tool_signal.set_result((name, arguments))
+                await acknowledgement_done.wait()
+
+        response_task = asyncio.create_task(
+            self._respond(call_id, phone, transcript, on_tool_call)
+        )
         try:
-            await progress()
             while True:
-                response, interrupted = await self._wait_for_response_or_speech(
+                (
+                    response,
+                    interrupted,
+                    tool_call,
+                ) = await self._wait_for_response_or_speech(
                     response_task,
                     call_id,
                     input_track,
                     output_track,
                     generations,
-                    PROGRESS_REPEAT_SECONDS,
+                    RESPONSE_POLL_SECONDS,
+                    tool_signal if not acknowledgement_done.is_set() else None,
                 )
+                if tool_call:
+                    await acknowledge(*tool_call)
+                    acknowledgement_done.set()
+                    continue
                 if interrupted:
                     response_task.cancel()
                     await asyncio.gather(response_task, return_exceptions=True)
@@ -197,6 +214,7 @@ class TurnPipeline:
                 if response is not None:
                     break
         finally:
+            acknowledgement_done.set()
             if not response_task.done():
                 response_task.cancel()
                 await asyncio.gather(response_task, return_exceptions=True)
@@ -232,6 +250,7 @@ class TurnPipeline:
         output_track,
         generations,
         timeout,
+        tool_signal=None,
     ):
         """Keep listening during slow work so caller speech can cancel the turn."""
         vad = VoiceActivity()
@@ -241,21 +260,28 @@ class TurnPipeline:
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                return None, None
+                return None, None, None
             receive = asyncio.create_task(input_track.recv())
+            waiters = [response_task, receive]
+            if tool_signal is not None:
+                waiters.append(tool_signal)
             done, _ = await asyncio.wait(
-                (response_task, receive),
+                waiters,
                 timeout=remaining,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if response_task in done:
                 receive.cancel()
                 await asyncio.gather(receive, return_exceptions=True)
-                return response_task.result(), None
+                return response_task.result(), None, None
+            if tool_signal is not None and tool_signal in done:
+                receive.cancel()
+                await asyncio.gather(receive, return_exceptions=True)
+                return None, None, tool_signal.result()
             if receive not in done:
                 receive.cancel()
                 await asyncio.gather(receive, return_exceptions=True)
-                return None, None
+                return None, None, None
             try:
                 frame = receive.result()
             except Exception as exc:
@@ -276,10 +302,16 @@ class TurnPipeline:
                 if vad.speaking:
                     vad.add(chunk, speech)
                 if vad.speaking and vad.silence_chunks >= END_SILENCE_CHUNKS:
-                    return None, vad.finish()
+                    return None, vad.finish(), None
 
-    async def _respond(self, call_id: str, phone: str, transcript: str) -> str:
+    async def _respond(
+        self, call_id: str, phone: str, transcript: str, on_tool_call=None
+    ) -> str:
         try:
+            if on_tool_call:
+                return await self.agent.respond(
+                    call_id, phone, transcript, on_tool_call=on_tool_call
+                )
             return await self.agent.respond(call_id, phone, transcript)
         except Exception:
             logger.exception("Agent response failed for %s", call_id)

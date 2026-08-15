@@ -28,8 +28,8 @@ from app.config import (
     LLM_REVISION,
     LLM_TEMPERATURE,
     LLM_THREADS,
-    PROGRESS_LINES,
     SYSTEM_PROMPT,
+    TOOL_ACKNOWLEDGEMENT_SAMPLES,
     TTS_DATASET,
     TTS_DATASET_REVISION,
     TTS_MODEL,
@@ -292,7 +292,7 @@ class OmniVoiceTTS:
         return normalize_waveform(audio)
 
     def _precache_prompts(self) -> None:
-        for language, lines in PROGRESS_LINES.items():
+        for language, lines in TOOL_ACKNOWLEDGEMENT_SAMPLES.items():
             for line in lines:
                 self._cache_phrase(line, language)
         for text, language in GREETING_PARTS:

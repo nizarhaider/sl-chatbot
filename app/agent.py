@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -128,6 +128,7 @@ class PropertyAgentTools:
     def __init__(self, service: RealEstateToolService | None) -> None:
         self.service = service
         self.traces: dict[str, list[dict[str, Any]]] = {}
+        self.callbacks: dict[str, Callable[[str, dict[str, Any]], Awaitable[None]]] = {}
 
     async def search_properties(
         self,
@@ -202,6 +203,8 @@ class PropertyAgentTools:
             name,
             safe_arguments,
         )
+        if callback := self.callbacks.pop(call_id, None):
+            await callback(name, arguments)
         if self.service is None:
             result = {"ok": False, "error": "The booking database is not configured."}
         else:
@@ -300,31 +303,37 @@ class GemmaAgentRuntime:
         call_id: str,
         phone: str,
         transcript: str,
+        on_tool_call: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> str:
         if call_id not in self._users:
             await self.start_session(call_id, phone)
         self.tools.traces[call_id] = []
+        if on_tool_call:
+            self.tools.callbacks[call_id] = on_tool_call
         final_text = ""
-        async for event in self.runner.run_async(
-            user_id=self._users[call_id],
-            session_id=call_id,
-            new_message=types.Content(role="user", parts=[types.Part(text=transcript)]),
-            state_delta={
-                "caller_language": detect_language(transcript),
-            },
-            run_config=RunConfig(
-                max_llm_calls=3,
-                get_session_config=GetSessionConfig(
-                    num_recent_events=LLM_HISTORY_MESSAGES
+        try:
+            async for event in self.runner.run_async(
+                user_id=self._users[call_id],
+                session_id=call_id,
+                new_message=types.Content(
+                    role="user", parts=[types.Part(text=transcript)]
                 ),
-            ),
-        ):
-            if event.is_final_response() and event.content:
-                final_text = " ".join(
-                    part.text.strip()
-                    for part in event.content.parts or []
-                    if part.text and part.text.strip()
-                )
+                state_delta={"caller_language": detect_language(transcript)},
+                run_config=RunConfig(
+                    max_llm_calls=3,
+                    get_session_config=GetSessionConfig(
+                        num_recent_events=LLM_HISTORY_MESSAGES
+                    ),
+                ),
+            ):
+                if event.is_final_response() and event.content:
+                    final_text = " ".join(
+                        part.text.strip()
+                        for part in event.content.parts or []
+                        if part.text and part.text.strip()
+                    )
+        finally:
+            self.tools.callbacks.pop(call_id, None)
         return strip_thinking(final_text)
 
     def tool_trace(self, call_id: str) -> list[dict[str, Any]]:
@@ -333,6 +342,7 @@ class GemmaAgentRuntime:
     async def end_session(self, call_id: str) -> None:
         user_id = self._users.pop(call_id, None)
         self.tools.traces.pop(call_id, None)
+        self.tools.callbacks.pop(call_id, None)
         if user_id:
             await self.sessions.delete_session(
                 app_name=APP_NAME, user_id=user_id, session_id=call_id
@@ -537,12 +547,18 @@ def _location_followup(messages: list[dict]) -> str | None:
         "",
     )
     questions = (_location_question(language) for language in ("en", "si", "ta"))
+    location_lists = (
+        "Properties are currently available in:",
+        "properties තියෙන්නේ මේ ප්‍රදේශවලයි:",
+        "properties உள்ளன:",
+    )
     return (
         location
         if location
         and (
             any(question in previous for question in questions)
             or is_broad_property_request(previous_caller)
+            or any(marker in previous for marker in location_lists)
         )
         else None
     )
