@@ -109,6 +109,7 @@ PROPERTY_LOCATION_REQUEST = re.compile(
     re.IGNORECASE,
 )
 PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙන|තියෙන\s+ඒවා\s+පෙන්නන්න")
+PLACE_ALIASES = {"කුරුණෑග": "Kurunegala", "රාජිය": "Rajagiriya"}
 
 
 def detect_language(text: str) -> str:
@@ -159,7 +160,51 @@ def known_location(text: str) -> str | None:
         for english, localized in names.items():
             if english.casefold() in folded or localized in text:
                 return english
-    return None
+    return next(
+        (place for alias, place in PLACE_ALIASES.items() if alias in text), None
+    )
+
+
+def tool_acknowledgement(language: str, name: str, arguments: dict) -> str:
+    """Create one contextual acknowledgement for an actual tool call."""
+    if name == "list_property_locations":
+        return {
+            "en": "Sure, let me check the available locations.",
+            "si": "හරි, properties තියෙන ප්‍රදේශ බලලා කියන්නම්.",
+            "ta": "சரி, properties உள்ள பகுதிகளைப் பார்த்துச் சொல்கிறேன்.",
+        }[language]
+    if name == "book_appointment":
+        return {
+            "en": "Sure, I'll book that viewing now.",
+            "si": "හරි, ඒ viewing එක දැන් book කරන්නම්.",
+            "ta": "சரி, அந்த viewing-ஐ இப்போது book செய்கிறேன்.",
+        }[language]
+
+    location = str(arguments.get("location") or "").strip()
+    location = PLACE_NAMES.get(language, {}).get(location, location)
+    kind = str(arguments.get("property_type") or "").strip().casefold()
+    if language == "si":
+        if location and kind:
+            return f"හරි, {location} ප්‍රදේශයේ {kind} තියෙනවද බලන්නම්."
+        if location:
+            return f"හරි, {location} ප්‍රදේශයේ තියෙන properties බලන්නම්."
+        return f"හරි, තියෙන {kind or 'property'} විස්තර බලලා කියන්නම්."
+    if language == "ta":
+        if location and kind:
+            return f"சரி, {location} பகுதியில் உள்ள {kind} விவரங்களைப் பார்க்கிறேன்."
+        if location:
+            return f"சரி, {location} பகுதியில் உள்ள properties-ஐ பார்க்கிறேன்."
+        return f"சரி, உள்ள {kind or 'property'} விவரங்களைப் பார்க்கிறேன்."
+    plural = {"apartment": "apartments", "house": "houses", "villa": "villas"}.get(
+        kind, kind
+    )
+    if location and plural:
+        return f"Sure, let me check for {plural} in {location}."
+    if location:
+        return f"Sure, I'll check what's available in {location}."
+    return (
+        f"Give me a moment to check the available {plural or 'property information'}."
+    )
 
 
 def normalize_for_tts(text: str, language: str | None = None) -> tuple[str, str]:

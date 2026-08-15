@@ -38,11 +38,11 @@ TTS_REFERENCE_TEXT = (
 TTS_STEPS = 20
 TTS_SPEED = 0.98
 
-PROGRESS_REPEAT_SECONDS = 10
-PROGRESS_LINES = {
-    "si": ("හරි. පොඩ්ඩක් ඉන්න, මම ඒක බලලා කියන්නම්.",),
-    "ta": ("சரி. ஒரு நிமிடம், நான் அதைப் பார்த்துச் சொல்கிறேன்.",),
-    "en": ("Sure. Give me a moment while I pull that up.",),
+RESPONSE_POLL_SECONDS = 10
+TOOL_ACKNOWLEDGEMENT_SAMPLES = {
+    "si": ("හරි, ඒ විස්තර බලලා කියන්නම්.",),
+    "ta": ("சரி, அந்த தகவலைச் சரிபார்த்துச் சொல்கிறேன்.",),
+    "en": ("Sure, let me check that information.",),
 }
 
 # Turn detection and playback protection.

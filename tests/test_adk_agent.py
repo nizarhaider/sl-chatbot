@@ -16,7 +16,11 @@ from app.agent import (
     _location_followup,
     _response_contract_violations,
 )
-from app.config import GREETING_PARTS, LANGUAGE_ACKNOWLEDGEMENTS, PROGRESS_LINES
+from app.config import (
+    GREETING_PARTS,
+    LANGUAGE_ACKNOWLEDGEMENTS,
+    TOOL_ACKNOWLEDGEMENT_SAMPLES,
+)
 from app.database import CallContext, RealEstateToolService, ToolCall, call_log
 from app.pipeline import TurnPipeline
 from app.speech import (
@@ -24,6 +28,7 @@ from app.speech import (
     is_property_location_request,
     known_location,
     selected_language,
+    tool_acknowledgement,
 )
 
 
@@ -88,12 +93,17 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         backend = FakeGemmaBackend()
         service = FakePropertyService()
         runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+        acknowledged = []
+
+        async def on_tool_call(name, arguments):
+            acknowledged.append((name, arguments))
 
         await runtime.start_session("call-1", "94770000000")
         response = await runtime.respond(
             "call-1",
             "94770000000",
             "Find a two-bedroom property in Malabe.",
+            on_tool_call=on_tool_call,
         )
         first_trace = runtime.tool_trace("call-1")
         followup = await runtime.respond(
@@ -119,6 +129,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.events), 6)
         self.assertEqual(session.state["last_property_id"], "property-1")
         self.assertEqual(first_trace[0]["name"], "search_properties")
+        self.assertEqual(acknowledged[0][0], "search_properties")
         self.assertEqual(first_trace[0]["result"]["count"], 1)
         self.assertEqual(runtime.tool_trace("call-1"), [])
         historical = "\n".join(
@@ -197,6 +208,14 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         self.assertEqual(_location_followup(messages), "Malabe")
+        listed_messages = [
+            {
+                "role": "assistant",
+                "content": "දැනට properties තියෙන්නේ මේ ප්‍රදේශවලයි: Rajagiriya.",
+            },
+            {"role": "user", "content": "මේනේ රාජිය"},
+        ]
+        self.assertEqual(_location_followup(listed_messages), "Rajagiriya")
 
     async def test_location_inventory_request_is_deterministic(self) -> None:
         backend, service = FakeGemmaBackend(), FakePropertyService()
@@ -332,21 +351,35 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("தமிழ் என்று சொல்லுங்கள்", GREETING_PARTS[2][0])
         for language in ("en", "si", "ta"):
             self.assertIn("SerendibAI", LANGUAGE_ACKNOWLEDGEMENTS[language])
-            self.assertEqual(len(PROGRESS_LINES[language]), 1)
-        self.assertIn("moment", PROGRESS_LINES["en"][0])
-        self.assertIn("පොඩ්ඩක් ඉන්න", PROGRESS_LINES["si"][0])
-        self.assertIn("ஒரு நிமிடம்", PROGRESS_LINES["ta"][0])
+            self.assertEqual(len(TOOL_ACKNOWLEDGEMENT_SAMPLES[language]), 1)
+        self.assertNotIn("පොඩ්ඩක්", TOOL_ACKNOWLEDGEMENT_SAMPLES["si"][0])
+        self.assertEqual(
+            tool_acknowledgement(
+                "en",
+                "search_properties",
+                {"location": "Rajagiriya", "property_type": "apartment"},
+            ),
+            "Sure, let me check for apartments in Rajagiriya.",
+        )
 
     async def test_lookup_acknowledgement_is_spoken_and_transcribed_first(self) -> None:
         spoken = []
 
         class ASR:
+            text = "Find apartments in Rajagiriya."
+
             def transcribe(self, waveform):
-                return "Show me the available properties."
+                return self.text
 
         class Agent:
-            async def respond(self, *args):
-                return "Horizon Residencies is available in Malabe."
+            async def respond(self, *args, on_tool_call=None):
+                if "Rajagiriya" in args[2]:
+                    await on_tool_call(
+                        "search_properties",
+                        {"location": "Rajagiriya", "property_type": "apartment"},
+                    )
+                    return "I found an apartment in Rajagiriya."
+                return "I'm SerendibAI."
 
         class TTS:
             async def speak(self, text, forward, language):
@@ -362,7 +395,8 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 pass
 
         pipeline = object.__new__(TurnPipeline)
-        pipeline.asr, pipeline.agent, pipeline.tts = ASR(), Agent(), TTS()
+        asr = ASR()
+        pipeline.asr, pipeline.agent, pipeline.tts = asr, Agent(), TTS()
         call_id = "progress-test"
         call_log.calls.pop(call_id, None)
 
@@ -371,8 +405,21 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         transcript = call_log.calls.pop(call_id).transcript
-        self.assertEqual(spoken[0], (PROGRESS_LINES["en"][0], "en"))
-        self.assertEqual(transcript[1]["text"], PROGRESS_LINES["en"][0])
+        acknowledgement = "Sure, let me check for apartments in Rajagiriya."
+        self.assertEqual(spoken[0], (acknowledgement, "en"))
+        self.assertEqual(transcript[1]["text"], acknowledgement)
+
+        asr.text = "Who are you?"
+        spoken.clear()
+        await pipeline._handle_turn(
+            call_id, "", Input(), Output(), {call_id: 0}, 0, b"\x01\x00" * 9_600
+        )
+        self.assertEqual(spoken, [("I'm SerendibAI.", None)])
+        plain_transcript = call_log.calls.pop(call_id).transcript
+        self.assertEqual(
+            [event["text"] for event in plain_transcript],
+            ["Who are you?", "I'm SerendibAI."],
+        )
 
     async def test_agent_error_returns_spoken_fallback(self) -> None:
         class FailingAgent:
