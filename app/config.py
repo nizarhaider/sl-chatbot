@@ -35,9 +35,9 @@ TTS_SPEED = 0.98
 
 PROGRESS_REPEAT_SECONDS = 10
 PROGRESS_LINES = {
-    "si": ("හරි, මම ඒක බලලා කියන්නම්.",),
-    "ta": ("சரி, நான் அதைப் பார்த்துச் சொல்கிறேன்.",),
-    "en": ("Sure, let me look into that.",),
+    "si": ("හරි. පොඩ්ඩක් ඉන්න, මම ඒක බලලා කියන්නම්.",),
+    "ta": ("சரி. ஒரு நிமிடம், நான் அதைப் பார்த்துச் சொல்கிறேன்.",),
+    "en": ("Sure. Give me a moment while I pull that up.",),
 }
 
 # Turn detection and playback protection.

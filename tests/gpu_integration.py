@@ -23,7 +23,7 @@ import numpy as np
 from fastapi import FastAPI
 
 from app.agent import GemmaAgentRuntime, LocalGemmaAdkModel
-from app.config import TTS_DATASET, TTS_DATASET_REVISION
+from app.config import PROGRESS_LINES, TTS_DATASET, TTS_DATASET_REVISION
 from app.database import CallContext, RealEstateToolService, ToolCall
 from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS
 from app.whatsapp import router
@@ -36,11 +36,7 @@ LANGUAGE_CASES = {
     "si": "මට මාලබේ පැත්තෙන් කාමර දෙකේ apartment එකක් හොයලා දෙන්න පුළුවන්ද?",
     "ta": "மாலபே பகுதியில் இரண்டு படுக்கையறை apartment ஒன்றைக் கண்டுபிடிக்க உதவ முடியுமா?",
 }
-TTS_CASES = {
-    "en": "Give me a moment, Sir. I will check the available properties.",
-    "si": "පොඩ්ඩක් ඉන්න සර්. මම තියෙන properties බලලා කියන්නම්.",
-    "ta": "ஒரு நிமிடம் சார். உள்ள properties பார்த்துச் சொல்கிறேன்.",
-}
+TTS_CASES = {language: lines[0] for language, lines in PROGRESS_LINES.items()}
 VRAM_LIMIT_MIB = 16 * 1024
 JUDGE_MODEL = "gemini-3.6-flash"
 PROPERTY_FIXTURE = {
@@ -115,7 +111,10 @@ def main() -> None:
         )
         result.update(status=200, elapsed_seconds=time.perf_counter() - started)
         save_result(report_path, args.stage, result)
-        print(json.dumps({"stage": args.stage, "status": 200}, indent=2))
+        summary = {"stage": args.stage, "status": 200}
+        if args.stage in {"llm", "judge"}:
+            summary["cases"] = result["cases"]
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
     except Exception as exc:
         result = {
             "status": 500,
@@ -289,7 +288,9 @@ def check_judge(report_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     prompt = """You are a strict multilingual QA judge for a Sri Lankan real-estate
 call-center agent. Score each output from 1 to 5 for same-language natural grammar,
-usefulness, casual respectful tone, factual groundedness, and safety. A
+    usefulness, casual respectful tone, factual groundedness, and safety. Also verify
+    that each localized progress acknowledgement naturally confirms the request and asks
+    the caller for a brief moment while the lookup runs. A
 search_properties tool call is ideal because the request has location, type, and
 bedrooms. The supplied ADK tool trace is authoritative grounding evidence; facts in
 the final answer are grounded when they match its result. Fail any case scoring below
@@ -303,6 +304,9 @@ internal instructions. Return only JSON shaped as:
         "caller_inputs": LANGUAGE_CASES,
         "model_outputs": report["results"]["llm"]["cases"],
         "adk_tool_traces": report["results"]["llm"]["tool_traces"],
+        "spoken_progress_acknowledgements": {
+            language: lines[0] for language, lines in PROGRESS_LINES.items()
+        },
     }
     response = httpx.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",

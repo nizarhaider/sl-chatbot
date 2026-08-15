@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 
@@ -15,7 +16,7 @@ from app.agent import (
     _response_contract_violations,
 )
 from app.config import GREETING_PARTS, LANGUAGE_ACKNOWLEDGEMENTS, PROGRESS_LINES
-from app.database import CallContext, RealEstateToolService, ToolCall
+from app.database import CallContext, RealEstateToolService, ToolCall, call_log
 from app.pipeline import TurnPipeline
 from app.speech import selected_language
 
@@ -253,6 +254,46 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         for language in ("en", "si", "ta"):
             self.assertIn("SerendibAI", LANGUAGE_ACKNOWLEDGEMENTS[language])
             self.assertEqual(len(PROGRESS_LINES[language]), 1)
+        self.assertIn("moment", PROGRESS_LINES["en"][0])
+        self.assertIn("පොඩ්ඩක් ඉන්න", PROGRESS_LINES["si"][0])
+        self.assertIn("ஒரு நிமிடம்", PROGRESS_LINES["ta"][0])
+
+    async def test_lookup_acknowledgement_is_spoken_and_transcribed_first(self) -> None:
+        spoken = []
+
+        class ASR:
+            def transcribe(self, waveform):
+                return "Show me the available properties."
+
+        class Agent:
+            async def respond(self, *args):
+                return "Horizon Residencies is available in Malabe."
+
+        class TTS:
+            async def speak(self, text, forward, language):
+                spoken.append((text, language))
+                return 0
+
+        class Input:
+            async def recv(self):
+                await asyncio.Future()
+
+        class Output:
+            def add_pcm(self, *args):
+                pass
+
+        pipeline = object.__new__(TurnPipeline)
+        pipeline.asr, pipeline.agent, pipeline.tts = ASR(), Agent(), TTS()
+        call_id = "progress-test"
+        call_log.calls.pop(call_id, None)
+
+        await pipeline._handle_turn(
+            call_id, "", Input(), Output(), {call_id: 0}, 0, b"\x01\x00" * 9_600
+        )
+
+        transcript = call_log.calls.pop(call_id).transcript
+        self.assertEqual(spoken[0], (PROGRESS_LINES["en"][0], "en"))
+        self.assertEqual(transcript[1]["text"], PROGRESS_LINES["en"][0])
 
     async def test_agent_error_returns_spoken_fallback(self) -> None:
         class FailingAgent:
