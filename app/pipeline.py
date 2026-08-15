@@ -163,6 +163,7 @@ class TurnPipeline:
         async def progress() -> None:
             line = PROGRESS_LINES[language][0]
             logger.info("Turn progress for %s: %s", call_id, line)
+            call_log.add(call_id, "assistant", line)
             seconds = await self._speak(
                 call_id, line, output_track, generations, language
             )
