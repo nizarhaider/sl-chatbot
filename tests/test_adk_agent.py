@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from app.agent import (
     APP_NAME,
     GemmaAgentRuntime,
     LocalGemmaAdkModel,
+    PropertyAgentTools,
     _grounded_fallback,
     _is_post_tool_turn,
+    _response_contract_violations,
 )
 from app.database import CallContext, RealEstateToolService, ToolCall
 from app.speech import selected_language
@@ -36,13 +39,7 @@ class FakeGemmaBackend:
                     }
                 ],
             }
-        if len(self.requests) == 2:
-            return {"content": "මිල ලක්ෂ විසි අටයි."}
-        if len(self.requests) in {3, 4}:
-            return {"content": "I found one matching property for LKR 28,000,000."}
-        return {
-            "content": "It is in Malabe, and the listed price is LKR 28,000,000."
-        }
+        return {"content": "It is in Malabe, and the listed price is LKR 28,000,000."}
 
 
 class FakePropertyService:
@@ -66,6 +63,7 @@ class FakePropertyService:
             "properties": [
                 {
                     "property_id": "property-1",
+                    "name": "Horizon Residencies",
                     "location": "Malabe",
                     "bedrooms": 2,
                     "price_lkr": 28_000_000,
@@ -96,7 +94,10 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             session_id="call-1",
         )
 
-        self.assertEqual(response, "I found one matching property for LKR 28,000,000.")
+        self.assertEqual(
+            response,
+            "Horizon Residencies, Malabe — LKR 28,000,000. Would you like more details?",
+        )
         self.assertEqual(
             followup,
             "It is in Malabe, and the listed price is LKR 28,000,000.",
@@ -109,26 +110,18 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_trace[0]["name"], "search_properties")
         self.assertEqual(first_trace[0]["result"]["count"], 1)
         self.assertEqual(runtime.tool_trace("call-1"), [])
-        self.assertIn("<tool_result>", backend.requests[1][0][-1]["content"])
-        self.assertIn("not caller speech", backend.requests[1][0][-1]["content"])
+        historical = "\n".join(
+            str(message["content"]) for message in backend.requests[1][0]
+        )
+        self.assertIn("<tool_result>", historical)
+        self.assertIn("not caller speech", historical)
         self.assertIn("entirely in English", backend.requests[1][0][0]["content"])
-        self.assertIn("omit location for a broad request", backend.requests[0][0][0]["content"])
         self.assertIn(
-            "answer entirely in English", backend.requests[2][0][-1]["content"]
+            "omit location for a broad request", backend.requests[0][0][0]["content"]
         )
-        self.assertNotIn(
-            "මිල ලක්ෂ විසි අටයි.",
-            [message["content"] for message in backend.requests[2][0]],
+        self.assertIn(
+            "exact property_id property-1", backend.requests[1][0][0]["content"]
         )
-        self.assertIn("LKR 28,000,000", backend.requests[2][0][-1]["content"])
-        self.assertTrue(
-            any(
-                message["content"]
-                == "I found one matching property for LKR 28,000,000."
-                for message in backend.requests[3][0]
-            )
-        )
-        self.assertIn("exact property_id property-1", backend.requests[3][0][0]["content"])
         self.assertEqual(
             {tool["function"]["name"] for tool in backend.requests[0][1]},
             {"search_properties", "list_property_locations", "book_appointment"},
@@ -204,8 +197,68 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         response = _grounded_fallback(messages)
 
         self.assertIn("LKR 28,000,000", response)
-        self.assertIn("படுக்கையறைகள்", response)
+        self.assertIn("இந்த listing", response)
         self.assertNotRegex(response, r"[\u0D80-\u0DFF]")
+
+    def test_query_only_miss_asks_for_clarity(self) -> None:
+        messages = [
+            {"role": "user", "content": "කොෂර"},
+            {
+                "role": "user",
+                "content": '<tool_result>{"ok":true,"properties":[],"count":0,'
+                '"search_arguments":{"query":"kosher"}}</tool_result>',
+            },
+        ]
+
+        response = _grounded_fallback(messages)
+
+        self.assertIn("පැහැදිලිව ඇහුණේ නැහැ", response)
+        self.assertNotIn("ඔබතුමිය", response)
+
+    async def test_broad_results_do_not_select_the_first_property(self) -> None:
+        class Service:
+            async def execute(self, call, context):
+                return {
+                    "ok": True,
+                    "count": 2,
+                    "properties": [
+                        {"property_id": "one", "name": "One"},
+                        {"property_id": "two", "name": "Two"},
+                    ],
+                }
+
+        context = SimpleNamespace(state={"call_id": "call-1", "caller_phone": ""})
+        tools = PropertyAgentTools(Service())
+
+        await tools.search_properties(context)
+
+        self.assertNotIn("last_property_id", context.state)
+
+    def test_booking_language_is_rejected_without_a_selected_property(self) -> None:
+        messages = [
+            {
+                "role": "system",
+                "content": "No property is currently selected.",
+            },
+            {"role": "user", "content": "මොනවාද තියෙන්නේ?"},
+        ]
+
+        violations = _response_contract_violations(
+            {"content": "අද හවස හතරට මේ property එක බලන්න arrange කරන්නම්."},
+            messages,
+        )
+
+        self.assertTrue(any("no property is selected" in item for item in violations))
+
+    def test_textual_tool_call_is_not_treated_as_spoken_booking(self) -> None:
+        messages = [{"role": "user", "content": "Book property-1 for Nimal."}]
+        message = {
+            "content": '<tool_call>{"name":"book_appointment","arguments":{'
+            '"property_id":"property-1","customer_name":"Nimal",'
+            '"appointment_at":"2099-01-01T10:00:00+05:30"}}</tool_call>'
+        }
+
+        self.assertEqual(_response_contract_violations(message, messages), [])
 
     def test_historical_tool_result_does_not_disable_followup_tools(self) -> None:
         messages = [
