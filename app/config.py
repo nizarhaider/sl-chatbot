@@ -15,6 +15,11 @@ LLM_TEMPERATURE = 0.0
 LLM_MAX_TOKENS = 96
 LLM_HISTORY_MESSAGES = 6
 
+# Multilingual semantic property search in Neon pgvector.
+EMBEDDING_MODEL = "gemini-embedding-2"
+EMBEDDING_DIMENSIONS = 768
+PROPERTY_RESULT_LIMIT = 3
+
 # Speech recognition.
 ASR_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
 ASR_REVISION = "9fbeaaf862c4befbcf9481338004255a8576e888"

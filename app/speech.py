@@ -88,6 +88,28 @@ PLACE_NAMES = {
     },
 }
 
+PROPERTY_WORDS = re.compile(
+    r"\b(?:properties|listings|proyes)\b|ප්‍රොපටි|පොපටි|පොබ්ඩිස්|ப்ராப்பர்ட்டிகள்|சொத்துகள்",
+    re.IGNORECASE,
+)
+PROPERTY_SPECIFICS = re.compile(
+    r"\b(?:apartment|house|villa|land|bedrooms?|budget|price|near|with|in|where|locations?|areas?)\b|"
+    + "|".join(
+        re.escape(name)
+        for language_names in PLACE_NAMES.values()
+        for pair in language_names.items()
+        for name in pair
+    )
+    + r"|නිදන|කාමර|මිල|ළඟ|ප්‍රදේශ|කොහෙද|வீடு|வில்லா|காணி|படுக்கையறை|விலை|பகுதி|எங்கே",
+    re.IGNORECASE,
+)
+PROPERTY_LOCATION_REQUEST = re.compile(
+    r"\b(?:where|locations?|which\s+areas?)\b|මොන\s+(?:locations?|ප්‍රදේශ)|"
+    r"ප්‍රදේශ.*කොහෙද|எந்த\s+(?:இட|பகுதி)|எங்கே",
+    re.IGNORECASE,
+)
+PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙන|තියෙන\s+ඒවා\s+පෙන්නන්න")
+
 
 def detect_language(text: str) -> str:
     if re.search(r"[\u0D80-\u0DFF]", text):
@@ -115,6 +137,28 @@ def selected_language(text: str) -> str | None:
     for language, names in choices.items():
         if all(word in names for word in words):
             return language
+    return None
+
+
+def is_broad_property_request(text: str) -> bool:
+    """Return true when inventory was requested without a useful preference."""
+    return bool(PROPERTY_WORDS.search(text)) and bool(
+        PROPERTY_BROAD_INVENTORY.search(text) or not PROPERTY_SPECIFICS.search(text)
+    )
+
+
+def is_property_location_request(text: str) -> bool:
+    """Return true for an explicit request to list inventory locations."""
+    return bool(PROPERTY_WORDS.search(text) and PROPERTY_LOCATION_REQUEST.search(text))
+
+
+def known_location(text: str) -> str | None:
+    """Return the English inventory location named by the caller."""
+    folded = text.casefold()
+    for names in PLACE_NAMES.values():
+        for english, localized in names.items():
+            if english.casefold() in folded or localized in text:
+                return english
     return None
 
 

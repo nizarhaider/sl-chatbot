@@ -45,7 +45,7 @@ from dotenv import dotenv_values
 
 values = dotenv_values(".env")
 for key in (
-    "HF_TOKEN", "NGROK_AUTH_TOKEN", "VERIFY_TOKEN", "WHATSAPP_ACCESS_TOKEN",
+    "HF_TOKEN", "GEMINI_API_KEY", "NGROK_AUTH_TOKEN", "VERIFY_TOKEN", "WHATSAPP_ACCESS_TOKEN",
     "WHATSAPP_TOKEN", "PHONE_NUMBER_ID", "DATABASE_URL",
 ):
     if value := values.get(key):

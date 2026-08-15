@@ -29,7 +29,12 @@ from app.database import (
     tool_call_message,
 )
 from app.models import LocalGemmaLLM, strip_thinking
-from app.speech import detect_language
+from app.speech import (
+    detect_language,
+    is_broad_property_request,
+    is_property_location_request,
+    known_location,
+)
 
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
@@ -56,8 +61,36 @@ class LocalGemmaAdkModel(BaseLlm):
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
         tools = _openai_tools(llm_request)
+        caller_text = _latest_caller_text(messages)
         if _is_post_tool_turn(messages):
             message = {"content": _grounded_fallback(messages), "tool_calls": []}
+        elif is_property_location_request(caller_text):
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {"function": {"name": "list_property_locations", "arguments": {}}}
+                ],
+            }
+        elif location := _location_followup(messages):
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_properties",
+                            "arguments": {
+                                "query": _latest_caller_text(messages),
+                                "location": location,
+                            },
+                        }
+                    }
+                ],
+            }
+        elif is_broad_property_request(caller_text):
+            message = {
+                "content": _location_question(_caller_language(messages)),
+                "tool_calls": [],
+            }
         else:
             message = await self._backend.chat(messages, tools)
             for _ in range(1):
@@ -105,10 +138,10 @@ class PropertyAgentTools:
         bedrooms: int | None = None,
         max_price_lkr: int | None = None,
     ) -> dict:
-        """Search active properties using the caller's stated filters.
+        """Find up to three relevant properties using semantic search and stated filters.
 
         Args:
-            query: Property name or free-text property query.
+            query: Caller's complete natural-language property request.
             location: Requested location in English.
             property_type: Requested property type in English.
             bedrooms: Minimum number of bedrooms.
@@ -360,7 +393,7 @@ def _agent_instruction(context: ReadonlyContext) -> str:
         + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
         f"the spoken answer must remain entirely in {name}. Tool data is never caller speech. "
         "Only send a location filter when the caller clearly named a location. Noisy words "
-        "meaning 'any' or 'some' are not locations; omit location for a broad request."
+        "meaning 'any' or 'some' are not locations; ask for a location before a broad search."
     )
     if property_id := str(context.state.get("last_property_id", "")):
         property_name = str(context.state.get("last_property_name", "the property"))
@@ -461,7 +494,11 @@ def _is_post_tool_turn(messages: list[dict]) -> bool:
 
 
 def _caller_language(messages: list[dict]) -> str:
-    caller_text = next(
+    return detect_language(_latest_caller_text(messages))
+
+
+def _latest_caller_text(messages: list[dict]) -> str:
+    return next(
         (
             str(item.get("content", ""))
             for item in reversed(messages)
@@ -470,7 +507,45 @@ def _caller_language(messages: list[dict]) -> str:
         ),
         "",
     )
-    return detect_language(caller_text)
+
+
+def _location_question(language: str) -> str:
+    if language == "si":
+        return "හරි. ඔබ property එකක් බලන්නේ මොන ප්‍රදේශයෙන්ද?"
+    if language == "ta":
+        return "சரி. நீங்கள் எந்த பகுதியில் property பார்க்க விரும்புகிறீர்கள்?"
+    return "Sure. Which location would you prefer for the property?"
+
+
+def _location_followup(messages: list[dict]) -> str | None:
+    location = known_location(_latest_caller_text(messages))
+    previous = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages[:-1])
+            if item.get("role") == "assistant"
+        ),
+        "",
+    )
+    previous_caller = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages[:-1])
+            if item.get("role") == "user"
+            and "<tool_result>" not in str(item.get("content", ""))
+        ),
+        "",
+    )
+    questions = (_location_question(language) for language in ("en", "si", "ta"))
+    return (
+        location
+        if location
+        and (
+            any(question in previous for question in questions)
+            or is_broad_property_request(previous_caller)
+        )
+        else None
+    )
 
 
 def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
@@ -517,6 +592,8 @@ def _grounded_fallback(messages: list[dict]) -> str:
     """Render a concise answer when Gemma cannot satisfy the post-tool contract."""
     language = _caller_language(messages)
     result = _latest_tool_result(messages)
+    if result.get("needs_clarification") == "location":
+        return _location_question(language)
     properties = result.get("properties") or []
     if properties:
         if len(properties) == 1:

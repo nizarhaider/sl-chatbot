@@ -13,12 +13,18 @@ from app.agent import (
     PropertyAgentTools,
     _grounded_fallback,
     _is_post_tool_turn,
+    _location_followup,
     _response_contract_violations,
 )
 from app.config import GREETING_PARTS, LANGUAGE_ACKNOWLEDGEMENTS, PROGRESS_LINES
 from app.database import CallContext, RealEstateToolService, ToolCall, call_log
 from app.pipeline import TurnPipeline
-from app.speech import selected_language
+from app.speech import (
+    is_broad_property_request,
+    is_property_location_request,
+    known_location,
+    selected_language,
+)
 
 
 class FakeGemmaBackend:
@@ -60,6 +66,8 @@ class FakePropertyService:
 
     async def execute(self, call, context) -> dict:
         self.calls.append((call, context))
+        if call.name == "list_property_locations":
+            return {"ok": True, "locations": ["Malabe", "Nugegoda"]}
         return {
             "ok": True,
             "count": 1,
@@ -120,7 +128,8 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("not caller speech", historical)
         self.assertIn("entirely in English", backend.requests[1][0][0]["content"])
         self.assertIn(
-            "omit location for a broad request", backend.requests[0][0][0]["content"]
+            "ask for a location before a broad search",
+            backend.requests[0][0][0]["content"],
         )
         self.assertIn(
             "exact property_id property-1", backend.requests[1][0][0]["content"]
@@ -159,6 +168,49 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["available_locations"], ["Malabe", "Nugegoda"])
         self.assertEqual(locations["locations"], ["Malabe", "Nugegoda"])
 
+    async def test_broad_request_asks_location_without_a_tool(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+
+        response = await runtime.respond("call-broad", "", "මට තියෙන properties මොනවාද?")
+
+        self.assertIn("මොන ප්‍රදේශයෙන්ද", response)
+        self.assertEqual(backend.requests, [])
+        self.assertEqual(service.calls, [])
+        await runtime.end_session("call-broad")
+
+    async def test_location_answer_runs_the_deferred_search(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+        await runtime.respond("call-location", "", "මට තියෙන properties මොනවාද?")
+
+        await runtime.respond("call-location", "", "මාලබේ පැත්තෙන්.")
+
+        self.assertEqual(service.calls[0][0].name, "search_properties")
+        self.assertEqual(service.calls[0][0].arguments["location"], "Malabe")
+        await runtime.end_session("call-location")
+
+    def test_location_followup_uses_previous_caller_intent(self) -> None:
+        messages = [
+            {"role": "user", "content": "මට තියෙන properties මොනවාද?"},
+            {"role": "user", "content": "මාලබේ පැත්තෙන්."},
+        ]
+
+        self.assertEqual(_location_followup(messages), "Malabe")
+
+    async def test_location_inventory_request_is_deterministic(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+
+        response = await runtime.respond(
+            "call-locations", "", "ඔයාලගේ properties තියෙන්නේ මොන locations වලද?"
+        )
+
+        self.assertEqual(service.calls[0][0].name, "list_property_locations")
+        self.assertIn("Malabe", response)
+        self.assertEqual(backend.requests, [])
+        await runtime.end_session("call-locations")
+
     async def test_booking_rejects_model_placeholder_name(self) -> None:
         class Store:
             def book(self, arguments, context):
@@ -184,6 +236,33 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected_language("sinhala sinhala"), "si")
         self.assertEqual(selected_language("தமிழ்"), "ta")
         self.assertIsNone(selected_language("I want an English-style apartment"))
+
+    def test_broad_property_request_requires_a_location(self) -> None:
+        self.assertTrue(is_broad_property_request("What properties do you have?"))
+        self.assertTrue(is_broad_property_request("මට තියෙන properties මොනවාද?"))
+        self.assertTrue(
+            is_broad_property_request(
+                "ඔයාලා ළඟ තියෙන properties මොනවාද? මට තියෙන ඒවා පෙන්නන්න."
+            )
+        )
+        self.assertTrue(
+            is_broad_property_request(
+                "නමද? නම දන්න යන්නේ ඔය නිකං කියන්නේ මොකක්ද තියෙන්නේ පොබ්ඩිස් ටිකක්"
+            )
+        )
+        self.assertFalse(is_broad_property_request("I need an apartment in Malabe"))
+        self.assertFalse(
+            is_broad_property_request("Which locations have properties available?")
+        )
+        self.assertTrue(
+            is_property_location_request("Which locations have properties available?")
+        )
+        self.assertTrue(
+            is_property_location_request("ඔයාලගේ properties තියෙන්නේ මොන locations වලද?")
+        )
+        self.assertFalse(is_broad_property_request("கடல் காட்சியுடன் apartment வேண்டும்"))
+        self.assertEqual(known_location("මාලබේ පැත්තෙන්"), "Malabe")
+        self.assertEqual(known_location("நுகேகொட பகுதியில்"), "Nugegoda")
 
     def test_grounded_fallback_preserves_tamil_and_exact_price(self) -> None:
         messages = [

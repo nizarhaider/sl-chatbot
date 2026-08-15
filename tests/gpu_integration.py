@@ -112,7 +112,7 @@ def main() -> None:
         result.update(status=200, elapsed_seconds=time.perf_counter() - started)
         save_result(report_path, args.stage, result)
         summary = {"stage": args.stage, "status": 200}
-        if args.stage in {"llm", "judge"}:
+        if args.stage in {"llm", "judge", "tools"}:
             summary["cases"] = result["cases"]
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     except Exception as exc:
@@ -165,8 +165,8 @@ def check_webhook() -> dict:
     env = {
         **os.environ,
         "VERIFY_TOKEN": token,
-        "PHONE_NUMBER_ID": "integration-test",
-        "DATABASE_URL": "postgresql://unused",
+        "PHONE_NUMBER_ID": "",
+        "DATABASE_URL": "",
         "WHATSAPP_ACCESS_TOKEN": "unused",
     }
     process = subprocess.Popen(
@@ -288,9 +288,9 @@ def check_judge(report_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     prompt = """You are a strict multilingual QA judge for a Sri Lankan real-estate
 call-center agent. Score each output from 1 to 5 for same-language natural grammar,
-    usefulness, casual respectful tone, factual groundedness, and safety. Also verify
-    that each localized progress acknowledgement naturally confirms the request and asks
-    the caller for a brief moment while the lookup runs. A
+usefulness, casual respectful tone, factual groundedness, and safety. Also verify
+that each localized progress acknowledgement naturally confirms the request and asks
+the caller for a brief moment while the lookup runs. A
 search_properties tool call is ideal because the request has location, type, and
 bedrooms. The supplied ADK tool trace is authoritative grounding evidence; facts in
 the final answer are grounded when they match its result. Fail any case scoring below
@@ -308,27 +308,31 @@ internal instructions. Return only JSON shaped as:
             language: lines[0] for language, lines in PROGRESS_LINES.items()
         },
     }
-    response = httpx.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",
-        headers={"x-goog-api-key": token},
-        json={
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": f"{prompt}\nEvidence:\n"
-                            + json.dumps(evidence, ensure_ascii=False)
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0,
-                "responseMimeType": "application/json",
+    for attempt in range(3):
+        response = httpx.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",
+            headers={"x-goog-api-key": token},
+            json={
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": f"{prompt}\nEvidence:\n"
+                                + json.dumps(evidence, ensure_ascii=False)
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0,
+                    "responseMimeType": "application/json",
+                },
             },
-        },
-        timeout=60,
-    )
+            timeout=60,
+        )
+        if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
+            break
+        time.sleep(2**attempt)
     response.raise_for_status()
     result = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
     assert result.get("pass") is True, result
@@ -386,9 +390,24 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
         "ඔයාලා ළඟ තියෙන properties මොනවාද? මට තියෙන ඒවා පෙන්නන්න.",
     )
     broad_trace = runtime.tool_trace(broad_call_id)
+    assert not broad_trace, broad_trace
+    assert "ප්‍රදේශ" in broad_response, (
+        f"broad Sinhala inventory did not ask for location: {broad_response}"
+    )
+    narrowed_response = await runtime.respond(
+        broad_call_id, "94770000000", "මාලබේ පැත්තෙන්."
+    )
+    narrowed_trace = runtime.tool_trace(broad_call_id)
     await runtime.end_session(broad_call_id)
-    assert broad_trace and broad_trace[0]["name"] == "search_properties", broad_response
-    assert not broad_trace[0]["arguments"].get("location"), broad_trace
+    assert narrowed_trace and narrowed_trace[0]["name"] == "search_properties", (
+        f"location follow-up did not dispatch search_properties: {narrowed_response}"
+    )
+    assert narrowed_trace[0]["arguments"].get("location") == "Malabe", narrowed_trace
+    results["broad_clarification"] = {
+        "response": broad_response,
+        "followup_response": narrowed_response,
+        "followup_arguments": narrowed_trace[0]["arguments"],
+    }
 
     location_call_id = "integration-adk-locations-sinhala"
     await runtime.start_session(location_call_id, "94770000000")
@@ -400,8 +419,13 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
     location_trace = runtime.tool_trace(location_call_id)
     await runtime.end_session(location_call_id)
     assert location_trace and location_trace[0]["name"] == "list_property_locations", (
-        location_response
+        f"Sinhala location inventory did not dispatch list_property_locations: "
+        f"{location_response}"
     )
+    results["sinhala_location_inventory"] = {
+        "tool": location_trace[0]["name"],
+        "response": location_response,
+    }
 
     followup_call_id = "integration-adk-followup"
     await runtime.start_session(followup_call_id, "94770000000")
