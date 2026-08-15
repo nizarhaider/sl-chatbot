@@ -56,31 +56,32 @@ class LocalGemmaAdkModel(BaseLlm):
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
         tools = _openai_tools(llm_request)
-        message = await self._backend.chat(messages, tools)
-        for _ in range(1):
-            violations = _response_contract_violations(message, messages)
-            if not violations:
-                break
-            logger.info(
-                "Correcting post-tool Gemma response: %s", "; ".join(violations)
-            )
-            correction_tools = [] if _is_post_tool_turn(messages) else tools
-            message = await self._backend.chat(
-                [
-                    *messages,
-                    {
-                        "role": "user",
-                        "content": _correction_prompt(messages, violations),
-                    },
-                ],
-                correction_tools,
-            )
-        violations = _response_contract_violations(message, messages)
-        if violations and _is_post_tool_turn(messages):
-            logger.info(
-                "Using grounded response fallback: %s", "; ".join(violations)
-            )
+        if _is_post_tool_turn(messages):
             message = {"content": _grounded_fallback(messages), "tool_calls": []}
+        else:
+            message = await self._backend.chat(messages, tools)
+            for _ in range(1):
+                violations = _response_contract_violations(message, messages)
+                if not violations:
+                    break
+                logger.info("Correcting Gemma response: %s", "; ".join(violations))
+                message = await self._backend.chat(
+                    [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": _correction_prompt(messages, violations),
+                        },
+                    ],
+                    tools,
+                )
+            violations = _response_contract_violations(message, messages)
+            if violations:
+                logger.info("Using safe response fallback: %s", "; ".join(violations))
+                message = {
+                    "content": _safe_fallback(messages, violations),
+                    "tool_calls": [],
+                }
         parts = _response_parts(message)
         yield LlmResponse(
             content=types.Content(role="model", parts=parts),
@@ -176,15 +177,21 @@ class PropertyAgentTools:
                 caller_phone=str(tool_context.state.get("caller_phone", "")),
             )
             result = await self.service.execute(ToolCall(name, arguments), context)
+        result = dict(result)
+        if name == "search_properties":
+            result["search_arguments"] = arguments
         if name == "search_properties" and result.get("ok"):
             properties = result.get("properties") or []
-            if properties and properties[0].get("property_id"):
+            if len(properties) == 1 and properties[0].get("property_id"):
                 tool_context.state["last_property_id"] = str(
                     properties[0]["property_id"]
                 )
                 tool_context.state["last_property_name"] = str(
                     properties[0].get("name") or ""
                 )
+            else:
+                tool_context.state.pop("last_property_id", None)
+                tool_context.state.pop("last_property_name", None)
         logger.info(
             "ADK tool result for %s: name=%s ok=%s count=%s error=%s",
             call_id,
@@ -268,9 +275,7 @@ class GemmaAgentRuntime:
         async for event in self.runner.run_async(
             user_id=self._users[call_id],
             session_id=call_id,
-            new_message=types.Content(
-                role="user", parts=[types.Part(text=transcript)]
-            ),
+            new_message=types.Content(role="user", parts=[types.Part(text=transcript)]),
             state_delta={
                 "caller_language": detect_language(transcript),
             },
@@ -363,6 +368,12 @@ def _agent_instruction(context: ReadonlyContext) -> str:
             f"\nThe latest searched property is {property_name}, with exact property_id "
             f"{property_id}. Use that ID when the caller refers to it in a booking follow-up."
         )
+    else:
+        instruction += (
+            "\nNo property is currently selected. Never say 'this property' or offer, arrange, "
+            "or book a viewing until the caller chooses an exact property. Never invent a date "
+            "or time; ask the caller to choose the property first."
+        )
     return instruction
 
 
@@ -419,20 +430,36 @@ def _response_contract_violations(message: dict, messages: list[dict]) -> list[s
     if message.get("tool_calls"):
         return []
     response = strip_thinking(message.get("content") or "")
-    expected = _caller_language(messages)
     violations = []
     if _repeats_previous_answer(response, messages):
-        violations.append("do not repeat the previous answer; address the latest request directly")
-    post_tool_turn = _is_post_tool_turn(messages)
-    if post_tool_turn and detect_language(response) != expected:
-        violations.append(f"answer entirely in {LANGUAGE_NAMES[expected]}")
-    required_prices = _tool_prices(messages) if post_tool_turn else []
-    missing = [price for price in required_prices if price not in response]
-    if missing:
         violations.append(
-            "copy exact prices as " + ", ".join(f"LKR {price}" for price in missing)
+            "do not repeat the previous answer; address the latest request directly"
         )
+    if re.search(r"ඔබතුමි(?:ය|යා)|ඔබතුමා", response):
+        violations.append("use the gender-neutral Sinhala address ඔබ")
+    if _no_property_selected(messages) and re.search(
+        r"\b(?:book|booking|appointment|arrange|viewing|this property|that property)\b|"
+        r"මේ property|මෙම property|booking|appointment|arrange|වෙන් කළ|හවස|උදේ|"
+        r"இந்த property|appointment|பதிவு",
+        response,
+        re.IGNORECASE,
+    ):
+        violations.append(
+            "no property is selected; ask the caller to choose one before a viewing"
+        )
+    if len(response) > 320:
+        violations.append("keep the spoken reply under 320 characters")
+    if len(response) >= 180 and not re.search(r"[.!?।]\s*$", response):
+        violations.append("finish the reply at a complete sentence")
     return violations
+
+
+def _no_property_selected(messages: list[dict]) -> bool:
+    return any(
+        message.get("role") == "system"
+        and "No property is currently selected." in str(message.get("content", ""))
+        for message in messages
+    )
 
 
 def _is_post_tool_turn(messages: list[dict]) -> bool:
@@ -454,17 +481,10 @@ def _caller_language(messages: list[dict]) -> str:
 
 def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
     language = _caller_language(messages)
-    prices = ", ".join(f'"LKR {price}"' for price in _tool_prices(messages))
-    price_rule = (
-        f" Copy prices exactly as {prices}; do not convert them to lakhs or words."
-        if prices
-        else ""
-    )
     if language == "si":
         return (
             "අලුත්ම caller ඉල්ලීමට සෘජුව පිළිතුරු දෙන්න. කලින් පිළිතුර නැවත කියන්න එපා. "
             "ප්‍රයෝජනවත් කෙටි වාක්‍ය එකක් සිට තුනක් දක්වා සිංහලෙන් කියන්න."
-            + price_rule
         )
     if language == "ta":
         return (
@@ -472,13 +492,11 @@ def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
             "மீண்டும் சொல்ல வேண்டாம். தமிழ் எழுத்துகளை மட்டும் பயன்படுத்தி ஒன்று முதல் மூன்று "
             "பயனுள்ள குறுகிய வாக்கியங்கள் பேசவும். சிங்கள எழுத்துகளை ஒருபோதும் பயன்படுத்த வேண்டாம்; "
             "ஆங்கிலப் பெயர்களும் எண்களும் மட்டும் விதிவிலக்கு."
-            + price_rule
         )
     return (
         "Rewrite only the final spoken answer entirely in English. Fix these violations: "
         + "; ".join(violations)
         + ". Give one to three useful short sentences and answer the latest request directly."
-        + price_rule
     )
 
 
@@ -501,54 +519,46 @@ def _repeats_previous_answer(response: str, messages: list[dict]) -> bool:
     return current == prior or SequenceMatcher(None, current, prior).ratio() >= 0.84
 
 
-def _tool_prices(messages: list[dict]) -> list[str]:
-    prices: list[str] = []
-    for message in messages:
-        content = str(message.get("content", ""))
-        for match in re.finditer(
-            r"<tool_result>(.*?)</tool_result>", content, re.DOTALL
-        ):
-            try:
-                result = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                continue
-            for row in result.get("properties", []):
-                if isinstance(row.get("price_lkr"), int):
-                    prices.append(f"{row['price_lkr']:,}")
-    return list(dict.fromkeys(prices))
-
-
 def _grounded_fallback(messages: list[dict]) -> str:
     """Render a concise answer when Gemma cannot satisfy the post-tool contract."""
     language = _caller_language(messages)
     result = _latest_tool_result(messages)
     properties = result.get("properties") or []
     if properties:
-        lines = []
+        if len(properties) == 1:
+            row = properties[0]
+            name = str(row.get("name") or "Property")
+            location = str(row.get("location") or "Sri Lanka")
+            price = row.get("price_lkr")
+            amount = f"{price:,}" if isinstance(price, int) else "—"
+            if language == "si":
+                return f"{name}, {location} — LKR {amount}. මේ listing එක ගැන වැඩි විස්තර ඕනෙද?"
+            if language == "ta":
+                return f"{name}, {location} — LKR {amount}. இந்த listing பற்றி மேலும் விவரம் வேண்டுமா?"
+            return f"{name}, {location} — LKR {amount}. Would you like more details?"
+        listings = []
         for row in properties[:3]:
             name = str(row.get("name") or "Property")
             location = str(row.get("location") or "Sri Lanka")
-            property_type = str(row.get("property_type") or "property")
-            bedrooms = row.get("bedrooms")
             price = row.get("price_lkr")
-            beds = str(bedrooms) if bedrooms is not None else "—"
             amount = f"{price:,}" if isinstance(price, int) else "—"
-            if language == "si":
-                lines.append(
-                    f"{name} කියන්නේ {location} ප්‍රදේශයේ තියෙන නිදන කාමර {beds}ක "
-                    f"{property_type} එකක්; මිල LKR {amount}."
-                )
-            elif language == "ta":
-                lines.append(
-                    f"{name} என்பது {location} பகுதியில் உள்ள {beds} படுக்கையறைகள் கொண்ட "
-                    f"{property_type}; விலை LKR {amount}."
-                )
-            else:
-                lines.append(
-                    f"{name} is a {beds}-bedroom {property_type} in {location}, "
-                    f"listed at LKR {amount}."
-                )
-        return " ".join(lines)
+            listings.append(f"{name}, {location} — LKR {amount}")
+        joined = "; ".join(listings)
+        if language == "si":
+            return f"දැනට listings: {joined}. ඔබ කැමති property එකේ නම කියන්න."
+        if language == "ta":
+            return (
+                f"தற்போதைய listings: {joined}. உங்களுக்கு பிடித்த property பெயரை சொல்லுங்கள்."
+            )
+        return f"Current listings: {joined}. Tell me which property you prefer."
+
+    filters = result.get("search_arguments") or {}
+    if filters.get("query") and len(filters) == 1:
+        if language == "si":
+            return "Property නම පැහැදිලිව ඇහුණේ නැහැ. කරුණාකර නම නැවත කියන්න."
+        if language == "ta":
+            return "Property பெயர் தெளிவாக கேட்கவில்லை. தயவுசெய்து பெயரை மீண்டும் சொல்லுங்கள்."
+        return "I didn't catch the property name clearly. Please repeat it."
 
     locations = result.get("locations") or result.get("available_locations") or []
     if locations:
@@ -573,6 +583,28 @@ def _grounded_fallback(messages: list[dict]) -> str:
     if language == "ta":
         return "அதை முடிக்க முடியவில்லை. தேவையான விவரங்களை மீண்டும் சொல்லுங்கள்."
     return "I couldn't complete that. Please repeat the required details."
+
+
+def _safe_fallback(messages: list[dict], violations: list[str]) -> str:
+    language = _caller_language(messages)
+    needs_property = any("no property is selected" in item for item in violations)
+    if language == "si":
+        return (
+            "මුලින් ඔබ කැමති property එකේ නම කියන්න."
+            if needs_property
+            else "කරුණාකර ඒක තව වරක් පැහැදිලිව කියන්න."
+        )
+    if language == "ta":
+        return (
+            "முதலில் உங்களுக்கு பிடித்த property பெயரை சொல்லுங்கள்."
+            if needs_property
+            else "தயவுசெய்து அதை மீண்டும் தெளிவாக சொல்லுங்கள்."
+        )
+    return (
+        "Please choose the property first."
+        if needs_property
+        else "Please say that again clearly."
+    )
 
 
 def _latest_tool_result(messages: list[dict]) -> dict:

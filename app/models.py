@@ -147,13 +147,30 @@ class LocalGemmaLLM:
         return strip_thinking(message.get("content") or "")
 
     def _chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
-        response = self._get_model().create_chat_completion(
-            messages=messages,
-            tools=tools or None,
-            tool_choice="auto" if tools else None,
-            temperature=LLM_TEMPERATURE,
-            max_tokens=LLM_MAX_TOKENS,
-        )
+        model = self._get_model()
+        candidates = [
+            messages,
+            compact_chat_messages(messages, recent_messages=4, content_chars=1600),
+            compact_chat_messages(messages, recent_messages=1, content_chars=800),
+        ]
+        for index, candidate in enumerate(candidates):
+            try:
+                response = model.create_chat_completion(
+                    messages=candidate,
+                    tools=tools or None,
+                    tool_choice="auto" if tools else None,
+                    temperature=LLM_TEMPERATURE,
+                    max_tokens=LLM_MAX_TOKENS,
+                )
+                break
+            except ValueError as exc:
+                overflow = "context window" in str(exc).casefold()
+                if not overflow or index == len(candidates) - 1:
+                    raise
+                logger.warning(
+                    "Gemma context overflow; retrying with compact history (%s messages)",
+                    len(candidates[index + 1]),
+                )
         message = response.get("choices", [{}])[0].get("message", {})
         return (
             dict(message) if isinstance(message, dict) else json.loads(message.json())
@@ -333,6 +350,24 @@ def strip_thinking(text: str) -> str:
     )
     text = re.sub(r"^.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
     return text.strip()
+
+
+def compact_chat_messages(
+    messages: list[dict], recent_messages: int, content_chars: int
+) -> list[dict]:
+    """Keep the system prompt and a bounded tail for context-overflow retries."""
+    system = next(
+        (message for message in messages if message.get("role") == "system"), None
+    )
+    conversation = [message for message in messages if message.get("role") != "system"]
+    compacted = []
+    for message in conversation[-recent_messages:]:
+        item = dict(message)
+        content = item.get("content")
+        if isinstance(content, str) and len(content) > content_chars:
+            item["content"] = content[-content_chars:]
+        compacted.append(item)
+    return ([system] if system else []) + compacted
 
 
 def normalize_waveform(audio) -> np.ndarray:

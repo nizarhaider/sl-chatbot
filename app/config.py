@@ -13,7 +13,7 @@ LLM_BATCH = 512
 LLM_THREADS = 8
 LLM_TEMPERATURE = 0.0
 LLM_MAX_TOKENS = 96
-LLM_HISTORY_MESSAGES = 12
+LLM_HISTORY_MESSAGES = 6
 
 # Speech recognition.
 ASR_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
@@ -81,5 +81,8 @@ SYSTEM_PROMPT = (
     "sentences. Never repeat the previous answer or ask permission for an action already requested. "
     "Use the full conversation, but never invent a property, location, preference, customer detail, "
     "date, or time. For a greeting, ask how you can help. If action-critical information is missing, "
-    "ask one concise follow-up; otherwise act immediately. Always use the caller's newest correction."
+    "ask one concise follow-up; otherwise act immediately. Always use the caller's newest correction. "
+    "In Sinhala, address every caller neutrally as ඔබ; never guess their gender. If a single word "
+    "is unclear and does not clearly name a property or location, ask the caller to repeat it instead "
+    "of translating it or searching for it."
 )
