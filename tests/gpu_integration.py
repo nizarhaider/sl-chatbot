@@ -308,27 +308,31 @@ internal instructions. Return only JSON shaped as:
             language: lines[0] for language, lines in PROGRESS_LINES.items()
         },
     }
-    response = httpx.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",
-        headers={"x-goog-api-key": token},
-        json={
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": f"{prompt}\nEvidence:\n"
-                            + json.dumps(evidence, ensure_ascii=False)
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0,
-                "responseMimeType": "application/json",
+    for attempt in range(3):
+        response = httpx.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{JUDGE_MODEL}:generateContent",
+            headers={"x-goog-api-key": token},
+            json={
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": f"{prompt}\nEvidence:\n"
+                                + json.dumps(evidence, ensure_ascii=False)
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0,
+                    "responseMimeType": "application/json",
+                },
             },
-        },
-        timeout=60,
-    )
+            timeout=60,
+        )
+        if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
+            break
+        time.sleep(2**attempt)
     response.raise_for_status()
     result = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
     assert result.get("pass") is True, result
