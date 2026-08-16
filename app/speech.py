@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 SINHALA_ONES = (
     "බිංදුව",
@@ -112,16 +113,6 @@ PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙ�
 PLACE_ALIASES = {
     "කුරුණෑග": "Kurunegala",
     "රාජිය": "Rajagiriya",
-    # Frequent Whisper renderings of spoken "Piliyandala" from production calls.
-    "පිලියන්දල": "Piliyandala",
-    "පෙන්නැඳිලා": "Piliyandala",
-    "කෙළියන්ද": "Piliyandala",
-    # Sinhala and romanized Whisper variants of spoken "Nugegoda".
-    "නුගය කොට": "Nugegoda",
-    "නුවේගොඩ": "Nugegoda",
-    "නුගෙගොඩ": "Nugegoda",
-    "nogoyata": "Nugegoda",
-    "nogayoda": "Nugegoda",
 }
 
 
@@ -189,6 +180,36 @@ def known_location(text: str) -> str | None:
     return next(
         (place for alias, place in PLACE_ALIASES.items() if alias in folded), None
     )
+
+
+def closest_location(text: str, available_locations: list[str]) -> str | None:
+    """Suggest one unambiguous fuzzy match from the caller's live inventory."""
+    fragments = re.findall(r"[A-Za-z\u0B80-\u0BFF\u0D80-\u0DFF]+", text.casefold())
+    fragments += [
+        "".join(fragments[start:end])
+        for start in range(len(fragments))
+        for end in range(start + 2, min(len(fragments), start + 3) + 1)
+    ]
+    if not fragments:
+        return None
+    scores: list[tuple[float, str]] = []
+    for location in available_locations:
+        variants = [location.casefold()]
+        variants.extend(
+            names[location].casefold()
+            for names in PLACE_NAMES.values()
+            if location in names
+        )
+        score = max(
+            SequenceMatcher(None, fragment, variant).ratio()
+            for fragment in fragments
+            for variant in variants
+        )
+        scores.append((score, location))
+    scores.sort(reverse=True)
+    best_score, best_location = scores[0]
+    runner_up = scores[1][0] if len(scores) > 1 else 0.0
+    return best_location if best_score >= 0.60 and best_score - runner_up >= 0.10 else None
 
 
 def tool_acknowledgement(language: str, name: str, arguments: dict) -> str:

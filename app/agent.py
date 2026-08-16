@@ -30,6 +30,8 @@ from app.database import (
 )
 from app.models import LocalGemmaLLM, strip_thinking
 from app.speech import (
+    PLACE_NAMES,
+    closest_location,
     detect_language,
     is_broad_property_request,
     is_property_location_request,
@@ -71,6 +73,18 @@ class LocalGemmaAdkModel(BaseLlm):
                     {"function": {"name": "list_property_locations", "arguments": {}}}
                 ],
             }
+        elif location := _confirmed_location_suggestion(messages):
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_properties",
+                            "arguments": {"location": location},
+                        }
+                    }
+                ],
+            }
         elif location := _location_followup(messages):
             message = {
                 "content": None,
@@ -88,8 +102,15 @@ class LocalGemmaAdkModel(BaseLlm):
             }
         elif _awaiting_location(messages):
             message = {
-                "content": _location_retry(_caller_language(messages)),
-                "tool_calls": [],
+                "content": None,
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "list_property_locations",
+                            "arguments": {"query": caller_text},
+                        }
+                    }
+                ],
             }
         elif is_broad_property_request(caller_text):
             message = {
@@ -170,9 +191,15 @@ class PropertyAgentTools:
         }
         return await self._execute("search_properties", arguments, tool_context)
 
-    async def list_property_locations(self, tool_context: ToolContext) -> dict:
+    async def list_property_locations(
+        self, tool_context: ToolContext, query: str = ""
+    ) -> dict:
         """List every location that currently has active property inventory."""
-        return await self._execute("list_property_locations", {}, tool_context)
+        arguments = {"query": query} if query else {}
+        result = await self._execute("list_property_locations", arguments, tool_context)
+        if query:
+            result["location_query"] = query
+        return result
 
     async def book_appointment(
         self,
@@ -559,6 +586,33 @@ def _location_retry(language: str) -> str:
     return "Sorry, I didn't catch the area name. Could you say it once more?"
 
 
+def _location_suggestion(language: str, location: str) -> str:
+    spoken = PLACE_NAMES.get(language, {}).get(location, location)
+    if language == "si":
+        return f"ඔබ කිව්වේ {spoken} ද?"
+    if language == "ta":
+        return f"நீங்கள் சொன்னது {spoken} தானா?"
+    return f"Did you mean {location}?"
+
+
+def _confirmed_location_suggestion(messages: list[dict]) -> str | None:
+    caller = re.sub(r"[^\w\u0B80-\u0BFF\u0D80-\u0DFF]+", " ", _latest_caller_text(messages).casefold()).strip()
+    affirmatives = {"yes", "yeah", "yep", "correct", "ඔව්", "හරි", "ஆம்", "ஆமாம்", "சரி"}
+    if caller not in affirmatives:
+        return None
+    previous = next(
+        (
+            str(item.get("content", ""))
+            for item in reversed(messages[:-1])
+            if item.get("role") == "assistant"
+        ),
+        "",
+    )
+    if not any(marker in previous for marker in ("Did you mean", "ඔබ කිව්වේ", "நீங்கள் சொன்னது")):
+        return None
+    return known_location(previous)
+
+
 def _location_followup(messages: list[dict]) -> str | None:
     location = known_location(_latest_caller_text(messages))
     return location if location and _awaiting_location(messages) else None
@@ -686,6 +740,13 @@ def _grounded_fallback(messages: list[dict]) -> str:
 
     locations = result.get("locations") or result.get("available_locations") or []
     if locations:
+        if query := str(result.get("location_query") or "").strip():
+            suggestion = closest_location(query, list(map(str, locations)))
+            return (
+                _location_suggestion(language, suggestion)
+                if suggestion
+                else _location_retry(language)
+            )
         joined = ", ".join(map(str, locations))
         if language == "si":
             return f"දැනට properties තියෙන්නේ මේ ප්‍රදේශවලයි: {joined}."

@@ -26,6 +26,7 @@ from app.config import (
 from app.database import CallContext, RealEstateToolService, ToolCall, call_log
 from app.pipeline import TurnPipeline
 from app.speech import (
+    closest_location,
     is_broad_property_request,
     is_property_location_request,
     known_location,
@@ -258,18 +259,6 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.calls[0][0].arguments["location"], "Malabe")
         await runtime.end_session("call-location")
 
-    async def test_noisy_piliyandala_answer_runs_the_deferred_search(self) -> None:
-        backend, service = FakeGemmaBackend(), FakePropertyService()
-        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
-        await runtime.respond("call-piliyandala", "", "මට තියෙන properties මොනවාද?")
-
-        await runtime.respond("call-piliyandala", "", "කෙළියන්ද ලබන්.")
-
-        self.assertEqual(service.calls[0][0].name, "search_properties")
-        self.assertEqual(service.calls[0][0].arguments["location"], "Piliyandala")
-        self.assertEqual(backend.requests, [])
-        await runtime.end_session("call-piliyandala")
-
     async def test_unknown_location_asks_naturally_instead_of_listing_inventory(self) -> None:
         backend, service = FakeGemmaBackend(), FakePropertyService()
         runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
@@ -277,7 +266,7 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         response = await runtime.respond("call-unknown-location", "", "කීරා")
 
-        self.assertEqual(service.calls, [])
+        self.assertEqual(service.calls[0][0].name, "list_property_locations")
         self.assertEqual(
             response,
             "සමාවෙන්න, ප්‍රදේශයේ නම හරියට ඇහුණේ නැහැ. ආයෙත් එක පාරක් කියන්න පුළුවන්ද?",
@@ -285,24 +274,35 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(backend.requests, [])
         await runtime.end_session("call-unknown-location")
 
-    async def test_noisy_nugegoda_answer_searches_instead_of_listing_locations(self) -> None:
-        for index, transcript in enumerate(
-            (
-                "නුගය කොටයින් තියෙන පෞරිසම මොකද?",
-                "ඔයේ නුවේගොඩ ඉන්තියන්නේ properties එක මොකද",
-            )
-        ):
-            backend, service = FakeGemmaBackend(), FakePropertyService()
-            runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
-            call_id = f"call-nugegoda-{index}"
-            await runtime.respond(call_id, "", "මට තියෙන properties මොනවාද?")
+    async def test_close_nugegoda_match_is_confirmed_before_search(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+        await runtime.respond("call-nugegoda", "", "මට තියෙන properties මොනවාද?")
 
-            await runtime.respond(call_id, "", transcript)
+        suggestion = await runtime.respond("call-nugegoda", "", "ඔයේ නුවේගොඩ")
+        response = await runtime.respond("call-nugegoda", "", "ඔව්")
 
-            self.assertEqual(service.calls[0][0].name, "search_properties")
-            self.assertEqual(service.calls[0][0].arguments["location"], "Nugegoda")
-            self.assertEqual(backend.requests, [])
-            await runtime.end_session(call_id)
+        self.assertEqual(suggestion, "ඔබ කිව්වේ නුගේගොඩ ද?")
+        self.assertEqual(service.calls[0][0].name, "list_property_locations")
+        self.assertEqual(service.calls[1][0].name, "search_properties")
+        self.assertEqual(service.calls[1][0].arguments["location"], "Nugegoda")
+        self.assertTrue(response)
+        self.assertEqual(backend.requests, [])
+        await runtime.end_session("call-nugegoda")
+
+    async def test_ambiguous_nugegoda_audio_asks_for_repeat(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+        await runtime.respond("call-ambiguous", "", "මට තියෙන properties මොනවාද?")
+
+        response = await runtime.respond(
+            "call-ambiguous", "", "නුගය කොටයින් තියෙන පෞරිසම මොකද?"
+        )
+
+        self.assertIn("ආයෙත් එක පාරක් කියන්න", response)
+        self.assertEqual(service.calls[0][0].name, "list_property_locations")
+        self.assertEqual(backend.requests, [])
+        await runtime.end_session("call-ambiguous")
 
     def test_location_followup_uses_previous_caller_intent(self) -> None:
         messages = [
@@ -330,7 +330,11 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         self.assertTrue(_awaiting_location(messages))
-        self.assertEqual(_location_followup(messages), "Piliyandala")
+        self.assertIsNone(_location_followup(messages))
+        self.assertEqual(
+            closest_location("කෙළියන්ද ලබන්.", ["Malabe", "Piliyandala"]),
+            "Piliyandala",
+        )
 
     async def test_location_inventory_request_is_deterministic(self) -> None:
         backend, service = FakeGemmaBackend(), FakePropertyService()
@@ -374,15 +378,17 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected_language("தமிழ்"), "ta")
         self.assertIsNone(selected_language("I want an English-style apartment"))
 
-    def test_known_location_accepts_production_piliyandala_transcripts(self) -> None:
-        self.assertEqual(known_location("උන්දැලා පෙන්නැඳිලා"), "Piliyandala")
-        self.assertEqual(known_location("කෙළියන්ද ලබන්."), "Piliyandala")
-
-    def test_known_location_accepts_production_nugegoda_transcripts(self) -> None:
-        self.assertEqual(known_location("නුගය කොටයින්"), "Nugegoda")
-        self.assertEqual(known_location("ඔයේ නුවේගොඩ"), "Nugegoda")
-        self.assertEqual(known_location("Nogoyata"), "Nugegoda")
-        self.assertEqual(known_location("Nogayoda"), "Nugegoda")
+    def test_fuzzy_location_matching_is_confidence_based_not_alias_based(self) -> None:
+        locations = ["Homagama", "Malabe", "Nugegoda", "Piliyandala"]
+        self.assertIsNone(known_location("ඔයේ නුවේගොඩ"))
+        self.assertIsNone(known_location("Nogayoda"))
+        self.assertEqual(closest_location("ඔයේ නුවේගොඩ", locations), "Nugegoda")
+        self.assertEqual(closest_location("Nogayoda", locations), "Nugegoda")
+        self.assertEqual(
+            closest_location("කෙළියන්ද ලබන්.", locations), "Piliyandala"
+        )
+        self.assertIsNone(closest_location("Nogoyata", locations))
+        self.assertIsNone(closest_location("කීරා", locations))
 
     def test_broad_property_request_requires_a_location(self) -> None:
         self.assertTrue(is_broad_property_request("What properties do you have?"))
