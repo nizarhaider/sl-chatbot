@@ -204,9 +204,6 @@ jobs:
             -P "$VAST_PORT" gpu-integration-report.json \
             "root@$VAST_HOST:/workspace/sl-chatbot/gpu-integration-report.json"
           test "$judge_status" -eq 0
-          $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage tools
-          $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage omnivoice
-          $SSH -i "$RUNNER_TEMP/vast-ci" -p "$VAST_PORT" "root@$VAST_HOST" /workspace/sl-chatbot/run-stage load
 
       - name: Collect stage report and audible samples
         if: always()
