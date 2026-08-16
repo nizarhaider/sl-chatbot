@@ -116,6 +116,12 @@ PLACE_ALIASES = {
     "පිලියන්දල": "Piliyandala",
     "පෙන්නැඳිලා": "Piliyandala",
     "කෙළියන්ද": "Piliyandala",
+    # Sinhala and romanized Whisper variants of spoken "Nugegoda".
+    "නුගය කොට": "Nugegoda",
+    "නුවේගොඩ": "Nugegoda",
+    "නුගෙගොඩ": "Nugegoda",
+    "nogoyata": "Nugegoda",
+    "nogayoda": "Nugegoda",
 }
 
 
@@ -181,7 +187,7 @@ def known_location(text: str) -> str | None:
             if english.casefold() in folded or localized in text:
                 return english
     return next(
-        (place for alias, place in PLACE_ALIASES.items() if alias in text), None
+        (place for alias, place in PLACE_ALIASES.items() if alias in folded), None
     )
 
 

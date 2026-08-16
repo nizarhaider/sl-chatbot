@@ -270,17 +270,39 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(backend.requests, [])
         await runtime.end_session("call-piliyandala")
 
-    async def test_unknown_location_lists_inventory_instead_of_model_guess(self) -> None:
+    async def test_unknown_location_asks_naturally_instead_of_listing_inventory(self) -> None:
         backend, service = FakeGemmaBackend(), FakePropertyService()
         runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
         await runtime.respond("call-unknown-location", "", "මට තියෙන properties මොනවාද?")
 
         response = await runtime.respond("call-unknown-location", "", "කීරා")
 
-        self.assertEqual(service.calls[0][0].name, "list_property_locations")
-        self.assertIn("Malabe", response)
+        self.assertEqual(service.calls, [])
+        self.assertEqual(
+            response,
+            "සමාවෙන්න, ප්‍රදේශයේ නම හරියට ඇහුණේ නැහැ. ආයෙත් එක පාරක් කියන්න පුළුවන්ද?",
+        )
         self.assertEqual(backend.requests, [])
         await runtime.end_session("call-unknown-location")
+
+    async def test_noisy_nugegoda_answer_searches_instead_of_listing_locations(self) -> None:
+        for index, transcript in enumerate(
+            (
+                "නුගය කොටයින් තියෙන පෞරිසම මොකද?",
+                "ඔයේ නුවේගොඩ ඉන්තියන්නේ properties එක මොකද",
+            )
+        ):
+            backend, service = FakeGemmaBackend(), FakePropertyService()
+            runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+            call_id = f"call-nugegoda-{index}"
+            await runtime.respond(call_id, "", "මට තියෙන properties මොනවාද?")
+
+            await runtime.respond(call_id, "", transcript)
+
+            self.assertEqual(service.calls[0][0].name, "search_properties")
+            self.assertEqual(service.calls[0][0].arguments["location"], "Nugegoda")
+            self.assertEqual(backend.requests, [])
+            await runtime.end_session(call_id)
 
     def test_location_followup_uses_previous_caller_intent(self) -> None:
         messages = [
@@ -355,6 +377,12 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
     def test_known_location_accepts_production_piliyandala_transcripts(self) -> None:
         self.assertEqual(known_location("උන්දැලා පෙන්නැඳිලා"), "Piliyandala")
         self.assertEqual(known_location("කෙළියන්ද ලබන්."), "Piliyandala")
+
+    def test_known_location_accepts_production_nugegoda_transcripts(self) -> None:
+        self.assertEqual(known_location("නුගය කොටයින්"), "Nugegoda")
+        self.assertEqual(known_location("ඔයේ නුවේගොඩ"), "Nugegoda")
+        self.assertEqual(known_location("Nogoyata"), "Nugegoda")
+        self.assertEqual(known_location("Nogayoda"), "Nugegoda")
 
     def test_broad_property_request_requires_a_location(self) -> None:
         self.assertTrue(is_broad_property_request("What properties do you have?"))

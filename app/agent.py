@@ -88,10 +88,8 @@ class LocalGemmaAdkModel(BaseLlm):
             }
         elif _awaiting_location(messages):
             message = {
-                "content": None,
-                "tool_calls": [
-                    {"function": {"name": "list_property_locations", "arguments": {}}}
-                ],
+                "content": _location_retry(_caller_language(messages)),
+                "tool_calls": [],
             }
         elif is_broad_property_request(caller_text):
             message = {
@@ -551,6 +549,14 @@ def _location_question(language: str) -> str:
     if language == "ta":
         return "சரி. நீங்கள் எந்த பகுதியில் property பார்க்க விரும்புகிறீர்கள்?"
     return "Sure. Which location would you prefer for the property?"
+
+
+def _location_retry(language: str) -> str:
+    if language == "si":
+        return "සමාවෙන්න, ප්‍රදේශයේ නම හරියට ඇහුණේ නැහැ. ආයෙත් එක පාරක් කියන්න පුළුවන්ද?"
+    if language == "ta":
+        return "மன்னிக்கவும், பகுதியின் பெயர் தெளிவாகக் கேட்கவில்லை. இன்னொரு முறை சொல்ல முடியுமா?"
+    return "Sorry, I didn't catch the area name. Could you say it once more?"
 
 
 def _location_followup(messages: list[dict]) -> str | None:
