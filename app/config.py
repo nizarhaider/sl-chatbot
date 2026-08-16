@@ -39,6 +39,9 @@ TTS_STEPS = 20
 TTS_SPEED = 0.98
 
 RESPONSE_POLL_SECONDS = 10
+# Backward-compatible public config; model-led turns have no canned acknowledgements.
+TOOL_ACKNOWLEDGEMENT_SAMPLES: dict[str, tuple[str, ...]] = {}
+
 # Turn detection and playback protection.
 INPUT_CHUNK_MS = 40
 INPUT_CHUNK_BYTES = (16_000 * 2 * INPUT_CHUNK_MS) // 1000
