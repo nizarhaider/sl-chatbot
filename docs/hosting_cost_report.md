@@ -1,77 +1,70 @@
 # Voice Runtime Hosting Cost Report
 
-Snapshot date: 2026-07-29
+Snapshot date: 2026-08-16
 
 ## Recommendation
 
-Run one always-on Vast.ai RTX 3060 12 GB instance with a 32 GB disk. Use the
-checked-in CUDA profile and keep all 42 Gemma layers on the GPU.
+Use two distinct sizing rules for the Gemma 4 26B-A4B voice agent:
 
-- Absolute lowest observed listing: about **$0.03956/hour** or **$28.88/month**
-  including 32 GB storage. This host was in China, so verify access to Meta and
-  Hugging Face before relying on it.
-- Lower-risk observed listing: about **$0.05393/hour** or **$39.37/month**
-  including 32 GB storage for a verified RTX 3060 host in Romania.
-- The US benchmark contract cost **$0.06148/hour**, or **$44.88/month** at 730
-  hours.
+- **32 GB VRAM is the hard runtime floor.** Select the cheapest compatible,
+  verified listing at or above this capacity. It should hold the Q4 LLM,
+  Whisper, OmniVoice, KV cache, and useful operating headroom on one GPU. The
+  final requirement must still be confirmed with a full-stack measurement.
+- **48 GB VRAM is the training and validation tier.** Use it for LoRA training,
+  adapter merging, GGUF conversion, and the first end-to-end deployment. It is
+  not automatically required for steady-state hosting.
 
-Vast prices and availability change continuously. The totals above add the
-listing's compute price to its per-GB storage price for 32 GB. Network transfer
-is usage-based and is not included.
+The previous 4B voice runtime used about 13.1 GiB of VRAM with a 4.8 GiB GGUF.
+Replacing that file with the 16.8 GB 26B-A4B Q4 model puts the
+combined workload near or above a 24 GB card once CUDA overhead and KV cache
+are included. The deployer therefore rejects configurations below 32 GB.
 
-## Measured Runtime
+## Cheapest Live Vast.ai Listings
 
-The production stack was tested end to end on an RTX 3060 with 12,288 MiB VRAM
-and eight effective CPU cores:
+The deployer's compatibility and reliability query was run against live
+on-demand listings with an 80 GB disk on 2026-08-16:
 
-| Measurement | Result |
-| --- | ---: |
-| Full-stack peak VRAM | 6,965 MiB |
-| Warm Whisper load | 28.8 s |
-| Whisper on 13.4 s reference audio | 9.0 s |
-| Warm Gemma load, 42 GPU layers | 2.5 s |
-| Gemma sample response | 2.8 s |
-| Warm OmniVoice V2 load | 13.3 s |
-| OmniVoice V2, 5.1 s generated audio | 3.3 s |
-| TTS real-time factor | 0.66 |
-| Installed environment | 15 GB |
-| Hugging Face model cache | 9.3 GB |
-| Free space on 32 GB disk | 8.4 GB |
+| Tier | Cheapest observed GPU | Hourly total | 730-hour month |
+| --- | --- | ---: | ---: |
+| 32 GB+ | Quadro RTX 8000 48 GB | $0.25111 | $183.31 |
+| 48 GB+ | Quadro RTX 8000 48 GB | $0.25111 | $183.31 |
 
-The loaded TTS snapshot was
-`2broke2code/serendib-omnivoice-finetuned-v2` revision
-`b0cf77a8ad8a50881d5fa992aee714d626e97c7b`. A synthesized Sinhala sentence
-was transcribed back successfully by the production ASR model.
+There was no cheaper compatible 32 GB listing at the snapshot, so the 32 GB
+query selected a 48 GB Quadro RTX 8000. This older Turing card is inexpensive
+and has ample memory, but a newer A6000, A40, L40, or RTX 6000 Ada may deliver
+better latency. The A6000 48 GB contract used for the current training run costs
+about $0.50074/hour with a 200 GB disk, or $365.54 for 730 continuous hours.
 
-The same test with only 24 Gemma GPU layers took 12.7 seconds for the sample
-response. Full offload reduced that to 2.8 seconds while increasing peak VRAM
-by less than 1 GB, so CPU offload is not appropriate for this workload.
+Vast.ai prices and availability change continuously. Totals include the disk
+selected by the query but exclude usage-based network transfer. See Vast.ai's
+[pricing documentation](https://docs.vast.ai/guides/instances/pricing).
 
-## Why Not 8 GB
+## Training Result and Validation Status
 
-The measured stack could fit narrowly on an 8 GB Ampere GPU, but it would leave
-less than 1 GB of VRAM headroom. The cheapest reliable 8 GB offers also had
-roughly the same hourly compute price as the 12 GB tier and substantially less
-system RAM. That creates OOM and concurrency risk without meaningful savings.
+The Gemma 4 26B-A4B response-only LoRA completed 351 optimizer steps over three
+epochs on an RTX A6000. Training took 9,121 seconds (2 hours 32 minutes), with a
+final training loss of 1.113 and validation loss of 1.246. The private adapter,
+16.8 GB `Q4_K_M` GGUF, and `training_results.json` are stored on Hugging Face.
 
-## Provider Comparison
+The training host was destroyed after the artifacts were verified. The full
+Whisper + LLM + OmniVoice stack has not yet been measured with this model, so
+record the following before selecting the long-running tier:
 
-Observed or published starting prices at the snapshot date:
+| Measurement | Required result |
+| --- | --- |
+| Idle full-stack VRAM | Fits with several GiB of headroom |
+| Peak turn VRAM | No CUDA OOM during ASR, generation, or TTS |
+| LLM first-token and total latency | Suitable for a phone conversation |
+| End-to-end turn latency | Acceptable during an actual WhatsApp call |
+| Disk usage | Leaves room for model cache and logs |
 
-| Provider | Suitable tier | Approximate monthly cost |
-| --- | --- | ---: |
-| Vast.ai | RTX 3060 12 GB, lowest observed plus 32 GB disk | $28.88 |
-| Vast.ai | RTX 3060 12 GB, lower-risk observed plus 32 GB disk | $39.37 |
-| Salad | RTX 3060 12 GB batch price | $61.32 |
-| RunPod | RTX A5000 24 GB | $197.10 |
+If peak usage is at most roughly 27-28 GiB, a 32 GB production card is the
+right value target. If it approaches 32 GiB or concurrent calls are required,
+use 48 GB.
 
-Vast.ai is market-priced and bills compute, storage, and bandwidth separately:
-<https://docs.vast.ai/guides/instances/pricing>. Salad publishes its container
-prices at <https://salad.com/pricing>, and RunPod publishes its GPU prices at
-<https://www.runpod.io/pricing>.
+## Operational Notes
 
-Interruptible instances are inappropriate for an inbound phone service because
-they can pause at any time. Serverless GPU cold starts are also a poor fit for
-this 24 GB on-disk stack unless an always-on front end and long first-call delay
-are acceptable.
-
+Use on-demand instances for the inbound phone service. Interruptible instances
+can pause without notice, and serverless cold starts are a poor fit for a model
+stack of this size. Keep a test instance running until the WhatsApp call is
+confirmed, then destroy it promptly so billing stops.

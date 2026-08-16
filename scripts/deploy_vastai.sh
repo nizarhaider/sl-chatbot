@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-DISK_GB="${DISK_GB:-40}"
+DISK_GB="${DISK_GB:-80}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-32}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-18e97fc6703dea11057cee364a8eaa8c}"
@@ -18,6 +19,8 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/uv/"
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
+[[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
+[ "${MIN_GPU_RAM_GB}" -ge 32 ] || fail "Gemma 4 26B deployments require at least 32 GB VRAM"
 
 PYTHON="${ROOT_DIR}/.venv/bin/python"
 test -x "${PYTHON}" || fail "Run 'uv sync' locally once before deploying"
@@ -27,9 +30,9 @@ VASTAI_API_KEY="$(${PYTHON} -c \
 test -n "${VASTAI_API_KEY}" || fail "VASTAI_API_KEY is missing from .env"
 
 VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
-QUERY="num_gpus=1 gpu_ram>=16 cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1"
+QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1"
 
-log "Finding the cheapest verified on-demand RTX 4070 or 30-series GPU with at least 16 GB VRAM..."
+log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM..."
 OFFER="$("${VASTAI[@]}" search offers "${QUERY}" \
   --storage "${DISK_GB}" --order dph --limit 200 \
   | "${PYTHON}" -c '
@@ -38,7 +41,7 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-allowed = re.compile(r"^RTX (?:4070|30[0-9]{2})", re.IGNORECASE)
+allowed = re.compile(r"^(?:RTX (?:3090|4090|A5000|A6000|5000 Ada|6000 Ada)|A40|L40S?|Q RTX 8000)$", re.IGNORECASE)
 eligible = [offer for offer in offers if allowed.search(str(offer.get("gpu_name", "")))]
 if not eligible:
     raise SystemExit("No eligible Vast.ai offer is currently available")
