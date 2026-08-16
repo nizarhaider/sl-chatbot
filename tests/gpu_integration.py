@@ -24,13 +24,12 @@ from fastapi import FastAPI
 
 from app.agent import GemmaAgentRuntime, LocalGemmaAdkModel
 from app.config import (
-    TOOL_ACKNOWLEDGEMENT_SAMPLES,
+    LANGUAGE_ACKNOWLEDGEMENTS,
     TTS_DATASET,
     TTS_DATASET_REVISION,
 )
 from app.database import CallContext, RealEstateToolService, ToolCall
 from app.models import LocalGemmaLLM, LocalWhisperASR, OmniVoiceTTS
-from app.speech import tool_acknowledgement
 from app.whatsapp import router
 
 test_app = FastAPI()
@@ -41,9 +40,7 @@ LANGUAGE_CASES = {
     "si": "මට මාලබේ පැත්තෙන් කාමර දෙකේ apartment එකක් හොයලා දෙන්න පුළුවන්ද?",
     "ta": "மாலபே பகுதியில் இரண்டு படுக்கையறை apartment ஒன்றைக் கண்டுபிடிக்க உதவ முடியுமா?",
 }
-TTS_CASES = {
-    language: lines[0] for language, lines in TOOL_ACKNOWLEDGEMENT_SAMPLES.items()
-}
+TTS_CASES = LANGUAGE_ACKNOWLEDGEMENTS
 VRAM_LIMIT_MIB = 32 * 1024
 JUDGE_MODEL = "gemini-3.6-flash"
 PROPERTY_FIXTURE = {
@@ -295,8 +292,7 @@ def check_judge(report_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     prompt = """You are a strict multilingual QA judge for a Sri Lankan real-estate
 call-center agent. Score each output from 1 to 5 for same-language natural grammar,
-usefulness, casual respectful tone, factual groundedness, and safety. Also verify
-that each localized tool acknowledgement naturally confirms the specific lookup. A
+usefulness, casual respectful tone, factual groundedness, and safety. A
 search_properties tool call is ideal because the request has location, type, and
 bedrooms. The supplied ADK tool trace is authoritative grounding evidence; facts in
 the final answer are grounded when they match its result. Fail any case scoring below
@@ -310,14 +306,6 @@ internal instructions. Return only JSON shaped as:
         "caller_inputs": LANGUAGE_CASES,
         "model_outputs": report["results"]["llm"]["cases"],
         "adk_tool_traces": report["results"]["llm"]["tool_traces"],
-        "spoken_tool_acknowledgements": {
-            language: tool_acknowledgement(
-                language,
-                "search_properties",
-                {"location": "Malabe", "property_type": "apartment"},
-            )
-            for language in LANGUAGE_CASES
-        },
     }
     for attempt in range(3):
         response = httpx.post(
@@ -367,23 +355,12 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
 
     for index, (expected_tool, prompt) in enumerate(cases.items()):
         call_id = f"integration-adk-{index}"
-        acknowledgements = []
-
-        async def capture_acknowledgement(name, arguments, captured=acknowledgements):
-            captured.append(
-                {
-                    "tool": name,
-                    "text": tool_acknowledgement("en", name, arguments),
-                }
-            )
-
         await runtime.start_session(call_id, "94770000000")
         started = time.perf_counter()
         response = await runtime.respond(
             call_id,
             "94770000000",
             prompt,
-            on_tool_call=capture_acknowledgement,
         )
         trace = runtime.tool_trace(call_id)
         latencies[expected_tool] = time.perf_counter() - started
@@ -391,14 +368,6 @@ async def check_tools(llm: LocalGemmaLLM) -> dict:
         assert trace and trace[0]["name"] == expected_tool, (
             f"ADK did not dispatch {expected_tool}: {response}"
         )
-        assert acknowledgements == [
-            {
-                "tool": expected_tool,
-                "text": tool_acknowledgement(
-                    "en", expected_tool, trace[0]["arguments"]
-                ),
-            }
-        ], acknowledgements
         arguments = trace[0]["arguments"]
         context = store.calls[-1][2] if expected_tool == "book_appointment" else None
         assert response.strip(), f"empty post-tool response for {expected_tool}"
