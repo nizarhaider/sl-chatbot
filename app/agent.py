@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from difflib import SequenceMatcher
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -31,15 +29,7 @@ from app.database import (
     tool_call_message,
 )
 from app.models import LocalGemmaLLM, strip_thinking
-from app.speech import (
-    PLACE_NAMES,
-    closest_location,
-    detect_language,
-    is_broad_property_request,
-    is_property_location_request,
-    known_location,
-    stated_property_filters,
-)
+from app.speech import detect_language
 
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
@@ -66,89 +56,7 @@ class LocalGemmaAdkModel(BaseLlm):
         del stream  # The phone runtime consumes complete, non-streaming turns.
         messages = _chat_messages(llm_request)
         tools = _openai_tools(llm_request)
-        caller_text = _latest_caller_text(messages)
-        if _is_post_tool_turn(messages):
-            message = {"content": _grounded_fallback(messages), "tool_calls": []}
-        elif is_property_location_request(caller_text):
-            message = {
-                "content": None,
-                "tool_calls": [
-                    {"function": {"name": "list_property_locations", "arguments": {}}}
-                ],
-            }
-        elif location := _confirmed_location_suggestion(messages):
-            message = {
-                "content": None,
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "search_properties",
-                            "arguments": {"location": location},
-                        }
-                    }
-                ],
-            }
-        elif location := _location_followup(messages):
-            message = {
-                "content": None,
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "search_properties",
-                            "arguments": {
-                                "query": _latest_caller_text(messages),
-                                "location": location,
-                            },
-                        }
-                    }
-                ],
-            }
-        elif _awaiting_location(messages):
-            message = {
-                "content": None,
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "list_property_locations",
-                            "arguments": {"query": caller_text},
-                        }
-                    }
-                ],
-            }
-        elif is_broad_property_request(caller_text):
-            message = {
-                "content": _location_question(_caller_language(messages)),
-                "tool_calls": [],
-            }
-        else:
-            message = await self._backend.chat(messages, tools)
-            message = _enrich_search_call(message, caller_text)
-            for _ in range(1):
-                violations = _response_contract_violations(message, messages)
-                if not violations:
-                    break
-                logger.info("Correcting Gemma response: %s", "; ".join(violations))
-                message = await self._backend.chat(
-                    [
-                        *messages,
-                        {
-                            "role": "assistant",
-                            "content": strip_thinking(message.get("content") or ""),
-                        },
-                        {
-                            "role": "user",
-                            "content": _correction_prompt(messages, violations),
-                        },
-                    ],
-                    tools,
-                )
-            violations = _response_contract_violations(message, messages)
-            if violations:
-                logger.info("Using safe response fallback: %s", "; ".join(violations))
-                message = {
-                    "content": _safe_fallback(messages, violations),
-                    "tool_calls": [],
-                }
+        message = await self._backend.chat(messages, tools)
         parts = _response_parts(message)
         yield LlmResponse(
             content=types.Content(role="model", parts=parts),
@@ -162,7 +70,6 @@ class PropertyAgentTools:
     def __init__(self, service: RealEstateToolService | None) -> None:
         self.service = service
         self.traces: dict[str, list[dict[str, Any]]] = {}
-        self.callbacks: dict[str, Callable[[str, dict[str, Any]], Awaitable[None]]] = {}
 
     async def search_properties(
         self,
@@ -266,8 +173,6 @@ class PropertyAgentTools:
             name,
             safe_arguments,
         )
-        if callback := self.callbacks.pop(call_id, None):
-            await callback(name, arguments)
         if self.service is None:
             result = {"ok": False, "error": "The booking database is not configured."}
         else:
@@ -367,39 +272,33 @@ class GemmaAgentRuntime:
         phone: str,
         transcript: str,
         language: str | None = None,
-        on_tool_call: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> str:
         if call_id not in self._users:
             await self.start_session(call_id, phone)
         self.tools.traces[call_id] = []
-        if on_tool_call:
-            self.tools.callbacks[call_id] = on_tool_call
         final_text = ""
-        try:
-            async for event in self.runner.run_async(
-                user_id=self._users[call_id],
-                session_id=call_id,
-                new_message=types.Content(
-                    role="user", parts=[types.Part(text=transcript)]
+        async for event in self.runner.run_async(
+            user_id=self._users[call_id],
+            session_id=call_id,
+            new_message=types.Content(
+                role="user", parts=[types.Part(text=transcript)]
+            ),
+            state_delta={
+                "caller_language": language or detect_language(transcript)
+            },
+            run_config=RunConfig(
+                max_llm_calls=3,
+                get_session_config=GetSessionConfig(
+                    num_recent_events=LLM_HISTORY_MESSAGES
                 ),
-                state_delta={
-                    "caller_language": language or detect_language(transcript)
-                },
-                run_config=RunConfig(
-                    max_llm_calls=3,
-                    get_session_config=GetSessionConfig(
-                        num_recent_events=LLM_HISTORY_MESSAGES
-                    ),
-                ),
-            ):
-                if event.is_final_response() and event.content:
-                    final_text = " ".join(
-                        part.text.strip()
-                        for part in event.content.parts or []
-                        if part.text and part.text.strip()
-                    )
-        finally:
-            self.tools.callbacks.pop(call_id, None)
+            ),
+        ):
+            if event.is_final_response() and event.content:
+                final_text = " ".join(
+                    part.text.strip()
+                    for part in event.content.parts or []
+                    if part.text and part.text.strip()
+                )
         return strip_thinking(final_text)
 
     def tool_trace(self, call_id: str) -> list[dict[str, Any]]:
@@ -408,7 +307,6 @@ class GemmaAgentRuntime:
     async def end_session(self, call_id: str) -> None:
         user_id = self._users.pop(call_id, None)
         self.tools.traces.pop(call_id, None)
-        self.tools.callbacks.pop(call_id, None)
         if user_id:
             await self.sessions.delete_session(
                 app_name=APP_NAME, user_id=user_id, session_id=call_id
@@ -550,366 +448,3 @@ def _response_parts(message: dict) -> list[types.Part]:
     if not parts:
         parts.append(types.Part(text=text))
     return parts
-
-
-def _enrich_search_call(message: dict, caller_text: str) -> dict:
-    """Add caller-stated filters when the model selected the property search tool."""
-    calls = message.get("tool_calls") or []
-    for raw_call in calls:
-        function = raw_call.get("function", {})
-        if function.get("name") != "search_properties":
-            continue
-        arguments = function.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                arguments = {}
-        arguments = dict(arguments) if isinstance(arguments, dict) else {}
-        arguments.setdefault("query", caller_text)
-        arguments.update(stated_property_filters(caller_text))
-        function["arguments"] = arguments
-    return message
-
-
-def _response_contract_violations(message: dict, messages: list[dict]) -> list[str]:
-    response = strip_thinking(message.get("content") or "")
-    if message.get("tool_calls") or parse_tool_call(response):
-        return []
-    violations = []
-    if _repeats_previous_answer(response, messages):
-        violations.append(
-            "do not repeat the previous answer; address the latest request directly"
-        )
-    if re.search(r"ඔබතුමි(?:ය|යා)|ඔබතුමා", response):
-        violations.append("use the gender-neutral Sinhala address ඔබ")
-    if _no_property_selected(messages) and re.search(
-        r"\b(?:book|booking|appointment|arrange|viewing|this property|that property)\b|"
-        r"මේ property|මෙම property|booking|appointment|arrange|වෙන් කළ|හවස|උදේ|"
-        r"இந்த property|appointment|பதிவு",
-        response,
-        re.IGNORECASE,
-    ):
-        violations.append(
-            "no property is selected; ask the caller to choose one before a viewing"
-        )
-    if len(response) > 320:
-        violations.append("keep the spoken reply under 320 characters")
-    if len(response) >= 180 and not re.search(r"[.!?।]\s*$", response):
-        violations.append("finish the reply at a complete sentence")
-    return violations
-
-
-def _no_property_selected(messages: list[dict]) -> bool:
-    return not any(
-        message.get("role") == "system"
-        and "exact property_id" in str(message.get("content", ""))
-        for message in messages
-    )
-
-
-def _is_post_tool_turn(messages: list[dict]) -> bool:
-    return bool(messages) and "<tool_result>" in str(messages[-1].get("content", ""))
-
-
-def _caller_language(messages: list[dict]) -> str:
-    instruction = str(messages[0].get("content", "")) if messages else ""
-    for code, name in LANGUAGE_NAMES.items():
-        if f"in {name} ({code})" in instruction:
-            return code
-    return detect_language(_latest_caller_text(messages))
-
-
-def _latest_caller_text(messages: list[dict]) -> str:
-    return next(
-        (
-            str(item.get("content", ""))
-            for item in reversed(messages)
-            if item.get("role") == "user"
-            and "<tool_result>" not in str(item.get("content", ""))
-        ),
-        "",
-    )
-
-
-def _location_question(language: str) -> str:
-    if language == "si":
-        return "හරි. ඔබ property එකක් බලන්නේ මොන ප්‍රදේශයෙන්ද?"
-    if language == "ta":
-        return "சரி. நீங்கள் எந்த பகுதியில் property பார்க்க விரும்புகிறீர்கள்?"
-    return "Sure. Which location would you prefer for the property?"
-
-
-def _location_retry(language: str) -> str:
-    if language == "si":
-        return "සමාවෙන්න, ප්‍රදේශයේ නම හරියට ඇහුණේ නැහැ. ආයෙත් එක පාරක් කියන්න පුළුවන්ද?"
-    if language == "ta":
-        return "மன்னிக்கவும், பகுதியின் பெயர் தெளிவாகக் கேட்கவில்லை. இன்னொரு முறை சொல்ல முடியுமா?"
-    return "Sorry, I didn't catch the area name. Could you say it once more?"
-
-
-def _location_suggestion(language: str, location: str) -> str:
-    spoken = PLACE_NAMES.get(language, {}).get(location, location)
-    if language == "si":
-        return f"ඔබ කිව්වේ {spoken} ද?"
-    if language == "ta":
-        return f"நீங்கள் சொன்னது {spoken} தானா?"
-    return f"Did you mean {location}?"
-
-
-def _confirmed_location_suggestion(messages: list[dict]) -> str | None:
-    caller = re.sub(r"[^\w\u0B80-\u0BFF\u0D80-\u0DFF]+", " ", _latest_caller_text(messages).casefold()).strip()
-    affirmatives = {"yes", "yeah", "yep", "correct", "ඔව්", "හරි", "ஆம்", "ஆமாம்", "சரி"}
-    if caller not in affirmatives:
-        return None
-    previous = next(
-        (
-            str(item.get("content", ""))
-            for item in reversed(messages[:-1])
-            if item.get("role") == "assistant"
-        ),
-        "",
-    )
-    if not any(marker in previous for marker in ("Did you mean", "ඔබ කිව්වේ", "நீங்கள் சொன்னது")):
-        return None
-    return known_location(previous)
-
-
-def _location_followup(messages: list[dict]) -> str | None:
-    location = known_location(_latest_caller_text(messages))
-    return location if location and _awaiting_location(messages) else None
-
-
-def _awaiting_location(messages: list[dict]) -> bool:
-    previous = next(
-        (
-            str(item.get("content", ""))
-            for item in reversed(messages[:-1])
-            if item.get("role") == "assistant"
-        ),
-        "",
-    )
-    previous_caller = next(
-        (
-            str(item.get("content", ""))
-            for item in reversed(messages[:-1])
-            if item.get("role") == "user"
-            and "<tool_result>" not in str(item.get("content", ""))
-        ),
-        "",
-    )
-    questions = (_location_question(language) for language in ("en", "si", "ta"))
-    location_lists = (
-        "Properties are currently available in:",
-        "properties තියෙන්නේ මේ ප්‍රදේශවලයි:",
-        "properties உள்ளன:",
-    )
-    folded_previous = previous.casefold()
-    model_location_question = (
-        any(marker in folded_previous for marker in ("location", "ප්‍රදේශ", "பகுதி"))
-        and any(marker in previous for marker in ("?", "කියන්න", "சொல்ல"))
-    )
-    return (
-        any(question in previous for question in questions)
-        or is_broad_property_request(previous_caller)
-        or any(marker in previous for marker in location_lists)
-        or model_location_question
-    )
-
-
-def _correction_prompt(messages: list[dict], violations: list[str]) -> str:
-    language = _caller_language(messages)
-    if language == "si":
-        return (
-            "අලුත්ම caller ඉල්ලීමට සෘජුව පිළිතුරු දෙන්න. කලින් පිළිතුර නැවත කියන්න එපා. "
-            "ප්‍රයෝජනවත් කෙටි වාක්‍ය එකක් සිට තුනක් දක්වා සිංහලෙන් කියන්න."
-        )
-    if language == "ta":
-        return (
-            "அழைப்பாளரின் சமீபத்திய கோரிக்கைக்கு நேரடியாகப் பதிலளிக்கவும். முந்தைய பதிலை "
-            "மீண்டும் சொல்ல வேண்டாம். தமிழ் எழுத்துகளை மட்டும் பயன்படுத்தி ஒன்று முதல் மூன்று "
-            "பயனுள்ள குறுகிய வாக்கியங்கள் பேசவும். சிங்கள எழுத்துகளை ஒருபோதும் பயன்படுத்த வேண்டாம்; "
-            "ஆங்கிலப் பெயர்களும் எண்களும் மட்டும் விதிவிலக்கு."
-        )
-    return (
-        "Rewrite only the final spoken answer entirely in English. Fix these violations: "
-        + "; ".join(violations)
-        + ". Give one to three useful short sentences and answer the latest request directly."
-    )
-
-
-def _repeats_previous_answer(response: str, messages: list[dict]) -> bool:
-    current = " ".join(re.findall(r"\w+", response.casefold()))
-    if not current:
-        return False
-    previous = next(
-        (
-            str(item.get("content", ""))
-            for item in reversed(messages)
-            if item.get("role") == "assistant"
-            and "<tool_call>" not in str(item.get("content", ""))
-        ),
-        "",
-    )
-    prior = " ".join(re.findall(r"\w+", previous.casefold()))
-    if not prior:
-        return False
-    return current == prior or SequenceMatcher(None, current, prior).ratio() >= 0.84
-
-
-def _grounded_fallback(messages: list[dict]) -> str:
-    """Render a concise answer when Gemma cannot satisfy the post-tool contract."""
-    language = _caller_language(messages)
-    result = _latest_tool_result(messages)
-    if missing := result.get("needs_clarification"):
-        prompts = {
-            "en": {
-                "location": _location_question("en"),
-                "property": "Which property would you like to view?",
-                "customer_name": "What name should I use for the viewing?",
-                "appointment_at": "What date and time would suit you for the viewing?",
-            },
-            "si": {
-                "location": _location_question("si"),
-                "property": "ඔබ බලන්න කැමති මොන property එකද?",
-                "customer_name": "Viewing එක වෙන් කරන්න ඔබේ නම කියන්න පුළුවන්ද?",
-                "appointment_at": "Viewing එකට ඔබට ගැළපෙන දවස සහ වෙලාව මොකක්ද?",
-            },
-            "ta": {
-                "location": _location_question("ta"),
-                "property": "நீங்கள் எந்த property-ஐ பார்க்க விரும்புகிறீர்கள்?",
-                "customer_name": "Viewing பதிவு செய்ய உங்கள் பெயரைச் சொல்ல முடியுமா?",
-                "appointment_at": "Viewing-க்கு உங்களுக்கு ஏற்ற தேதி மற்றும் நேரம் என்ன?",
-            },
-        }
-        return prompts[language].get(str(missing), prompts[language]["location"])
-    properties = result.get("properties") or []
-    if properties:
-        if len(properties) == 1:
-            row = properties[0]
-            name = str(row.get("name") or "Property")
-            location = str(row.get("location") or "Sri Lanka")
-            spoken_location = PLACE_NAMES.get(language, {}).get(location, location)
-            price = row.get("price_lkr")
-            amount = f"{price:,}" if isinstance(price, int) else "—"
-            if language == "si":
-                return (
-                    f"{spoken_location} තියෙන {name} එක රුපියල් {amount}කට තියෙනවා. "
-                    "ඒ ගැන තව විස්තර කියන්නද?"
-                )
-            if language == "ta":
-                return (
-                    f"{spoken_location} பகுதியில் உள்ள {name} விலை {amount} ரூபாய். "
-                    "அதைப் பற்றி மேலும் சொல்லவா?"
-                )
-            return (
-                f"I found {name} in {location} for LKR {amount}. "
-                "Would you like to hear more about it?"
-            )
-        choices = []
-        for row in properties[:2]:
-            name = str(row.get("name") or "Property")
-            location = str(row.get("location") or "Sri Lanka")
-            spoken_location = PLACE_NAMES.get(language, {}).get(location, location)
-            price = row.get("price_lkr")
-            amount = f"{price:,}" if isinstance(price, int) else "—"
-            if language == "si":
-                choices.append(
-                    f"{spoken_location} {name} එක රුපියල් {amount}කට"
-                )
-            elif language == "ta":
-                choices.append(
-                    f"{spoken_location} பகுதியில் {name}, {amount} ரூபாய்"
-                )
-            else:
-                choices.append(f"{name} in {location} for LKR {amount}")
-        if language == "si":
-            return (
-                f"ඔබට ගැළපෙන තැන් දෙකක් හම්බ වුණා. {choices[0]}, "
-                f"අනිත් එක {choices[1]}. වැඩි විස්තර ඕනේ මොන එක ගැනද?"
-            )
-        if language == "ta":
-            return (
-                f"உங்களுக்கு பொருத்தமான இரண்டு வாய்ப்புகள் கிடைத்துள்ளன. {choices[0]}; "
-                f"இன்னொன்று {choices[1]}. எதைப் பற்றி மேலும் கேட்க விரும்புகிறீர்கள்?"
-            )
-        return (
-            f"I found two good options for you: {choices[0]}, and {choices[1]}. "
-            "Which one would you like to hear more about?"
-        )
-
-    filters = result.get("search_arguments") or {}
-    if filters.get("query") and len(filters) == 1:
-        if language == "si":
-            return "Property නම පැහැදිලිව ඇහුණේ නැහැ. කරුණාකර නම නැවත කියන්න."
-        if language == "ta":
-            return "Property பெயர் தெளிவாக கேட்கவில்லை. தயவுசெய்து பெயரை மீண்டும் சொல்லுங்கள்."
-        return "I didn't catch the property name clearly. Please repeat it."
-
-    locations = result.get("locations") or result.get("available_locations") or []
-    if locations:
-        if query := str(result.get("location_query") or "").strip():
-            suggestion = closest_location(query, list(map(str, locations)))
-            return (
-                _location_suggestion(language, suggestion)
-                if suggestion
-                else _location_retry(language)
-            )
-        joined = ", ".join(map(str, locations[:3]))
-        if language == "si":
-            return f"දැනට {joined} ඇතුළු ප්‍රදේශ කිහිපයක properties තියෙනවා. ඔබ කැමති ප්‍රදේශය මොකක්ද?"
-        if language == "ta":
-            return f"தற்போது {joined} உட்பட பல பகுதிகளில் properties உள்ளன. எந்த பகுதியை விரும்புகிறீர்கள்?"
-        return f"We have properties in areas including {joined}. Which area would you prefer?"
-
-    if appointment := result.get("appointment"):
-        name = str(appointment.get("property_name") or "the property")
-        when = str(appointment.get("appointment_at") or "the requested time")
-        if language == "si":
-            return f"{name} බලන්න {when} වෙලාවට appointment එක වෙන් කළා."
-        if language == "ta":
-            return f"{name} பார்வைக்கு {when} நேரத்தில் appointment பதிவு செய்யப்பட்டது."
-        return f"Your viewing for {name} is booked for {when}."
-
-    if language == "si":
-        return "ඒ වැඩේ සම්පූර්ණ කරන්න බැරි වුණා. අවශ්‍ය විස්තර නැවත කියන්න."
-    if language == "ta":
-        return "அதை முடிக்க முடியவில்லை. தேவையான விவரங்களை மீண்டும் சொல்லுங்கள்."
-    return "I couldn't complete that. Please repeat the required details."
-
-
-def _safe_fallback(messages: list[dict], violations: list[str]) -> str:
-    language = _caller_language(messages)
-    needs_property = any("no property is selected" in item for item in violations)
-    if language == "si":
-        return (
-            "මුලින් ඔබ කැමති property එකේ නම කියන්න."
-            if needs_property
-            else "කරුණාකර ඒක තව වරක් පැහැදිලිව කියන්න."
-        )
-    if language == "ta":
-        return (
-            "முதலில் உங்களுக்கு பிடித்த property பெயரை சொல்லுங்கள்."
-            if needs_property
-            else "தயவுசெய்து அதை மீண்டும் தெளிவாக சொல்லுங்கள்."
-        )
-    return (
-        "Please choose the property first."
-        if needs_property
-        else "Please say that again clearly."
-    )
-
-
-def _latest_tool_result(messages: list[dict]) -> dict:
-    for message in reversed(messages):
-        content = str(message.get("content", ""))
-        matches = list(
-            re.finditer(r"<tool_result>(.*?)</tool_result>", content, re.DOTALL)
-        )
-        if matches:
-            try:
-                result = json.loads(matches[-1].group(1))
-            except json.JSONDecodeError:
-                return {}
-            return result if isinstance(result, dict) else {}
-    return {}

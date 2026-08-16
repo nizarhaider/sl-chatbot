@@ -27,7 +27,7 @@ from app.config import (
 )
 from app.database import call_log
 from app.models import LocalWhisperASR, OmniVoiceTTS, is_noise_text
-from app.speech import detect_language, selected_language, tool_acknowledgement
+from app.speech import detect_language, selected_language
 
 logger = logging.getLogger(__name__)
 
@@ -171,25 +171,8 @@ class TurnPipeline:
             self._call_languages[call_id] = choice
         language = self._call_languages.get(call_id, detect_language(transcript))
 
-        async def acknowledge(name: str, arguments: dict) -> None:
-            line = tool_acknowledgement(language, name, arguments)
-            logger.info("Turn tool acknowledgement for %s: %s", call_id, line)
-            call_log.add(call_id, "assistant", line)
-            seconds = await self._speak(
-                call_id, line, output_track, generations, language
-            )
-            await self._discard_echo(input_track, output_track, seconds)
-
-        tool_signal = asyncio.get_running_loop().create_future()
-        acknowledgement_done = asyncio.Event()
-
-        async def on_tool_call(name: str, arguments: dict) -> None:
-            if not tool_signal.done():
-                tool_signal.set_result((name, arguments))
-                await acknowledgement_done.wait()
-
         response_task = asyncio.create_task(
-            self._respond(call_id, phone, transcript, language, on_tool_call)
+            self._respond(call_id, phone, transcript, language)
         )
         try:
             while True:
@@ -204,12 +187,8 @@ class TurnPipeline:
                     output_track,
                     generations,
                     RESPONSE_POLL_SECONDS,
-                    tool_signal if not acknowledgement_done.is_set() else None,
+                    None,
                 )
-                if tool_call:
-                    await acknowledge(*tool_call)
-                    acknowledgement_done.set()
-                    continue
                 if interrupted:
                     response_task.cancel()
                     await asyncio.gather(response_task, return_exceptions=True)
@@ -226,7 +205,6 @@ class TurnPipeline:
                 if response is not None:
                     break
         finally:
-            acknowledgement_done.set()
             if not response_task.done():
                 response_task.cancel()
                 await asyncio.gather(response_task, return_exceptions=True)
@@ -322,17 +300,8 @@ class TurnPipeline:
         phone: str,
         transcript: str,
         language: str,
-        on_tool_call=None,
     ) -> str:
         try:
-            if on_tool_call:
-                return await self.agent.respond(
-                    call_id,
-                    phone,
-                    transcript,
-                    language=language,
-                    on_tool_call=on_tool_call,
-                )
             return await self.agent.respond(
                 call_id, phone, transcript, language=language
             )

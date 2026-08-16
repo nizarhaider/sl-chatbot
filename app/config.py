@@ -39,12 +39,6 @@ TTS_STEPS = 20
 TTS_SPEED = 0.98
 
 RESPONSE_POLL_SECONDS = 10
-TOOL_ACKNOWLEDGEMENT_SAMPLES = {
-    "si": ("හරි, ඒ විස්තර බලලා කියන්නම්.",),
-    "ta": ("சரி, அந்த தகவலைச் சரிபார்த்துச் சொல்கிறேன்.",),
-    "en": ("Sure, let me check that information.",),
-}
-
 # Turn detection and playback protection.
 INPUT_CHUNK_MS = 40
 INPUT_CHUNK_BYTES = (16_000 * 2 * INPUT_CHUNK_MS) // 1000

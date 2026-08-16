@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import re
-import unicodedata
-from difflib import SequenceMatcher
 
 SINHALA_ONES = (
     "බිංදුව",
@@ -105,11 +103,6 @@ PROPERTY_SPECIFICS = re.compile(
     + r"|නිදන|කාමර|මිල|ළඟ|ප්‍රදේශ|කොහෙද|வீடு|வில்லா|காணி|படுக்கையறை|விலை|பகுதி|எங்கே",
     re.IGNORECASE,
 )
-PROPERTY_LOCATION_REQUEST = re.compile(
-    r"\b(?:where|locations?|which\s+areas?)\b|මොන\s+(?:locations?|ප්‍රදේශ)|"
-    r"ප්‍රදේශ.*කොහෙද|எந்த\s+(?:இட|பகுதி)|எங்கே",
-    re.IGNORECASE,
-)
 PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙන|තියෙන\s+ඒවා\s+පෙන්නන්න")
 
 
@@ -159,157 +152,6 @@ def is_broad_property_request(text: str) -> bool:
     """Return true when inventory was requested without a useful preference."""
     return bool(PROPERTY_WORDS.search(text)) and bool(
         PROPERTY_BROAD_INVENTORY.search(text) or not PROPERTY_SPECIFICS.search(text)
-    )
-
-
-def is_property_location_request(text: str) -> bool:
-    """Return true for an explicit request to list inventory locations."""
-    return bool(PROPERTY_WORDS.search(text) and PROPERTY_LOCATION_REQUEST.search(text))
-
-
-def known_location(text: str) -> str | None:
-    """Return the English inventory location named by the caller."""
-    folded = text.casefold()
-    for names in PLACE_NAMES.values():
-        for english, localized in names.items():
-            if english.casefold() in folded or localized in text:
-                return english
-    return None
-
-
-def _phonetic_key(value: str) -> str:
-    """Reduce ASR spelling variation without maintaining observed-word aliases."""
-    letters = (
-        char.casefold()
-        for char in unicodedata.normalize("NFD", value)
-        if unicodedata.category(char).startswith("L")
-    )
-    return re.sub(r"(.)\1+", r"\1", "".join(letters))
-
-
-def closest_location(text: str, available_locations: list[str]) -> str | None:
-    """Suggest one unambiguous fuzzy match from the caller's live inventory."""
-    fragments = re.findall(r"[A-Za-z\u0B80-\u0BFF\u0D80-\u0DFF]+", text.casefold())
-    fragments += [
-        "".join(fragments[start:end])
-        for start in range(len(fragments))
-        for end in range(start + 2, min(len(fragments), start + 3) + 1)
-    ]
-    if not fragments:
-        return None
-    scores: list[tuple[float, str]] = []
-    for location in available_locations:
-        variants = [location.casefold()]
-        variants.extend(
-            names[location].casefold()
-            for names in PLACE_NAMES.values()
-            if location in names
-        )
-        score = max(
-            max(
-                SequenceMatcher(None, fragment, variant).ratio(),
-                SequenceMatcher(
-                    None, _phonetic_key(fragment), _phonetic_key(variant)
-                ).ratio(),
-            )
-            for fragment in fragments
-            for variant in variants
-        )
-        scores.append((score, location))
-    scores.sort(reverse=True)
-    best_score, best_location = scores[0]
-    runner_up = scores[1][0] if len(scores) > 1 else 0.0
-    # This result is only offered as a confirmation, never searched automatically.
-    return best_location if best_score >= 0.52 and best_score - runner_up >= 0.06 else None
-
-
-def stated_property_filters(text: str) -> dict[str, str | int]:
-    """Extract only explicit property filters from multilingual caller speech."""
-    folded = text.casefold()
-    filters: dict[str, str | int] = {}
-    if location := known_location(text):
-        filters["location"] = location
-
-    property_types = {
-        "apartment": ("apartment", "flat", "මහල් නිවාස", "அபார்ட்மெண்ட்"),
-        "house": ("house", "නිවස", "ගෙයක්", "வீடு"),
-        "villa": ("villa", "විලා", "வில்லா"),
-        "land": ("land", "ඉඩම", "காணி"),
-    }
-    for property_type, names in property_types.items():
-        if any(name in folded for name in names):
-            filters["property_type"] = property_type
-            break
-
-    number_words = {
-        "one": 1,
-        "two": 2,
-        "three": 3,
-        "four": 4,
-        "five": 5,
-        "එක": 1,
-        "දෙක": 2,
-        "තුන": 3,
-        "හතර": 4,
-        "පහ": 5,
-        "ஒன்று": 1,
-        "இரண்டு": 2,
-        "மூன்று": 3,
-        "நான்கு": 4,
-        "ஐந்து": 5,
-    }
-    patterns = (
-        r"\b(\d+|one|two|three|four|five)[ -]?bed(?:room)?s?\b",
-        r"කාමර\s*(\d+|එක|දෙක|තුන|හතර|පහ)",
-        r"(\d+|ஒன்று|இரண்டு|மூன்று|நான்கு|ஐந்து)\s*படுக்கையறை",
-    )
-    for pattern in patterns:
-        if match := re.search(pattern, folded):
-            raw = match.group(1)
-            filters["bedrooms"] = int(raw) if raw.isdigit() else number_words[raw]
-            break
-    return filters
-
-
-def tool_acknowledgement(language: str, name: str, arguments: dict) -> str:
-    """Create one contextual acknowledgement for an actual tool call."""
-    if name == "list_property_locations":
-        return {
-            "en": "Sure, let me check the available locations.",
-            "si": "හරි, properties තියෙන ප්‍රදේශ බලලා කියන්නම්.",
-            "ta": "சரி, properties உள்ள பகுதிகளைப் பார்த்துச் சொல்கிறேன்.",
-        }[language]
-    if name == "book_appointment":
-        return {
-            "en": "Sure, I'll book that viewing now.",
-            "si": "හරි, ඒ viewing එක දැන් book කරන්නම්.",
-            "ta": "சரி, அந்த viewing-ஐ இப்போது book செய்கிறேன்.",
-        }[language]
-
-    location = str(arguments.get("location") or "").strip()
-    location = PLACE_NAMES.get(language, {}).get(location, location)
-    kind = str(arguments.get("property_type") or "").strip().casefold()
-    if language == "si":
-        if location and kind:
-            return f"හරි, {location} ප්‍රදේශයේ {kind} තියෙනවද බලන්නම්."
-        if location:
-            return f"හරි, {location} ප්‍රදේශයේ තියෙන properties බලන්නම්."
-        return f"හරි, තියෙන {kind or 'property'} විස්තර බලලා කියන්නම්."
-    if language == "ta":
-        if location and kind:
-            return f"சரி, {location} பகுதியில் உள்ள {kind} விவரங்களைப் பார்க்கிறேன்."
-        if location:
-            return f"சரி, {location} பகுதியில் உள்ள properties-ஐ பார்க்கிறேன்."
-        return f"சரி, உள்ள {kind or 'property'} விவரங்களைப் பார்க்கிறேன்."
-    plural = {"apartment": "apartments", "house": "houses", "villa": "villas"}.get(
-        kind, kind
-    )
-    if location and plural:
-        return f"Sure, let me check for {plural} in {location}."
-    if location:
-        return f"Sure, I'll check what's available in {location}."
-    return (
-        f"Give me a moment to check the available {plural or 'property information'}."
     )
 
 
