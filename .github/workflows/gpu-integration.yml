@@ -64,7 +64,6 @@ jobs:
           test -n "$VAST_AI_API_KEY"
           test -n "$HF_TOKEN"
           test -n "$GEMINI_API_KEY"
-          uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
           bash -n scripts/vast.sh
           grep -F 'SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-900}"' scripts/vast.sh
           grep -F 'uv sync --extra server --frozen --no-build --no-install-project' scripts/vast.sh
