@@ -707,28 +707,54 @@ def _grounded_fallback(messages: list[dict]) -> str:
             row = properties[0]
             name = str(row.get("name") or "Property")
             location = str(row.get("location") or "Sri Lanka")
+            spoken_location = PLACE_NAMES.get(language, {}).get(location, location)
             price = row.get("price_lkr")
             amount = f"{price:,}" if isinstance(price, int) else "—"
             if language == "si":
-                return f"{name}, {location} — LKR {amount}. මේ listing එක ගැන වැඩි විස්තර ඕනෙද?"
+                return (
+                    f"{spoken_location} තියෙන {name} එක රුපියල් {amount}කට තියෙනවා. "
+                    "ඒ ගැන තව විස්තර කියන්නද?"
+                )
             if language == "ta":
-                return f"{name}, {location} — LKR {amount}. இந்த listing பற்றி மேலும் விவரம் வேண்டுமா?"
-            return f"{name}, {location} — LKR {amount}. Would you like more details?"
-        listings = []
-        for row in properties[:3]:
+                return (
+                    f"{spoken_location} பகுதியில் உள்ள {name} விலை {amount} ரூபாய். "
+                    "அதைப் பற்றி மேலும் சொல்லவா?"
+                )
+            return (
+                f"I found {name} in {location} for LKR {amount}. "
+                "Would you like to hear more about it?"
+            )
+        choices = []
+        for row in properties[:2]:
             name = str(row.get("name") or "Property")
             location = str(row.get("location") or "Sri Lanka")
+            spoken_location = PLACE_NAMES.get(language, {}).get(location, location)
             price = row.get("price_lkr")
             amount = f"{price:,}" if isinstance(price, int) else "—"
-            listings.append(f"{name}, {location} — LKR {amount}")
-        joined = "; ".join(listings)
+            if language == "si":
+                choices.append(
+                    f"{spoken_location} {name} එක රුපියල් {amount}කට"
+                )
+            elif language == "ta":
+                choices.append(
+                    f"{spoken_location} பகுதியில் {name}, {amount} ரூபாய்"
+                )
+            else:
+                choices.append(f"{name} in {location} for LKR {amount}")
         if language == "si":
-            return f"දැනට listings: {joined}. ඔබ කැමති property එකේ නම කියන්න."
+            return (
+                f"ඔබට ගැළපෙන තැන් දෙකක් හම්බ වුණා. {choices[0]}, "
+                f"අනිත් එක {choices[1]}. වැඩි විස්තර ඕනේ මොන එක ගැනද?"
+            )
         if language == "ta":
             return (
-                f"தற்போதைய listings: {joined}. உங்களுக்கு பிடித்த property பெயரை சொல்லுங்கள்."
+                f"உங்களுக்கு பொருத்தமான இரண்டு வாய்ப்புகள் கிடைத்துள்ளன. {choices[0]}; "
+                f"இன்னொன்று {choices[1]}. எதைப் பற்றி மேலும் கேட்க விரும்புகிறீர்கள்?"
             )
-        return f"Current listings: {joined}. Tell me which property you prefer."
+        return (
+            f"I found two good options for you: {choices[0]}, and {choices[1]}. "
+            "Which one would you like to hear more about?"
+        )
 
     filters = result.get("search_arguments") or {}
     if filters.get("query") and len(filters) == 1:
