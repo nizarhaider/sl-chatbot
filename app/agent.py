@@ -86,6 +86,13 @@ class LocalGemmaAdkModel(BaseLlm):
                     }
                 ],
             }
+        elif _awaiting_location(messages):
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {"function": {"name": "list_property_locations", "arguments": {}}}
+                ],
+            }
         elif is_broad_property_request(caller_text):
             message = {
                 "content": _location_question(_caller_language(messages)),
@@ -548,6 +555,10 @@ def _location_question(language: str) -> str:
 
 def _location_followup(messages: list[dict]) -> str | None:
     location = known_location(_latest_caller_text(messages))
+    return location if location and _awaiting_location(messages) else None
+
+
+def _awaiting_location(messages: list[dict]) -> bool:
     previous = next(
         (
             str(item.get("content", ""))
@@ -571,15 +582,16 @@ def _location_followup(messages: list[dict]) -> str | None:
         "properties තියෙන්නේ මේ ප්‍රදේශවලයි:",
         "properties உள்ளன:",
     )
+    folded_previous = previous.casefold()
+    model_location_question = (
+        any(marker in folded_previous for marker in ("location", "ප්‍රදේශ", "பகுதி"))
+        and any(marker in previous for marker in ("?", "කියන්න", "சொல்ல"))
+    )
     return (
-        location
-        if location
-        and (
-            any(question in previous for question in questions)
-            or is_broad_property_request(previous_caller)
-            or any(marker in previous for marker in location_lists)
-        )
-        else None
+        any(question in previous for question in questions)
+        or is_broad_property_request(previous_caller)
+        or any(marker in previous for marker in location_lists)
+        or model_location_question
     )
 
 

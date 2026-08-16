@@ -12,6 +12,7 @@ from app.agent import (
     LocalGemmaAdkModel,
     PropertyAgentTools,
     _alternating_chat_messages,
+    _awaiting_location,
     _grounded_fallback,
     _is_post_tool_turn,
     _location_followup,
@@ -257,6 +258,30 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.calls[0][0].arguments["location"], "Malabe")
         await runtime.end_session("call-location")
 
+    async def test_noisy_piliyandala_answer_runs_the_deferred_search(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+        await runtime.respond("call-piliyandala", "", "මට තියෙන properties මොනවාද?")
+
+        await runtime.respond("call-piliyandala", "", "කෙළියන්ද ලබන්.")
+
+        self.assertEqual(service.calls[0][0].name, "search_properties")
+        self.assertEqual(service.calls[0][0].arguments["location"], "Piliyandala")
+        self.assertEqual(backend.requests, [])
+        await runtime.end_session("call-piliyandala")
+
+    async def test_unknown_location_lists_inventory_instead_of_model_guess(self) -> None:
+        backend, service = FakeGemmaBackend(), FakePropertyService()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), service)
+        await runtime.respond("call-unknown-location", "", "මට තියෙන properties මොනවාද?")
+
+        response = await runtime.respond("call-unknown-location", "", "කීරා")
+
+        self.assertEqual(service.calls[0][0].name, "list_property_locations")
+        self.assertIn("Malabe", response)
+        self.assertEqual(backend.requests, [])
+        await runtime.end_session("call-unknown-location")
+
     def test_location_followup_uses_previous_caller_intent(self) -> None:
         messages = [
             {"role": "user", "content": "මට තියෙන properties මොනවාද?"},
@@ -272,6 +297,18 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             {"role": "user", "content": "මේනේ රාජිය"},
         ]
         self.assertEqual(_location_followup(listed_messages), "Rajagiriya")
+
+    def test_location_followup_accepts_production_model_question_wording(self) -> None:
+        messages = [
+            {
+                "role": "assistant",
+                "content": "ඔබ සොයන property එක තියෙන්න ඕනේ මොන ප්‍රදේශයේද?",
+            },
+            {"role": "user", "content": "කෙළියන්ද ලබන්."},
+        ]
+
+        self.assertTrue(_awaiting_location(messages))
+        self.assertEqual(_location_followup(messages), "Piliyandala")
 
     async def test_location_inventory_request_is_deterministic(self) -> None:
         backend, service = FakeGemmaBackend(), FakePropertyService()
@@ -314,6 +351,10 @@ class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected_language("I would like to speak Tamil"), "ta")
         self.assertEqual(selected_language("தமிழ்"), "ta")
         self.assertIsNone(selected_language("I want an English-style apartment"))
+
+    def test_known_location_accepts_production_piliyandala_transcripts(self) -> None:
+        self.assertEqual(known_location("උන්දැලා පෙන්නැඳිලා"), "Piliyandala")
+        self.assertEqual(known_location("කෙළියන්ද ලබන්."), "Piliyandala")
 
     def test_broad_property_request_requires_a_location(self) -> None:
         self.assertTrue(is_broad_property_request("What properties do you have?"))

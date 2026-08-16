@@ -109,7 +109,14 @@ PROPERTY_LOCATION_REQUEST = re.compile(
     re.IGNORECASE,
 )
 PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙන|තියෙන\s+ඒවා\s+පෙන්නන්න")
-PLACE_ALIASES = {"කුරුණෑග": "Kurunegala", "රාජිය": "Rajagiriya"}
+PLACE_ALIASES = {
+    "කුරුණෑග": "Kurunegala",
+    "රාජිය": "Rajagiriya",
+    # Frequent Whisper renderings of spoken "Piliyandala" from production calls.
+    "පිලියන්දල": "Piliyandala",
+    "පෙන්නැඳිලා": "Piliyandala",
+    "කෙළියන්ද": "Piliyandala",
+}
 
 
 def detect_language(text: str) -> str:
