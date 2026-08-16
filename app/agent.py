@@ -102,6 +102,10 @@ class LocalGemmaAdkModel(BaseLlm):
                     [
                         *messages,
                         {
+                            "role": "assistant",
+                            "content": strip_thinking(message.get("content") or ""),
+                        },
+                        {
                             "role": "user",
                             "content": _correction_prompt(messages, violations),
                         },
@@ -392,7 +396,22 @@ def _chat_messages(llm_request: LlmRequest) -> list[dict]:
                     "content": "\n".join(text_parts),
                 }
             )
-    return messages
+    return _alternating_chat_messages(messages)
+
+
+def _alternating_chat_messages(messages: list[dict]) -> list[dict]:
+    """Keep the newest complete turns accepted by Gemma's strict chat template."""
+    system = messages[:1]
+    turns: list[dict] = []
+    for message in messages[1:]:
+        role = message.get("role")
+        if not turns and role != "user":
+            continue
+        if turns and turns[-1].get("role") == role:
+            turns[-1] = message
+        else:
+            turns.append(message)
+    return [*system, *turns]
 
 
 def _agent_instruction(context: ReadonlyContext) -> str:

@@ -11,6 +11,7 @@ from app.agent import (
     GemmaAgentRuntime,
     LocalGemmaAdkModel,
     PropertyAgentTools,
+    _alternating_chat_messages,
     _grounded_fallback,
     _is_post_tool_turn,
     _location_followup,
@@ -89,6 +90,61 @@ class FakePropertyService:
 
 
 class GemmaAgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    def test_chat_history_keeps_only_complete_alternating_turns(self) -> None:
+        messages = [
+            {"role": "system", "content": "instructions"},
+            {"role": "assistant", "content": "orphaned old answer"},
+            {"role": "user", "content": "old caller message"},
+            {"role": "user", "content": "latest caller message"},
+            {"role": "assistant", "content": "draft answer"},
+            {"role": "assistant", "content": "final answer"},
+            {"role": "user", "content": "new caller message"},
+        ]
+
+        normalized = _alternating_chat_messages(messages)
+
+        self.assertEqual(
+            [message["role"] for message in normalized],
+            ["system", "user", "assistant", "user"],
+        )
+        self.assertEqual(normalized[1]["content"], "latest caller message")
+        self.assertEqual(normalized[2]["content"], "final answer")
+
+    async def test_response_correction_preserves_role_alternation(self) -> None:
+        class CorrectionBackend:
+            def __init__(self) -> None:
+                self.requests = []
+
+            async def prewarm(self) -> None:
+                return None
+
+            async def chat(self, messages, tools):
+                del tools
+                roles = [message["role"] for message in messages]
+                self.assert_alternating(roles)
+                self.requests.append(messages)
+                if len(self.requests) == 1:
+                    return {"content": "ඔබතුමාට property එක බලන්න පුළුවන්."}
+                return {"content": "ඔබට property එක බලන්න පුළුවන්."}
+
+            @staticmethod
+            def assert_alternating(roles):
+                if roles[1:] and roles[1] != "user":
+                    raise AssertionError(roles)
+                if any(left == right for left, right in zip(roles[1:], roles[2:])):
+                    raise AssertionError(roles)
+
+        backend = CorrectionBackend()
+        runtime = GemmaAgentRuntime(LocalGemmaAdkModel(backend), FakePropertyService())
+
+        response = await runtime.respond("call-correction", "", "මට විස්තර කියන්න.")
+
+        self.assertEqual(response, "ඔබට property එක බලන්න පුළුවන්.")
+        self.assertEqual(
+            [message["role"] for message in backend.requests[1]],
+            ["system", "user", "assistant", "user"],
+        )
+
     async def test_adk_retains_events_and_dispatches_native_function_call(self) -> None:
         backend = FakeGemmaBackend()
         service = FakePropertyService()
