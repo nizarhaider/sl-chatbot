@@ -38,7 +38,7 @@ from app.speech import (
 
 logger = logging.getLogger(__name__)
 APP_NAME = "serendibai_whatsapp"
-MODEL_NAME = "local/gemma-4-e4b"
+MODEL_NAME = "local/gemma-4-26b-a4b"
 LANGUAGE_NAMES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
 
 

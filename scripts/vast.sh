@@ -5,10 +5,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
-DISK_GB="${DISK_GB:-40}"
+DISK_GB="${DISK_GB:-80}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-32}"
 APP_PORT="${APP_PORT:-8081}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-18e97fc6703dea11057cee364a8eaa8c}"
-SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-300}"
+SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-900}"
 cd "$ROOT"
 
 log() { printf '▶ %s\n' "$*"; }
@@ -20,6 +21,8 @@ load_vast() {
   VASTAI_API_KEY="$(.venv/bin/python -c \
     'from dotenv import dotenv_values; print(dotenv_values(".env").get("VASTAI_API_KEY", ""))')"
   test -n "$VASTAI_API_KEY" || fail "VASTAI_API_KEY is missing from .env"
+  [[ "$MIN_GPU_RAM_GB" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
+  [ "$MIN_GPU_RAM_GB" -ge 32 ] || fail "Gemma 4 26B requires at least 32 GB VRAM"
   VAST=(uvx --from vastai vastai --api-key "$VASTAI_API_KEY" --raw)
 }
 
@@ -192,12 +195,13 @@ deploy() {
 rent() {
   load_vast
   local query offer result instance_id state host port existing_ids old_id
-  query="num_gpus=1 gpu_ram>=16 cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true"
-  log "Selecting the cheapest RTX 4070/30-series offer"
+  query="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true"
+  log "Selecting the cheapest compatible ${MIN_GPU_RAM_GB} GB+ offer"
   offer="$("${VAST[@]}" search offers "$query" --storage "$DISK_GB" --order dph --limit 200 |
     .venv/bin/python -c '
 import json,re,sys
-rows=[r for r in json.load(sys.stdin) if re.search(r"^RTX (?:4070|30[0-9]{2})", str(r.get("gpu_name", "")), re.I)]
+allowed=re.compile(r"^(?:RTX (?:3090|4090|A5000|A6000|5000 Ada|6000 Ada)|A40|L40S?|Q RTX 8000)$", re.I)
+rows=[r for r in json.load(sys.stdin) if allowed.search(str(r.get("gpu_name", "")))]
 rows=[r for r in rows if float(r.get("inet_down", 0)) >= 2500 and float(r.get("disk_bw", 0)) >= 1500 and float(r.get("reliability", 0)) >= 0.998]
 if not rows: raise SystemExit("No eligible offer is available")
 r=min(rows, key=lambda x: float(x["dph_total"]))

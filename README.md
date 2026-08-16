@@ -54,7 +54,8 @@ uv run python -m compileall -q app scripts tests
 ./scripts/vast.sh rent
 ```
 
-This rents a fast, reliable 16 GB+ Vast GPU from the standard PyTorch template,
+This rents the cheapest compatible, reliable Vast GPU with at least 32 GB VRAM
+and an 80 GB disk from the standard PyTorch template,
 sends only committed app files and required runtime credentials, downloads the
 locked prebuilt Linux wheels and pinned Hugging Face model snapshots, then starts
 supervised FastAPI/ngrok processes and prints the webhook URL. No custom image is
@@ -88,7 +89,7 @@ The voice script downloads only the revision-pinned cloud manifest, reports
 training audio minutes before training, and reports wall-clock seconds after
 training. Keep its output in cloud storage, not Git.
 
-Gemma 4 E4B LoRA reproduction from the private, versioned cloud dataset:
+Gemma 4 26B-A4B LoRA and Q4 GGUF reproduction from the private, versioned cloud dataset:
 
 ```bash
 HF_TOKEN=... uv run scripts/finetune_llm.py
@@ -113,14 +114,14 @@ access.
 ## Quality gate
 
 Every pull request to `main` runs the required `GPU integration tests` check.
-It rents one temporary 16 GB+ Vast GPU and verifies:
+It rents one temporary 32 GB+ Vast GPU and verifies:
 
 1. webhook verification;
 2. Sinhala ASR against pinned audio;
 3. ADK-managed English, Sinhala, and Tamil Gemma responses with a Gemini judge;
 4. ADK session memory plus model-selected property search and booking function calls;
 5. audible, faster-than-real-time OmniVoice output in all three languages;
-6. a representative load below 16,384 MiB VRAM.
+6. a representative load below 32,768 MiB VRAM.
 
 The workflow uploads its JSON report and audio samples, then always destroys the
 test instance. It sends only a read-only Hugging Face token to the GPU. Required
@@ -142,6 +143,9 @@ instances whose label starts with `serendibai-ci-`. It never destroys the hosted
 
 ## Major changes
 
+- **2026-08-16:** Promoted the fine-tuned Gemma 4 26B-A4B `Q4_K_M` model,
+  raised the runtime floor to 32 GB VRAM, and kept training artifacts on
+  Hugging Face rather than in Git.
 - **2026-08-12:** Moved local Gemma orchestration to Google ADK. ADK now owns
   per-call session memory, model/tool events, and dispatch of the existing Neon
   property search and appointment functions.

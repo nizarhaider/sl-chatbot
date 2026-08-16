@@ -44,7 +44,7 @@ LANGUAGE_CASES = {
 TTS_CASES = {
     language: lines[0] for language, lines in TOOL_ACKNOWLEDGEMENT_SAMPLES.items()
 }
-VRAM_LIMIT_MIB = 16 * 1024
+VRAM_LIMIT_MIB = 32 * 1024
 JUDGE_MODEL = "gemini-3.6-flash"
 PROPERTY_FIXTURE = {
     "property_id": "11111111-1111-4111-8111-111111111111",

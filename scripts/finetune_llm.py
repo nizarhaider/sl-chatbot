@@ -6,18 +6,18 @@
 #   "unsloth>=2026.4.2",
 # ]
 # ///
-"""Fine-tune Gemma 4 E4B from the versioned Hugging Face dataset."""
+"""Fine-tune Gemma 4 26B-A4B from the versioned Hugging Face dataset."""
 
 import argparse
 import os
 import random
 
-import torch
 from datasets import load_dataset
 
-BASE_MODEL = "unsloth/gemma-4-E4B-it"
+BASE_MODEL = "unsloth/gemma-4-26B-A4B-it"
 DATASET_REPO = "2broke2code/serendib-sinhala-callcenter-sft-v1"
-ADAPTER_REPO = "2broke2code/serendib-gemma-4-e4b-sinhala-callcenter-lora-v1"
+ADAPTER_REPO = "2broke2code/serendib-gemma-4-26b-a4b-sinhala-callcenter-lora-v1"
+GGUF_REPO = "2broke2code/serendib-gemma-4-26b-a4b-sinhala-callcenter-gguf-v1"
 SEED = 3407
 
 
@@ -34,12 +34,13 @@ def main() -> None:
     token = os.getenv("HF_TOKEN")
     if not token:
         raise SystemExit("HF_TOKEN is required")
+    from unsloth import FastModel
+    from unsloth.chat_templates import get_chat_template, train_on_responses_only
+    import torch
+    from trl import SFTConfig, SFTTrainer
+
     if not torch.cuda.is_available():
         raise SystemExit("A CUDA GPU is required")
-
-    from trl import SFTConfig, SFTTrainer
-    from unsloth import FastModel
-    from unsloth.chat_templates import train_on_responses_only
 
     random.seed(SEED)
     print(f"GPU: {torch.cuda.get_device_name(0)}")
@@ -49,7 +50,9 @@ def main() -> None:
         max_seq_length=1024,
         load_in_4bit=True,
         full_finetuning=False,
+        token=token,
     )
+    tokenizer = get_chat_template(tokenizer, chat_template="gemma-4-thinking")
     model = FastModel.get_peft_model(
         model,
         finetune_vision_layers=False,
@@ -80,7 +83,7 @@ def main() -> None:
         train_dataset=formatted["train"],
         eval_dataset=formatted["validation"],
         args=SFTConfig(
-            output_dir="/workspace/serendib-gemma-e4b-lora",
+            output_dir="/workspace/serendib-gemma-4-26b-a4b-lora",
             dataset_text_field="text",
             per_device_train_batch_size=1,
             gradient_accumulation_steps=8,
@@ -103,13 +106,25 @@ def main() -> None:
             save_total_limit=2,
         ),
     )
-    trainer = train_on_responses_only(trainer)
+    trainer = train_on_responses_only(
+        trainer,
+        instruction_part="<|turn>user\n",
+        response_part="<|turn>model\n",
+    )
     result = trainer.train()
     trainer.push_to_hub(
         commit_message=f"Complete training: loss={result.metrics.get('train_loss')}"
     )
     print({"training_wall_clock_seconds": result.metrics.get("train_runtime")})
     print(f"Adapter: https://huggingface.co/{args.output}")
+    if args.output == ADAPTER_REPO:
+        model.push_to_hub_gguf(
+            GGUF_REPO,
+            tokenizer,
+            quantization_method="q4_k_m",
+            token=token,
+        )
+        print(f"GGUF: https://huggingface.co/{GGUF_REPO}")
 
 
 if __name__ == "__main__":

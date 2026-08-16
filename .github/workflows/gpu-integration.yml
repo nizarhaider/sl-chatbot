@@ -66,7 +66,7 @@ jobs:
           test -n "$GEMINI_API_KEY"
           uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
           bash -n scripts/vast.sh
-          grep -F 'SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-300}"' scripts/vast.sh
+          grep -F 'SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-900}"' scripts/vast.sh
           grep -F 'uv sync --extra server --frozen --no-build --no-install-project' scripts/vast.sh
           grep -F 'snapshot_download(repo_id=ASR_MODEL, revision=ASR_REVISION)' scripts/vast.sh
           grep -F 'ngrok http $APP_PORT --pooling-enabled' scripts/vast.sh
@@ -86,12 +86,12 @@ jobs:
             '.[] | select(.public_key | contains($marker)) | .id' | tail -n 1)
           test "$key_id" != null
           echo "VAST_SSH_KEY_ID=$key_id" >> "$GITHUB_ENV"
-          query='num_gpus=1 gpu_ram>=16 cpu_arch=amd64 disk_space>=40 cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true'
+          query='num_gpus=1 gpu_ram>=32 cpu_arch=amd64 disk_space>=80 cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true'
           offers=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
-            search offers "$query" --storage 40 --order dph --limit 200)
+            search offers "$query" --storage 80 --order dph --limit 200)
           offer_ids=$(printf '%s' "$offers" | jq -r \
             '[.[] | select(
-              (.gpu_name | test("^RTX (40[0-9]{2}|30[0-9]{2})"; "i")) and
+              (.gpu_name | test("^(RTX (3090|4090|A5000|A6000|5000 Ada|6000 Ada)|A40|L40S?|Q RTX 8000)$"; "i")) and
               .inet_down >= 2500 and .disk_bw >= 1500 and .reliability >= 0.99
             )] | sort_by(.dph_total) | .[:3] | .[].id')
           test -n "$offer_ids"
@@ -101,7 +101,7 @@ jobs:
             label="serendibai-ci-${GITHUB_RUN_ID}-${attempt_number}"
             if ! result=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
               create instance "$offer_id" --template_hash "$VAST_TEMPLATE_HASH" \
-              --disk 40 --label "$label" --ssh --direct --cancel-unavail); then
+              --disk 80 --label "$label" --ssh --direct --cancel-unavail); then
               existing=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
               orphan_id=$(printf '%s' "$existing" | jq -r --arg label "$label" \
                 '.[] | select(.label==$label) | .id' | tail -n 1)
