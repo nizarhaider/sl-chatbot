@@ -6,8 +6,10 @@ import json
 import logging
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import datetime
 from difflib import SequenceMatcher
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
@@ -206,9 +208,9 @@ class PropertyAgentTools:
     async def book_appointment(
         self,
         tool_context: ToolContext,
-        property_id: str,
-        customer_name: str,
-        appointment_at: str,
+        property_id: str = "",
+        customer_name: str = "",
+        appointment_at: str = "",
     ) -> dict:
         """Book a property viewing after all required caller details are known.
 
@@ -217,7 +219,26 @@ class PropertyAgentTools:
             customer_name: Caller's stated name.
             appointment_at: Caller-requested date and time in ISO 8601 format.
         """
-        return await self._execute(
+        property_id = property_id or str(
+            tool_context.state.get("last_property_id", "")
+        )
+        if customer_name:
+            tool_context.state["booking_customer_name"] = customer_name
+        if appointment_at:
+            tool_context.state["booking_appointment_at"] = appointment_at
+        customer_name = customer_name or str(
+            tool_context.state.get("booking_customer_name", "")
+        )
+        appointment_at = appointment_at or str(
+            tool_context.state.get("booking_appointment_at", "")
+        )
+        if not property_id:
+            return {"ok": True, "needs_clarification": "property"}
+        if not customer_name:
+            return {"ok": True, "needs_clarification": "customer_name"}
+        if not appointment_at:
+            return {"ok": True, "needs_clarification": "appointment_at"}
+        result = await self._execute(
             "book_appointment",
             {
                 "property_id": property_id,
@@ -226,6 +247,10 @@ class PropertyAgentTools:
             },
             tool_context,
         )
+        if result.get("ok"):
+            tool_context.state["booking_customer_name"] = ""
+            tool_context.state["booking_appointment_at"] = ""
+        return result
 
     async def _execute(
         self, name: str, arguments: dict[str, Any], tool_context: ToolContext
@@ -341,6 +366,7 @@ class GemmaAgentRuntime:
         call_id: str,
         phone: str,
         transcript: str,
+        language: str | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> str:
         if call_id not in self._users:
@@ -356,7 +382,9 @@ class GemmaAgentRuntime:
                 new_message=types.Content(
                     role="user", parts=[types.Part(text=transcript)]
                 ),
-                state_delta={"caller_language": detect_language(transcript)},
+                state_delta={
+                    "caller_language": language or detect_language(transcript)
+                },
                 run_config=RunConfig(
                     max_llm_calls=3,
                     get_session_config=GetSessionConfig(
@@ -453,10 +481,18 @@ def _agent_instruction(context: ReadonlyContext) -> str:
     name = LANGUAGE_NAMES.get(language, "English")
     instruction = (
         LocalGemmaLLM.system_instruction()
-        + f"\n\nThe latest caller message is in {name} ({language}). After every tool result, "
+        + f"\n\nContinue this call in {name} ({language}). After every tool result, "
         f"the spoken answer must remain entirely in {name}. Tool data is never caller speech. "
         "Only send a location filter when the caller clearly named a location. Noisy words "
         "meaning 'any' or 'some' are not locations; ask for a location before a broad search."
+    )
+    now = datetime.now(ZoneInfo("Asia/Colombo")).replace(microsecond=0).isoformat()
+    instruction += (
+        f"\nCurrent Sri Lanka date and time: {now}. Convert relative viewing times to ISO 8601. "
+        "For a viewing, collect the caller's name and date/time one missing detail at a time. "
+        "Call book_appointment only after both are known; its state preserves details across "
+        "turns. If the caller sounds frustrated, acknowledge briefly and continue from the next "
+        "missing detail."
     )
     if property_id := str(context.state.get("last_property_id", "")):
         property_name = str(context.state.get("last_property_name", "the property"))
@@ -577,6 +613,10 @@ def _is_post_tool_turn(messages: list[dict]) -> bool:
 
 
 def _caller_language(messages: list[dict]) -> str:
+    instruction = str(messages[0].get("content", "")) if messages else ""
+    for code, name in LANGUAGE_NAMES.items():
+        if f"in {name} ({code})" in instruction:
+            return code
     return detect_language(_latest_caller_text(messages))
 
 
@@ -721,8 +761,28 @@ def _grounded_fallback(messages: list[dict]) -> str:
     """Render a concise answer when Gemma cannot satisfy the post-tool contract."""
     language = _caller_language(messages)
     result = _latest_tool_result(messages)
-    if result.get("needs_clarification") == "location":
-        return _location_question(language)
+    if missing := result.get("needs_clarification"):
+        prompts = {
+            "en": {
+                "location": _location_question("en"),
+                "property": "Which property would you like to view?",
+                "customer_name": "What name should I use for the viewing?",
+                "appointment_at": "What date and time would suit you for the viewing?",
+            },
+            "si": {
+                "location": _location_question("si"),
+                "property": "ඔබ බලන්න කැමති මොන property එකද?",
+                "customer_name": "Viewing එක වෙන් කරන්න ඔබේ නම කියන්න පුළුවන්ද?",
+                "appointment_at": "Viewing එකට ඔබට ගැළපෙන දවස සහ වෙලාව මොකක්ද?",
+            },
+            "ta": {
+                "location": _location_question("ta"),
+                "property": "நீங்கள் எந்த property-ஐ பார்க்க விரும்புகிறீர்கள்?",
+                "customer_name": "Viewing பதிவு செய்ய உங்கள் பெயரைச் சொல்ல முடியுமா?",
+                "appointment_at": "Viewing-க்கு உங்களுக்கு ஏற்ற தேதி மற்றும் நேரம் என்ன?",
+            },
+        }
+        return prompts[language].get(str(missing), prompts[language]["location"])
     properties = result.get("properties") or []
     if properties:
         if len(properties) == 1:
@@ -795,12 +855,12 @@ def _grounded_fallback(messages: list[dict]) -> str:
                 if suggestion
                 else _location_retry(language)
             )
-        joined = ", ".join(map(str, locations))
+        joined = ", ".join(map(str, locations[:3]))
         if language == "si":
-            return f"දැනට properties තියෙන්නේ මේ ප්‍රදේශවලයි: {joined}."
+            return f"දැනට {joined} ඇතුළු ප්‍රදේශ කිහිපයක properties තියෙනවා. ඔබ කැමති ප්‍රදේශය මොකක්ද?"
         if language == "ta":
-            return f"தற்போது இந்த இடங்களில் properties உள்ளன: {joined}."
-        return f"Properties are currently available in: {joined}."
+            return f"தற்போது {joined} உட்பட பல பகுதிகளில் properties உள்ளன. எந்த பகுதியை விரும்புகிறீர்கள்?"
+        return f"We have properties in areas including {joined}. Which area would you prefer?"
 
     if appointment := result.get("appointment"):
         name = str(appointment.get("property_name") or "the property")

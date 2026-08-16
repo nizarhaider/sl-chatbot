@@ -38,6 +38,7 @@ class TurnPipeline:
         self.agent = GemmaAgentRuntime()
         self.tts = tts or OmniVoiceTTS()
         self._introduced_calls: set[str] = set()
+        self._call_languages: dict[str, str] = {}
 
     async def prewarm(self) -> None:
         await asyncio.to_thread(self.asr.prewarm)
@@ -56,6 +57,7 @@ class TurnPipeline:
         playback_generation: dict[str, int],
     ) -> None:
         self._introduced_calls.discard(call_id)
+        self._call_languages.pop(call_id, None)
         await self.agent.start_session(call_id, phone)
         try:
             await asyncio.sleep(GREETING_DELAY_SECONDS)
@@ -74,6 +76,7 @@ class TurnPipeline:
             )
         finally:
             self._introduced_calls.discard(call_id)
+            self._call_languages.pop(call_id, None)
             await self.agent.end_session(call_id)
 
     async def _listen(
@@ -142,9 +145,10 @@ class TurnPipeline:
         call_log.add(call_id, "caller", transcript)
 
         choice = selected_language(transcript)
-        if choice or call_id not in self._introduced_calls:
+        if call_id not in self._introduced_calls:
             choice = choice or detect_language(transcript)
             self._introduced_calls.add(call_id)
+            self._call_languages[call_id] = choice
             response = LANGUAGE_ACKNOWLEDGEMENTS[choice]
             logger.info("Turn language selected for %s: %s", call_id, choice)
             call_log.add(call_id, "assistant", response)
@@ -163,7 +167,9 @@ class TurnPipeline:
             return
 
         stage_started = time.perf_counter()
-        language = detect_language(transcript)
+        if choice:
+            self._call_languages[call_id] = choice
+        language = self._call_languages.get(call_id, detect_language(transcript))
 
         async def acknowledge(name: str, arguments: dict) -> None:
             line = tool_acknowledgement(language, name, arguments)
@@ -183,7 +189,7 @@ class TurnPipeline:
                 await acknowledgement_done.wait()
 
         response_task = asyncio.create_task(
-            self._respond(call_id, phone, transcript, on_tool_call)
+            self._respond(call_id, phone, transcript, language, on_tool_call)
         )
         try:
             while True:
@@ -311,17 +317,28 @@ class TurnPipeline:
                     return None, vad.finish(), None
 
     async def _respond(
-        self, call_id: str, phone: str, transcript: str, on_tool_call=None
+        self,
+        call_id: str,
+        phone: str,
+        transcript: str,
+        language: str,
+        on_tool_call=None,
     ) -> str:
         try:
             if on_tool_call:
                 return await self.agent.respond(
-                    call_id, phone, transcript, on_tool_call=on_tool_call
+                    call_id,
+                    phone,
+                    transcript,
+                    language=language,
+                    on_tool_call=on_tool_call,
                 )
-            return await self.agent.respond(call_id, phone, transcript)
+            return await self.agent.respond(
+                call_id, phone, transcript, language=language
+            )
         except Exception:
             logger.exception("Agent response failed for %s", call_id)
-            return ERROR_RESPONSES[detect_language(transcript)]
+            return ERROR_RESPONSES[language]
 
     async def _speak(
         self, call_id, text, output_track, generations, language=None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 SINHALA_ONES = (
@@ -110,10 +111,6 @@ PROPERTY_LOCATION_REQUEST = re.compile(
     re.IGNORECASE,
 )
 PROPERTY_BROAD_INVENTORY = re.compile(r"ඔයාලා\s+ළඟ\s+තියෙන|තියෙන\s+ඒවා\s+පෙන්නන්න")
-PLACE_ALIASES = {
-    "කුරුණෑග": "Kurunegala",
-    "රාජිය": "Rajagiriya",
-}
 
 
 def detect_language(text: str) -> str:
@@ -177,9 +174,17 @@ def known_location(text: str) -> str | None:
         for english, localized in names.items():
             if english.casefold() in folded or localized in text:
                 return english
-    return next(
-        (place for alias, place in PLACE_ALIASES.items() if alias in folded), None
+    return None
+
+
+def _phonetic_key(value: str) -> str:
+    """Reduce ASR spelling variation without maintaining observed-word aliases."""
+    letters = (
+        char.casefold()
+        for char in unicodedata.normalize("NFD", value)
+        if unicodedata.category(char).startswith("L")
     )
+    return re.sub(r"(.)\1+", r"\1", "".join(letters))
 
 
 def closest_location(text: str, available_locations: list[str]) -> str | None:
@@ -201,7 +206,12 @@ def closest_location(text: str, available_locations: list[str]) -> str | None:
             if location in names
         )
         score = max(
-            SequenceMatcher(None, fragment, variant).ratio()
+            max(
+                SequenceMatcher(None, fragment, variant).ratio(),
+                SequenceMatcher(
+                    None, _phonetic_key(fragment), _phonetic_key(variant)
+                ).ratio(),
+            )
             for fragment in fragments
             for variant in variants
         )
@@ -209,7 +219,8 @@ def closest_location(text: str, available_locations: list[str]) -> str | None:
     scores.sort(reverse=True)
     best_score, best_location = scores[0]
     runner_up = scores[1][0] if len(scores) > 1 else 0.0
-    return best_location if best_score >= 0.60 and best_score - runner_up >= 0.10 else None
+    # This result is only offered as a confirmation, never searched automatically.
+    return best_location if best_score >= 0.52 and best_score - runner_up >= 0.06 else None
 
 
 def stated_property_filters(text: str) -> dict[str, str | int]:
