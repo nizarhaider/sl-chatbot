@@ -110,8 +110,8 @@ jobs:
               fi
               continue
             fi
-            instance_id=$(printf '%s' "$result" | jq -r '.new_contract')
-            test "$instance_id" != null
+            instance_id=$(printf '%s' "$result" | jq -r '.new_contract // empty')
+            test -n "$instance_id" || continue
             echo "VAST_INSTANCE_ID=$instance_id" >> "$GITHUB_ENV"
             chmod 600 "$RUNNER_TEMP/vast-ci"
             for attempt in $(seq 1 60); do
