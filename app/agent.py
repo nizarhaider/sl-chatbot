@@ -36,6 +36,7 @@ from app.speech import (
     is_broad_property_request,
     is_property_location_request,
     known_location,
+    stated_property_filters,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,7 @@ class LocalGemmaAdkModel(BaseLlm):
             }
         else:
             message = await self._backend.chat(messages, tools)
+            message = _enrich_search_call(message, caller_text)
             for _ in range(1):
                 violations = _response_contract_violations(message, messages)
                 if not violations:
@@ -512,6 +514,26 @@ def _response_parts(message: dict) -> list[types.Part]:
     if not parts:
         parts.append(types.Part(text=text))
     return parts
+
+
+def _enrich_search_call(message: dict, caller_text: str) -> dict:
+    """Add caller-stated filters when the model selected the property search tool."""
+    calls = message.get("tool_calls") or []
+    for raw_call in calls:
+        function = raw_call.get("function", {})
+        if function.get("name") != "search_properties":
+            continue
+        arguments = function.get("arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+        arguments = dict(arguments) if isinstance(arguments, dict) else {}
+        arguments.setdefault("query", caller_text)
+        arguments.update(stated_property_filters(caller_text))
+        function["arguments"] = arguments
+    return message
 
 
 def _response_contract_violations(message: dict, messages: list[dict]) -> list[str]:

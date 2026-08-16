@@ -212,6 +212,54 @@ def closest_location(text: str, available_locations: list[str]) -> str | None:
     return best_location if best_score >= 0.60 and best_score - runner_up >= 0.10 else None
 
 
+def stated_property_filters(text: str) -> dict[str, str | int]:
+    """Extract only explicit property filters from multilingual caller speech."""
+    folded = text.casefold()
+    filters: dict[str, str | int] = {}
+    if location := known_location(text):
+        filters["location"] = location
+
+    property_types = {
+        "apartment": ("apartment", "flat", "මහල් නිවාස", "அபார்ட்மெண்ட்"),
+        "house": ("house", "නිවස", "ගෙයක්", "வீடு"),
+        "villa": ("villa", "විලා", "வில்லா"),
+        "land": ("land", "ඉඩම", "காணி"),
+    }
+    for property_type, names in property_types.items():
+        if any(name in folded for name in names):
+            filters["property_type"] = property_type
+            break
+
+    number_words = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "එක": 1,
+        "දෙක": 2,
+        "තුන": 3,
+        "හතර": 4,
+        "පහ": 5,
+        "ஒன்று": 1,
+        "இரண்டு": 2,
+        "மூன்று": 3,
+        "நான்கு": 4,
+        "ஐந்து": 5,
+    }
+    patterns = (
+        r"\b(\d+|one|two|three|four|five)[ -]?bed(?:room)?s?\b",
+        r"කාමර\s*(\d+|එක|දෙක|තුන|හතර|පහ)",
+        r"(\d+|ஒன்று|இரண்டு|மூன்று|நான்கு|ஐந்து)\s*படுக்கையறை",
+    )
+    for pattern in patterns:
+        if match := re.search(pattern, folded):
+            raw = match.group(1)
+            filters["bedrooms"] = int(raw) if raw.isdigit() else number_words[raw]
+            break
+    return filters
+
+
 def tool_acknowledgement(language: str, name: str, arguments: dict) -> str:
     """Create one contextual acknowledgement for an actual tool call."""
     if name == "list_property_locations":
