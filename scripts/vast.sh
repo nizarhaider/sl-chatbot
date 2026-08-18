@@ -202,7 +202,7 @@ rent() {
 import json,re,sys
 allowed=re.compile(r"^(?:RTX (?:3090|4090|A5000|A6000|5000 Ada|6000 Ada)|A40|L40S?|Q RTX 8000)$", re.I)
 rows=[r for r in json.load(sys.stdin) if allowed.search(str(r.get("gpu_name", "")))]
-rows=[r for r in rows if float(r.get("inet_down", 0)) >= 2500 and float(r.get("disk_bw", 0)) >= 1500 and float(r.get("reliability", 0)) >= 0.998]
+rows=[r for r in rows if float(r.get("inet_down", 0)) >= 500 and float(r.get("disk_bw", 0)) >= 1500 and float(r.get("reliability", 0)) >= 0.998]
 if not rows: raise SystemExit("No eligible offer is available")
 r=min(rows, key=lambda x: float(x["dph_total"]))
 print(r["id"], r["gpu_name"].replace(" ", "_"), r["dph_total"])
