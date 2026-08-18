@@ -113,7 +113,7 @@ jobs:
             test -n "$instance_id" || continue
             echo "VAST_INSTANCE_ID=$instance_id" >> "$GITHUB_ENV"
             chmod 600 "$RUNNER_TEMP/vast-ci"
-            for attempt in $(seq 1 60); do
+            for attempt in $(seq 1 180); do
               state=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
                 show instance "$instance_id")
               row=$(printf '%s' "$state" | jq 'if type=="array" then .[0] else . end')
