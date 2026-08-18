@@ -135,31 +135,21 @@ cd /workspace/sl-chatbot
 set -a; . ./.env; set +a
 test -n "${NGROK_AUTH_TOKEN:-}"
 ngrok config add-authtoken "$NGROK_AUTH_TOKEN" >/dev/null
-cat >/etc/supervisor/conf.d/serendibai.conf <<EOF
-[program:sl-webhook]
-command=/workspace/sl-chatbot/.venv/bin/dotenv -f .env run -- /workspace/sl-chatbot/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT --no-access-log
-directory=/workspace/sl-chatbot
-environment=HF_HOME="/workspace/.cache/huggingface"
-autostart=true
-autorestart=true
-startsecs=15
-stopsignal=TERM
-stdout_logfile=/workspace/sl-chatbot/run_logs/server.log
-redirect_stderr=true
-
-[program:sl-ngrok]
-command=/usr/local/bin/ngrok http $APP_PORT --pooling-enabled --log=stdout
-directory=/workspace/sl-chatbot
-autostart=true
-autorestart=true
-startsecs=5
-stopsignal=TERM
-stdout_logfile=/workspace/sl-chatbot/run_logs/ngrok.log
-redirect_stderr=true
-EOF
-supervisorctl reread >/dev/null
-supervisorctl update >/dev/null
-supervisorctl restart sl-webhook sl-ngrok >/dev/null
+mkdir -p run_logs pids
+for name in webhook ngrok; do
+  pid_file="pids/$name.pid"
+  if test -s "$pid_file"; then
+    kill "$(cat "$pid_file")" 2>/dev/null || true
+  fi
+done
+nohup env HF_HOME=/workspace/.cache/huggingface \
+  .venv/bin/dotenv -f .env run -- \
+  .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $APP_PORT --no-access-log \
+  >run_logs/server.log 2>&1 < /dev/null &
+echo $! >pids/webhook.pid
+nohup /usr/local/bin/ngrok http $APP_PORT --pooling-enabled --log=stdout \
+  >run_logs/ngrok.log 2>&1 < /dev/null &
+echo $! >pids/ngrok.pid
 REMOTE
 
   log "Waiting for model prewarm"
