@@ -195,7 +195,7 @@ deploy() {
 rent() {
   load_vast
   local query offer result instance_id state host port existing_ids old_id
-  query="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true"
+  query="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers=12.8 direct_port_count>=1 reliability>=0.98 verified=true"
   log "Selecting the cheapest compatible ${MIN_GPU_RAM_GB} GB+ offer"
   offer="$("${VAST[@]}" search offers "$query" --storage "$DISK_GB" --order dph --limit 200 |
     .venv/bin/python -c '
