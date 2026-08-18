@@ -89,8 +89,8 @@ jobs:
             search offers "$query" --storage 80 --order dph --limit 200)
           offer_ids=$(printf '%s' "$offers" | jq -r \
             '[.[] | select(
-              (.gpu_name | test("^(RTX (3090|4090|A5000|A6000|5000 Ada|6000 Ada)|A40|L40S?|Q RTX 8000)$"; "i")) and
-              .inet_down >= 2500 and .disk_bw >= 1500 and .reliability >= 0.99
+              (.gpu_name | test("^RTX 5090$"; "i")) and
+              .inet_down >= 500 and .disk_bw >= 1500 and .reliability >= 0.998
             )] | sort_by(.dph_total) | .[:3] | .[].id')
           test -n "$offer_ids"
           attempt_number=0
