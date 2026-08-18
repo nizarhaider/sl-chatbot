@@ -48,7 +48,7 @@ jobs:
       VAST_AI_API_KEY: ${{ secrets.VAST_AI_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      VAST_TEMPLATE_HASH: 18e97fc6703dea11057cee364a8eaa8c
+      PYTORCH_IMAGE: pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel
       SSH: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
 
     steps:
@@ -98,7 +98,7 @@ jobs:
             attempt_number=$((attempt_number + 1))
             label="serendibai-ci-${GITHUB_RUN_ID}-${attempt_number}"
             if ! result=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw \
-              create instance "$offer_id" --template_hash "$VAST_TEMPLATE_HASH" \
+              create instance "$offer_id" --image "$PYTORCH_IMAGE" \
               --disk 80 --label "$label" --ssh --direct --cancel-unavail); then
               existing=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show instances)
               orphan_id=$(printf '%s' "$existing" | jq -r --arg label "$label" \
