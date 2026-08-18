@@ -127,9 +127,9 @@ The workflow uploads its JSON report and audio samples, then always destroys the
 test instance. It sends only a read-only Hugging Face token to the GPU. Required
 GitHub secrets are `VAST_AI_API_KEY`, `HF_TOKEN`, and `GEMINI_API_KEY`.
 
-The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys stale
-instances whose label starts with `serendibai-ci-`. It never destroys the hosted
-`serendibai-whatsapp` production instance.
+The same workflow runs a cost guard at `00:00, 02:00, ... UTC` and destroys every
+active Vast instance, including hosted `serendibai-whatsapp` instances. Treat all
+Vast deployments as temporary and expect a maximum lifetime of roughly two hours.
 
 ## Data ownership
 
@@ -149,8 +149,10 @@ instances whose label starts with `serendibai-ci-`. It never destroys the hosted
 - **2026-08-12:** Moved local Gemma orchestration to Google ADK. ADK now owns
   per-call session memory, model/tool events, and dispatch of the existing Neon
   property search and appointment functions.
-- **2026-08-12:** Added a two-hour GitHub cost guard that destroys every Vast
-  instance. Rotated multilingual progress phrases, delayed non-tool filler,
+- **2026-08-19:** Expanded the two-hour GitHub cost guard to destroy every active
+  Vast instance, including production-labelled test deployments.
+- **2026-08-12:** Added a two-hour GitHub cost guard for CI instances. Rotated
+  multilingual progress phrases, delayed non-tool filler,
   preserved tool results across turns, retried malformed tool calls, and tightened
   the model contract for caller-selected appointment dates and confirmed bookings.
 - **2026-08-12:** Removed boot-time property schema/seeding after confirming the
