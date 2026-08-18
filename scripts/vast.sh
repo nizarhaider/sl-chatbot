@@ -8,7 +8,7 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 DISK_GB="${DISK_GB:-80}"
 MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-32}"
 APP_PORT="${APP_PORT:-8081}"
-TEMPLATE_HASH="${TEMPLATE_HASH:-18e97fc6703dea11057cee364a8eaa8c}"
+PYTORCH_IMAGE="${PYTORCH_IMAGE:-pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel}"
 SETUP_LIMIT_SECONDS="${SETUP_LIMIT_SECONDS:-900}"
 cd "$ROOT"
 
@@ -215,7 +215,7 @@ print(r["id"], r["gpu_name"].replace(" ", "_"), r["dph_total"])
 import json,sys
 print(" ".join(str(row["id"]) for row in json.load(sys.stdin) if row.get("label") == "serendibai-whatsapp"))
 ')"
-  result="$("${VAST[@]}" create instance "$offer_id" --template_hash "$TEMPLATE_HASH" \
+  result="$("${VAST[@]}" create instance "$offer_id" --image "$PYTORCH_IMAGE" \
     --disk "$DISK_GB" --label serendibai-whatsapp --ssh --direct --cancel-unavail)"
   instance_id="$(printf '%s' "$result" | .venv/bin/python -c \
     'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"
