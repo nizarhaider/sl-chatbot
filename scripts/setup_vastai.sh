@@ -74,8 +74,8 @@ $SSH "
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
-log "Running uv sync with prebuilt CUDA dependencies..."
-$SSH "cd ${REMOTE_DIR} && uv sync"
+log "Running locked uv sync with prebuilt CUDA dependencies..."
+$SSH "cd ${REMOTE_DIR} && uv sync --frozen"
 
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
