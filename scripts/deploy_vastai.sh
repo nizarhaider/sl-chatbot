@@ -41,7 +41,7 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-allowed = re.compile(r"^(?:RTX (?:3090|4090|A5000|A6000|5000 Ada|6000 Ada)|A40|L40S?|Q RTX 8000)$", re.IGNORECASE)
+allowed = re.compile(r"^RTX (?:30|40|50)\d{2}(?:S| Super| Ti)?$", re.IGNORECASE)
 eligible = [offer for offer in offers if allowed.search(str(offer.get("gpu_name", "")))]
 if not eligible:
     raise SystemExit("No eligible Vast.ai offer is currently available")
