@@ -58,6 +58,19 @@ if [ -f .env ] && [ -z "${NGROK_AUTH_TOKEN}" ]; then
   NGROK_AUTH_TOKEN="$(sed -n 's/^NGROK_AUTH_TOKEN=//p' .env | head -n 1)"
 fi
 
+log "Waiting for base image package setup..."
+$SSH "
+  for attempt in \$(seq 1 60); do
+    if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+      exit 0
+    fi
+    echo 'Waiting for package manager lock... attempt' \$attempt
+    sleep 5
+  done
+  echo 'ERROR: package manager lock did not clear in five minutes.' >&2
+  exit 1
+"
+
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
