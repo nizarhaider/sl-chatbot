@@ -223,7 +223,7 @@ class LocalGemmaTurnPipeline:
         response_text = await self._generate_response(call_id, caller_phone, transcript_text)
         if _is_repetitive_response(response_text):
             logger.info("Dropping repetitive Gemma response for %s: %r", call_id, response_text)
-            response_text = ""
+            response_text = _repetition_fallback(response_text)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if not response_text:
             logger.info("Empty Gemma response for %s in %.0f ms", call_id, elapsed_ms)
@@ -252,7 +252,7 @@ class LocalGemmaTurnPipeline:
             tool_call = parse_tool_call(response)
             if tool_call is None:
                 if "<tool_call" in response.casefold():
-                    logger.warning("Gemma emitted a malformed tool call for %s", call_id)
+                    logger.warning("Gemma emitted an unparseable tool call for %s: %r", call_id, response[:500])
                     return "Sorry, I couldn't complete that request. Please try again."
                 return response
             if self._tools is None:
@@ -374,11 +374,30 @@ class LocalGemmaTurnPipeline:
 
 
 def _is_repetitive_response(text: str) -> bool:
-    words = re.findall(r"\S+", text.casefold())
-    if len(words) < 8:
+    normalized = re.sub(r"\s+", " ", text.casefold()).strip()
+    words = normalized.split()
+    if len(words) < 12:
         return False
-    for size in range(2, 6):
+    segments = re.split(r"(?:\r?\n)+|(?<=[.!?。！？])\s+", text.casefold())
+    segment_counts: dict[str, int] = {}
+    for segment in segments:
+        segment = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", segment).strip()
+        if len(segment.split()) >= 6:
+            segment_counts[segment] = segment_counts.get(segment, 0) + 1
+    if any(count >= 2 for count in segment_counts.values()):
+        return True
+
+    for size in (6, 8, 10):
         grams = [" ".join(words[index : index + size]) for index in range(len(words) - size + 1)]
-        if any(grams.count(gram) >= 3 for gram in set(grams)):
+        if any(
+            grams.count(gram) >= 3 and (grams.count(gram) * size) / len(words) >= 0.35
+            for gram in set(grams)
+        ):
             return True
     return False
+
+
+def _repetition_fallback(text: str) -> str:
+    if re.search(r"[\u0D80-\u0DFF]", text):
+        return "සමාවෙන්න, මට ඒක පැහැදිලිව කියන්න බැරි වුණා. කරුණාකර නැවත කියන්න පුළුවන්ද?"
+    return "Sorry, I got stuck repeating myself. Could you say that again?"

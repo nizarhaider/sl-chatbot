@@ -1,4 +1,5 @@
 import asyncio
+import ast
 import json
 import logging
 import os
@@ -32,12 +33,17 @@ prices, availability, or booking confirmations. To use a tool, output only one b
 <tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>
 
 Tools:
-- search_properties: optional arguments query, location, property_type, bedrooms, max_price_lkr.
+- search_properties: optional arguments query, location, property_type, bedrooms, min_bedrooms, max_bedrooms,
+  max_price_lkr. For a request such as two or three bedrooms, use min_bedrooms=2 and max_bedrooms=3.
 - book_appointment: required arguments property_id, customer_name, appointment_at. appointment_at must be
   an ISO 8601 date and time; ask the caller for any missing detail before calling it.
 
 After a tool result, either call another tool or answer the caller naturally in their language. A booking is
-confirmed only when book_appointment returns ok=true.
+confirmed only when book_appointment returns ok=true. Search results include an exact price_label and
+price_millions value: copy those values exactly and never calculate or invent a price. Mention only property
+names, locations, prices, bedrooms, and details returned by the tool. If a search returns no results, say so
+and ask whether the caller would like to broaden the location, bedroom range, or budget. Never claim that a
+search was completed unless a search_properties tool call returned successfully.
 """.strip()
 
 
@@ -57,10 +63,23 @@ def parse_tool_call(text: str) -> ToolCall | None:
     match = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL | re.IGNORECASE)
     if not match:
         return None
-    try:
-        payload = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return None
+    raw_payload = match.group(1).strip()
+    payload = None
+    candidates = (
+        raw_payload,
+        re.sub(r",\s*([}\]])", r"\1", raw_payload),
+    )
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+            break
+        except json.JSONDecodeError:
+            continue
+    if payload is None:
+        try:
+            payload = ast.literal_eval(raw_payload)
+        except (SyntaxError, ValueError):
+            return None
     if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
         return None
     arguments = payload.get("arguments", {})
@@ -152,8 +171,31 @@ class NeonRealEstateStore:
             clauses.append("(name ilike %s or location ilike %s or details ilike %s)")
             values.extend([f"%{query}%"] * 3)
         if arguments.get("bedrooms") is not None:
+            bedrooms = arguments["bedrooms"]
+            if isinstance(bedrooms, list):
+                bedroom_values = [_positive_int(value, "bedrooms") for value in bedrooms]
+                if not bedroom_values:
+                    raise ValueError("bedrooms must contain at least one positive number")
+                clauses.append("bedrooms = any(%s)")
+                values.append(bedroom_values)
+            elif isinstance(bedrooms, str) and (match := re.fullmatch(
+                r"\s*(\d+)\s*(?:-|to|or)\s*(\d+)\s*", bedrooms, flags=re.IGNORECASE
+            )):
+                lower = _positive_int(match.group(1), "bedrooms")
+                upper = _positive_int(match.group(2), "bedrooms")
+                if lower > upper:
+                    lower, upper = upper, lower
+                clauses.extend(["bedrooms >= %s", "bedrooms <= %s"])
+                values.extend([lower, upper])
+            else:
+                clauses.append("bedrooms >= %s")
+                values.append(_positive_int(bedrooms, "bedrooms"))
+        if arguments.get("min_bedrooms") is not None:
             clauses.append("bedrooms >= %s")
-            values.append(_positive_int(arguments["bedrooms"], "bedrooms"))
+            values.append(_positive_int(arguments["min_bedrooms"], "min_bedrooms"))
+        if arguments.get("max_bedrooms") is not None:
+            clauses.append("bedrooms <= %s")
+            values.append(_positive_int(arguments["max_bedrooms"], "max_bedrooms"))
         if arguments.get("max_price_lkr") is not None:
             clauses.append("price_lkr <= %s")
             values.append(_positive_int(arguments["max_price_lkr"], "max_price_lkr"))
@@ -175,6 +217,8 @@ class NeonRealEstateStore:
                 "property_type": row[3],
                 "bedrooms": row[4],
                 "price_lkr": row[5],
+                "price_millions": round(row[5] / 1_000_000, 2),
+                "price_label": f"LKR {row[5] / 1_000_000:g} million",
                 "details": row[6],
             }
             for row in rows
