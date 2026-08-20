@@ -29,7 +29,36 @@ class PineconePropertyStore:
                 self._namespace,
             )
 
-    def search_properties(self, arguments: dict) -> list[dict]:
+    def search_properties(self, arguments: dict) -> dict:
+        properties = self._search(arguments)
+        requested_location = str(arguments.get("location", "")).strip()
+        if properties or not requested_location:
+            return {
+                "properties": properties,
+                "count": len(properties),
+                "needs_clarification": False,
+            }
+
+        # An exact location miss is not enough evidence that the caller's
+        # broader area is unavailable. Search the remaining constraints and
+        # return candidate locations so the agent can ask a useful follow-up.
+        broader_arguments = dict(arguments)
+        broader_arguments.pop("location", None)
+        broader_properties = self._search(broader_arguments)
+        suggested_locations = list(dict.fromkeys(
+            property_data["location"]
+            for property_data in broader_properties
+            if property_data.get("location")
+        ))[:5]
+        return {
+            "properties": [],
+            "count": 0,
+            "needs_clarification": True,
+            "requested_location": requested_location,
+            "suggested_locations": suggested_locations,
+        }
+
+    def _search(self, arguments: dict) -> list[dict]:
         query = _search_text(arguments)
         query_payload: dict[str, Any] = {
             "top_k": 10,

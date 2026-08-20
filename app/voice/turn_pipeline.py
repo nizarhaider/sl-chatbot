@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 
 import numpy as np
 from av.audio.resampler import AudioResampler
@@ -178,7 +179,30 @@ class LocalGemmaTurnPipeline:
             return
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
 
-        response_text, llm_ms = await self._timed_response(call_id, caller_phone, transcript_text)
+        async def announce_tool(tool_call) -> None:
+            if tool_call.name not in {"search_properties", "book_appointment"}:
+                return
+            hold_text = _tool_wait_message(transcript_text, tool_call.name)
+            dashboard_state.add_transcript(call_id, "assistant", hold_text)
+            hold_audio_seconds, _ = await self._timed_speak(
+                call_id,
+                hold_text,
+                output_track,
+                playback_generation,
+            )
+            await self._discard_playback_echo(
+                call_id,
+                input_track,
+                output_track,
+                hold_audio_seconds,
+            )
+
+        response_text, llm_ms = await self._timed_response(
+            call_id,
+            caller_phone,
+            transcript_text,
+            announce_tool,
+        )
         if not response_text or is_noise_text(response_text):
             logger.info("Dropping empty/noise Gemma response for %s: %r", call_id, response_text)
             return
@@ -218,9 +242,20 @@ class LocalGemmaTurnPipeline:
             logger.info("Empty transcript for %s in %.0f ms", call_id, elapsed_ms)
         return transcript_text, elapsed_ms
 
-    async def _timed_response(self, call_id, caller_phone, transcript_text: str) -> tuple[str, float]:
+    async def _timed_response(
+        self,
+        call_id,
+        caller_phone,
+        transcript_text: str,
+        announce_tool: Callable[[object], Awaitable[None]] | None = None,
+    ) -> tuple[str, float]:
         started = time.perf_counter()
-        response_text = await self._generate_response(call_id, caller_phone, transcript_text)
+        response_text = await self._generate_response(
+            call_id,
+            caller_phone,
+            transcript_text,
+            announce_tool,
+        )
         if _is_repetitive_response(response_text):
             logger.info("Dropping repetitive Gemma response for %s: %r", call_id, response_text)
             response_text = _repetition_fallback(response_text)
@@ -242,7 +277,13 @@ class LocalGemmaTurnPipeline:
             logger.warning("Whisper returned empty transcription")
         return text
 
-    async def _generate_response(self, call_id, caller_phone, transcript_text: str) -> str:
+    async def _generate_response(
+        self,
+        call_id,
+        caller_phone,
+        transcript_text: str,
+        announce_tool: Callable[[object], Awaitable[None]] | None = None,
+    ) -> str:
         history = list(self._conversation_history.get(call_id, []))
         continuation: list[dict[str, str]] = []
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
@@ -258,6 +299,8 @@ class LocalGemmaTurnPipeline:
             if self._tools is None:
                 result = {"ok": False, "error": "The booking database is not configured."}
             else:
+                if announce_tool is not None:
+                    await announce_tool(tool_call)
                 result = await self._tools.execute(tool_call, context)
             logger.info("Tool call for %s: name=%s ok=%s", call_id, tool_call.name, result.get("ok"))
             continuation.extend(
@@ -409,3 +452,17 @@ def _tool_recovery_response(transcript_text: str) -> str:
     if re.search(r"[\u0B80-\u0BFF]", transcript_text):
         return "எனக்கு அது தெளிவாகப் புரியவில்லை. இடம், budget மற்றும் bedrooms எண்ணிக்கையை மீண்டும் சொல்ல முடியுமா?"
     return "I didn't catch that clearly. Could you repeat the location, budget, and number of bedrooms?"
+
+
+def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
+    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
+        if tool_name == "book_appointment":
+            return "හරි, මේ appointment එක confirm කරලා කියන්නම්. කරුණාකර පොඩ්ඩක් රැඳී සිටින්න."
+        return "හරි, ඔබතුමා කියපු විස්තර අනුව මම දැන් බලලා කියන්නම්. කරුණාකර පොඩ්ඩක් රැඳී සිටින්න."
+    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
+        if tool_name == "book_appointment":
+            return "சரி, இந்த appointment-ஐ confirm செய்து சொல்கிறேன். தயவுசெய்து சிறிது நேரம் காத்திருக்கவும்."
+        return "சரி, நீங்கள் சொன்ன விவரங்களை இப்போது பார்க்கிறேன். தயவுசெய்து சிறிது நேரம் காத்திருக்கவும்."
+    if tool_name == "book_appointment":
+        return "Okay, I’ll confirm that appointment now. Please hold for a moment."
+    return "Okay, I’ll check those details now. Please hold for a moment."

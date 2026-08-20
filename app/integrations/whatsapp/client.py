@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import httpx
 
@@ -48,6 +49,49 @@ class WhatsAppAPI:
             except Exception as exc:
                 logger.error("Error in WhatsApp Calling API (%s): %s", action, exc)
                 return False
+
+    @staticmethod
+    async def send_text_message(to_phone: str, body: str) -> bool:
+        access_token = _whatsapp_access_token()
+        phone_number_id = _phone_number_id()
+        recipient = _normalize_phone_number(to_phone)
+        if not access_token or not phone_number_id:
+            logger.error("WhatsApp text message credentials are not set")
+            return False
+        if not recipient:
+            logger.error("Cannot send WhatsApp confirmation without a valid caller number")
+            return False
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "text",
+            "text": {"preview_url": False, "body": body},
+        }
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+                if response.status_code not in (200, 201):
+                    logger.error("WhatsApp confirmation failed with status %s", response.status_code)
+                return response.status_code in (200, 201)
+            except Exception as exc:
+                logger.error("Error sending WhatsApp confirmation: %s", exc)
+                return False
+
+
+def _normalize_phone_number(value: str) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("0") and len(digits) == 10:
+        digits = "94" + digits[1:]
+    return digits if len(digits) >= 10 else ""
 
 
 whatsapp_api = WhatsAppAPI()

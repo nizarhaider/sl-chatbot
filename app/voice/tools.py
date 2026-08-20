@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 from psycopg.errors import UniqueViolation
 
+from app.integrations.whatsapp.client import whatsapp_api
 from app.voice.pinecone_store import PineconePropertyStore
 
 logger = logging.getLogger(__name__)
@@ -174,7 +175,7 @@ class NeonRealEstateStore:
 
     def book_appointment(self, arguments: dict, context: CallContext) -> dict:
         customer_id, whatsapp_number_id = self._mapping()
-        property_id = _required(arguments, "property_id")
+        property_reference = _required(arguments, "property_id")
         customer_name = _required(arguments, "customer_name")
         appointment_at = _appointment_time(_required(arguments, "appointment_at"))
         appointment_id = uuid.uuid4()
@@ -183,14 +184,27 @@ class NeonRealEstateStore:
             with psycopg.connect(self._database_url, connect_timeout=10) as connection:
                 property_row = connection.execute(
                     """
-                    select name, location
+                    select id, name, location
                     from real_estate_properties
-                    where id = %s and customer_id = %s and status = 'active'
+                    where customer_id = %s
+                      and status = 'active'
+                      and (id::text = %s or slug = %s or lower(name) = lower(%s))
                     """,
-                    (property_id, customer_id),
+                    (customer_id, property_reference, property_reference, property_reference),
                 ).fetchone()
                 if property_row is None:
                     raise ValueError("That property is not available. Search for properties again.")
+                existing_booking = connection.execute(
+                    """
+                    select 1
+                    from property_appointments
+                    where property_id = %s and appointment_at = %s and status = 'booked'
+                    limit 1
+                    """,
+                    (property_row[0], appointment_at),
+                ).fetchone()
+                if existing_booking is not None:
+                    raise ValueError("That viewing time has already been booked. Ask for another time.")
                 connection.execute(
                     """
                     insert into property_appointments (
@@ -199,7 +213,7 @@ class NeonRealEstateStore:
                     ) values (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        appointment_id, customer_id, whatsapp_number_id, property_id, context.call_id,
+                        appointment_id, customer_id, whatsapp_number_id, property_row[0], context.call_id,
                         context.caller_phone or None, customer_name, appointment_at,
                     ),
                 )
@@ -208,8 +222,9 @@ class NeonRealEstateStore:
 
         return {
             "appointment_id": str(appointment_id),
-            "property_name": property_row[0],
-            "location": property_row[1],
+            "property_id": str(property_row[0]),
+            "property_name": property_row[1],
+            "location": property_row[2],
             "customer_name": customer_name,
             "appointment_at": appointment_at.isoformat(),
             "status": "booked",
@@ -268,11 +283,26 @@ class RealEstateToolService:
             if call.name == "search_properties":
                 if self._vector_store is None:
                     raise RuntimeError("The property search index is not ready.")
-                properties = await asyncio.to_thread(self._vector_store.search_properties, call.arguments)
-                return {"ok": True, "properties": properties, "count": len(properties)}
+                search_result = await asyncio.to_thread(self._vector_store.search_properties, call.arguments)
+                if isinstance(search_result, dict):
+                    return {"ok": True, **search_result}
+                return {"ok": True, "properties": search_result, "count": len(search_result)}
             if call.name == "book_appointment":
                 appointment = await asyncio.to_thread(self._store.book_appointment, call.arguments, context)
-                return {"ok": True, "appointment": appointment}
+                confirmation_sent = await whatsapp_api.send_text_message(
+                    context.caller_phone,
+                    _appointment_confirmation_message(appointment),
+                )
+                logger.info(
+                    "Appointment booked for %s: whatsapp_confirmation_sent=%s",
+                    context.call_id,
+                    confirmation_sent,
+                )
+                return {
+                    "ok": True,
+                    "appointment": appointment,
+                    "whatsapp_confirmation_sent": confirmation_sent,
+                }
             return {"ok": False, "error": f"Unknown tool: {call.name}"}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
@@ -308,3 +338,15 @@ def _appointment_time(value: str) -> datetime:
     if parsed <= datetime.now(COLOMBO_TZ):
         raise ValueError("The appointment time must be in the future")
     return parsed
+
+
+def _appointment_confirmation_message(appointment: dict) -> str:
+    appointment_at = datetime.fromisoformat(appointment["appointment_at"])
+    local_time = appointment_at.astimezone(COLOMBO_TZ)
+    formatted_time = local_time.strftime("%A, %d %B %Y at %I:%M %p")
+    return (
+        "Homelands Properties booking confirmed.\n"
+        f"Property: {appointment['property_name']}\n"
+        f"Location: {appointment['location']}\n"
+        f"Viewing: {formatted_time} (Sri Lanka time)"
+    )
