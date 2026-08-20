@@ -16,6 +16,58 @@ def live_calls() -> dict:
     return dashboard_state.snapshot()
 
 
+@router.get("/operator-monitor", response_class=HTMLResponse)
+def operator_monitor() -> str:
+    return OPERATOR_HTML
+
+
+OPERATOR_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SerendibAI Live Operator Monitor</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #09111b; color: #e7edf4; }
+    * { box-sizing: border-box; } body { margin: 0; background: radial-gradient(circle at 80% 0%, #183a46 0, #09111b 42%); min-height: 100vh; }
+    header { position: sticky; top: 0; z-index: 2; padding: 18px 24px; border-bottom: 1px solid #223142; background: rgba(9,17,27,.9); backdrop-filter: blur(16px); }
+    .head { max-width: 1500px; margin: auto; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    h1 { margin:0; font-size:20px; } .sub { color:#8ea1b3; font-size:12px; margin-top:4px; }
+    .live { color:#70f0ae; font-size:12px; display:flex; gap:8px; align-items:center; } .live:before { content:""; width:8px; height:8px; background:#70f0ae; border-radius:50%; box-shadow:0 0 0 5px #123c31; }
+    main { max-width:1500px; margin:auto; padding:22px 24px 40px; } .empty { color:#8ea1b3; border:1px dashed #304458; padding:32px; border-radius:12px; text-align:center; }
+    .call { border:1px solid #2b4054; border-radius:14px; background:#101c29; overflow:hidden; margin-bottom:18px; box-shadow:0 16px 50px rgba(0,0,0,.18); }
+    .callHead { display:flex; justify-content:space-between; gap:16px; padding:16px 18px; border-bottom:1px solid #26384a; background:#132435; }
+    .phone { font-weight:750; } .meta { color:#8ea1b3; font-size:12px; margin-top:5px; } .badge { border-radius:999px; padding:5px 9px; font-size:11px; height:max-content; background:#1b3348; color:#9bc8ff; } .badge.active { color:#70f0ae; background:#123c31; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr); gap:0; } .pane { min-width:0; padding:16px 18px; } .pane + .pane { border-left:1px solid #26384a; }
+    .title { color:#8ea1b3; text-transform:uppercase; letter-spacing:.08em; font-size:10px; font-weight:800; margin-bottom:10px; }
+    .transcript { max-height:420px; overflow:auto; display:grid; gap:10px; } .bubble { padding:10px 12px; border-radius:10px; background:#172638; white-space:pre-wrap; word-break:break-word; } .bubble.caller { border-left:3px solid #f4b860; } .bubble.assistant { border-left:3px solid #74b8ff; } .speaker { font-size:10px; color:#91a7bb; text-transform:uppercase; margin-bottom:4px; }
+    .events { max-height:520px; overflow:auto; display:grid; gap:8px; } .event { border:1px solid #293e52; border-radius:9px; padding:9px 10px; background:#0d1824; } .eventKind { color:#70f0ae; font-size:11px; font-weight:750; } .eventTime { color:#6e8499; font-size:10px; float:right; } pre { margin:6px 0 0; color:#c1cfdd; font:11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; }
+    @media (max-width:850px) { .grid { grid-template-columns:1fr; } .pane + .pane { border-left:0; border-top:1px solid #26384a; } main { padding:14px; } header { padding:14px; } }
+  </style>
+</head>
+<body>
+  <header><div class="head"><div><h1>SerendibAI · Live operator monitor</h1><div class="sub">Realtime call lifecycle, model context, transcripts, and tool activity</div></div><div class="live">LIVE · <span id="updated">connecting</span></div></div></header>
+  <main id="root"><div class="empty">Waiting for calls…</div></main>
+  <script>
+    const root = document.getElementById('root');
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
+    const pretty = value => esc(JSON.stringify(value, null, 2));
+    const time = value => new Date(value * 1000).toLocaleTimeString();
+    function render(data) {
+      const calls = data.calls || [];
+      document.getElementById('updated').textContent = new Date().toLocaleTimeString();
+      if (!calls.length) { root.innerHTML = '<div class="empty">Waiting for calls…</div>'; return; }
+      root.innerHTML = calls.map(call => `<section class="call"><div class="callHead"><div><div class="phone">${esc(call.caller_phone || 'Unknown caller')}</div><div class="meta">${esc(call.call_id)} · started ${time(call.started_at)}</div></div><div class="badge ${call.status === 'active' ? 'active' : ''}">${esc(call.status)}</div></div><div class="grid"><div class="pane"><div class="title">Live transcript</div><div class="transcript">${(call.transcript || []).map(item => `<div class="bubble ${esc(item.speaker)}"><div class="speaker">${esc(item.speaker)} · ${time(item.timestamp)}</div>${esc(item.text)}</div>`).join('') || '<div class="meta">No transcript yet</div>'}</div></div><div class="pane"><div class="title">Pipeline + model events</div><div class="events">${(call.events || []).slice().reverse().map(event => `<div class="event"><span class="eventKind">${esc(event.kind)}</span><span class="eventTime">${time(event.timestamp)}</span><pre>${pretty(event.data)}</pre></div>`).join('') || '<div class="meta">No events yet</div>'}</div></div></div></section>`).join('');
+    }
+    async function refresh() { try { const response = await fetch('/dashboard/calls?ts=' + Date.now(), { cache: 'no-store' }); render(await response.json()); } catch (error) { document.getElementById('updated').textContent = 'disconnected'; } }
+    refresh(); setInterval(refresh, 700);
+  </script>
+</body>
+</html>
+"""
+
+
 DASHBOARD_HTML = """
 <!doctype html>
 <html lang="en">

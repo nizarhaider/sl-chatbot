@@ -29,6 +29,7 @@ class WebRTCService:
         @pc.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
             logger.info("Connection state for %s is %s", call_id, pc.connectionState)
+            dashboard_state.emit(call_id, "webrtc.connection_state", {"state": pc.connectionState})
             if pc.connectionState in ["failed", "closed", "disconnected"]:
                 await self.close_call(call_id, close_peer=pc.connectionState != "closed")
 
@@ -38,11 +39,13 @@ class WebRTCService:
                 return
             phone = self._caller_phones.get(call_id, "")
             logger.info("Received audio track from WhatsApp for %s (caller: %s)", call_id, phone)
+            dashboard_state.emit(call_id, "webrtc.audio_track", {"caller_phone": phone})
             dashboard_state.mark_call_active(call_id, phone)
             asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
 
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")
         logger.info("Incoming audio SDP for %s: %s", call_id, _summarize_audio_sdp(sdp_offer))
+        dashboard_state.emit(call_id, "webrtc.offer_received", {"audio_sdp": _summarize_audio_sdp(sdp_offer)})
         await pc.setRemoteDescription(offer)
 
         answer = await pc.createAnswer()
@@ -50,12 +53,15 @@ class WebRTCService:
 
         refined_sdp = _refine_sdp(pc.localDescription.sdp)
         logger.info("Answer audio SDP for %s: %s", call_id, _summarize_audio_sdp(refined_sdp))
+        dashboard_state.emit(call_id, "webrtc.answer_created", {"audio_sdp": _summarize_audio_sdp(refined_sdp)})
         session = {"sdp": refined_sdp, "sdp_type": "answer"}
 
         if not await whatsapp_api.send_call_action(call_id, "pre_accept", session=session):
+            dashboard_state.emit(call_id, "whatsapp.pre_accept_failed", {})
             await self.close_call(call_id)
             return
         await whatsapp_api.send_call_action(call_id, "accept", session=session)
+        dashboard_state.emit(call_id, "whatsapp.accept_sent", {})
 
     async def close_call(self, call_id: str, close_peer: bool = True) -> None:
         self._caller_phones.pop(call_id, None)

@@ -67,15 +67,21 @@ class LocalWhisperASR:
             dtype,
         )
         self._processor = AutoProcessor.from_pretrained(WHISPER_MODEL)
-        self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            WHISPER_MODEL,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            attn_implementation="sdpa",
-        ).to(device)
+        model_kwargs = {
+            "torch_dtype": dtype,
+            "low_cpu_mem_usage": True,
+            "use_safetensors": True,
+            "attn_implementation": "sdpa",
+        }
+        if device.type == "cuda":
+            # Load directly onto the GPU. A separate CPU -> GPU `.to()` can
+            # spend tens of minutes copying the sharded Whisper checkpoint.
+            model_kwargs["device_map"] = {"": device.index or 0}
+        logger.info("Loading Whisper weights into %s", device)
+        self._model = AutoModelForSpeechSeq2Seq.from_pretrained(WHISPER_MODEL, **model_kwargs)
         self._model.eval()
         self._device = device
+        logger.info("Whisper model loaded into %s and set to eval", device)
         return self._processor, self._model, self._device
 
 

@@ -36,6 +36,7 @@ class LiveCall:
     updated_at: float = field(default_factory=time.time)
     ended_at: float | None = None
     transcript: list[TranscriptEvent] = field(default_factory=list)
+    events: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +47,7 @@ class LiveCall:
             "updated_at": self.updated_at,
             "ended_at": self.ended_at,
             "transcript": [event.to_dict() for event in self.transcript],
+            "events": self.events,
         }
 
     @classmethod
@@ -67,6 +69,7 @@ class LiveCall:
             for event in data.get("transcript", [])
             if event.get("text")
         ]
+        call.events = list(data.get("events", []))[-500:]
         return call
 
 
@@ -87,6 +90,7 @@ class DashboardState:
 
     def start_call(self, call_id: str, caller_phone: str = "") -> None:
         self._calls[call_id] = LiveCall(call_id=call_id, caller_phone=caller_phone)
+        self.emit(call_id, "call.connected", {"caller_phone": caller_phone})
         self._persist(self._calls[call_id])
 
     def mark_call_active(self, call_id: str, caller_phone: str = "") -> None:
@@ -99,6 +103,7 @@ class DashboardState:
         call.status = "active"
         call.ended_at = None
         call.updated_at = time.time()
+        self.emit(call_id, "call.active", {"caller_phone": call.caller_phone})
         self._persist(call)
 
     def end_call(self, call_id: str) -> None:
@@ -108,6 +113,7 @@ class DashboardState:
         call.status = "ended"
         call.ended_at = time.time()
         call.updated_at = call.ended_at
+        self.emit(call_id, "call.ended", {})
         self._trim_old_calls()
         self._persist(call)
 
@@ -120,14 +126,29 @@ class DashboardState:
             self._calls[call_id] = call
         call.transcript.append(TranscriptEvent(speaker=speaker, text=text))
         call.updated_at = time.time()
+        self.emit(call_id, f"transcript.{speaker}", {"text": text})
         self._persist(call)
+
+    def emit(self, call_id: str, kind: str, data: dict | None = None) -> None:
+        call = self._calls.get(call_id)
+        if call is None:
+            call = LiveCall(call_id=call_id, caller_phone="", status="active")
+            self._calls[call_id] = call
+        call.events.append({
+            "id": f"{call_id}:{len(call.events) + 1}",
+            "kind": kind,
+            "timestamp": time.time(),
+            "data": data or {},
+        })
+        del call.events[:-500]
+        call.updated_at = time.time()
 
     def snapshot(self) -> dict:
         calls = sorted(
             self._calls.values(),
             key=lambda call: (call.status != "active", -call.updated_at),
         )
-        return {"calls": [call.to_dict() for call in calls]}
+        return {"generated_at": time.time(), "calls": [call.to_dict() for call in calls]}
 
     def _load_calls(self) -> dict[str, LiveCall]:
         if not os.path.exists(self._session_store_path):

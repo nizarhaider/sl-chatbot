@@ -14,6 +14,8 @@ REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
 NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN:-}"
+APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
+PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-60}"
 
 PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
 USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
@@ -48,11 +50,51 @@ $SSH "
 "
 
 log ".env sync..."
+ENV_SYNC_FILE="$(mktemp)"
+cleanup_env_sync() { rm -f "${ENV_SYNC_FILE}"; }
+trap cleanup_env_sync EXIT
+
 if [ -f .env ]; then
-  $SCP .env "${REMOTE}:${REMOTE_DIR}/"
+  cp .env "${ENV_SYNC_FILE}"
 else
-  echo "WARNING: .env not found locally; skipping .env copy."
+  : > "${ENV_SYNC_FILE}"
+  echo "WARNING: .env not found locally; syncing only exported runtime variables."
 fi
+
+# Credentials kept in ~/.zshrc are not necessarily exported into a child bash
+# process. Pull the deployment key from the login zsh environment when needed,
+# then merge it into the remote env file without ever printing its value.
+if [ -z "${PINECONE_API_KEY:-}" ]; then
+  PINECONE_API_KEY="$(zsh -lic 'printf "%s" "${PINECONE_API_KEY:-}"' 2>/dev/null || true)"
+fi
+if [ -n "${PINECONE_API_KEY:-}" ]; then
+  PINECONE_API_KEY="${PINECONE_API_KEY}" python3 - "${ENV_SYNC_FILE}" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines() if path.exists() else []
+key = "PINECONE_API_KEY"
+value = os.environ[key]
+updated = False
+output = []
+for line in lines:
+    if line.startswith(key + "="):
+        output.append(f"{key}={value}")
+        updated = True
+    else:
+        output.append(line)
+if not updated:
+    output.append(f"{key}={value}")
+path.write_text("\n".join(output) + "\n")
+PY
+  log "PINECONE_API_KEY found in the zsh environment; including it in the remote .env."
+else
+  echo "WARNING: PINECONE_API_KEY is not available in .env or the zsh environment."
+fi
+
+$SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
 
 if [ -f .env ] && [ -z "${NGROK_AUTH_TOKEN}" ]; then
   NGROK_AUTH_TOKEN="$(sed -n 's/^NGROK_AUTH_TOKEN=//p' .env | head -n 1)"
@@ -115,18 +157,30 @@ $SSH "
 sleep 3
 
 log "Starting webhook in tmux..."
-$SSH "tmux kill-session -t sl-webhook 2>/dev/null || true; \
-  mkdir -p ${REMOTE_DIR}/run_logs; \
-  tmux new-session -d -s sl-webhook \
-  'cd ${REMOTE_DIR} && \
-   .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env \
-   > run_logs/webhook.log 2>&1'"
+$SSH "
+  if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
+    echo 'Webhook is already listening; keeping the existing process.'
+  elif tmux has-session -t sl-webhook 2>/dev/null; then
+    echo 'Webhook startup is already in progress; keeping the existing process.'
+  else
+    mkdir -p ${REMOTE_DIR}/run_logs
+    tmux new-session -d -s sl-webhook \
+      'cd ${REMOTE_DIR} && \
+       .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env \
+       > run_logs/webhook.log 2>&1'
+  fi
+"
 
 log "Waiting for server to boot..."
+log "Allowing up to $((APP_STARTUP_TIMEOUT_ATTEMPTS * 2 / 60)) minutes for model prewarm..."
 $SSH "
   attempt=0
-  until [ \$attempt -ge 180 ]; do
-    if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
+  ready=false
+  until [ \$attempt -ge ${APP_STARTUP_TIMEOUT_ATTEMPTS} ]; do
+    if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1 \
+      && curl -fsS http://127.0.0.1:${APP_PORT}/ \
+      | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
+      ready=true
       break
     fi
     attempt=\$((attempt + 1))
@@ -138,8 +192,8 @@ $SSH "
     sleep 2
   done
 
-  if ! ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
-    echo 'ERROR: port ${APP_PORT} is not listening.'
+  if [ "\$ready" != 'true' ]; then
+    echo 'ERROR: server did not become ready on port ${APP_PORT}.'
     echo ''
     echo 'tmux sessions:'
     tmux ls || true
@@ -193,17 +247,24 @@ log "Use this callback URL in WhatsApp:"
 log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 
-while true; do
+VERIFICATION_OK=false
+for attempt in $(seq 1 "${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS}"); do
   public_response="$(curl -sS -m 15 "${PUBLIC_WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345" || true)"
 
   if [ "${public_response}" = "12345" ]; then
     log "WhatsApp webhook verification is working: ${PUBLIC_WEBHOOK_URL}"
+    VERIFICATION_OK=true
     break
   fi
 
-  echo "Waiting for verification to work... response: ${public_response:-<empty>}"
+  echo "Waiting for verification to work... attempt ${attempt}/${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS}; response: ${public_response:-<empty>}"
   sleep 5
 done
+
+if [ "${VERIFICATION_OK}" != "true" ]; then
+  echo "ERROR: Webhook verification did not succeed within $((PUBLIC_VERIFY_TIMEOUT_ATTEMPTS * 5 / 60)) minutes."
+  exit 1
+fi
 
 log "Setup complete. Webhook running on ${HOST_IP}:${APP_PORT}"
 log ""

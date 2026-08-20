@@ -148,6 +148,10 @@ llama.cpp CUDA 12.5 wheel is not compatible with RTX 50-series GPUs.
 Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
 
+Startup timeout: allow a new instance no more than five minutes to become
+SSH-ready. If it is still loading or SSH is unavailable after five minutes,
+terminate that instance and open a replacement before continuing deployment.
+
 One-command rental and setup:
 
 ```bash

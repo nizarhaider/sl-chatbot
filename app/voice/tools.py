@@ -289,10 +289,19 @@ class RealEstateToolService:
                 return {"ok": True, "properties": search_result, "count": len(search_result)}
             if call.name == "book_appointment":
                 appointment = await asyncio.to_thread(self._store.book_appointment, call.arguments, context)
-                confirmation_sent = await whatsapp_api.send_text_message(
-                    context.caller_phone,
-                    _appointment_confirmation_message(appointment),
-                )
+                logger.info("Appointment persisted for %s: appointment_id=%s", context.call_id, appointment["appointment_id"])
+                try:
+                    confirmation_sent = await whatsapp_api.send_text_message(
+                        context.caller_phone,
+                        _appointment_confirmation_message(appointment),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Appointment confirmation delivery failed for %s: appointment_id=%s",
+                        context.call_id,
+                        appointment["appointment_id"],
+                    )
+                    confirmation_sent = False
                 logger.info(
                     "Appointment booked for %s: whatsapp_confirmation_sent=%s",
                     context.call_id,

@@ -51,11 +51,17 @@ class LocalGemmaTurnPipeline:
     async def prewarm_models(self) -> None:
         if self._tools is not None:
             await self._tools.ensure_ready()
+            logger.info("Voice tool service ready")
         await asyncio.to_thread(self._asr.prewarm)
+        logger.info("Whisper prewarm complete")
         if LOCAL_LLM_PREWARM:
+            logger.info("Starting Gemma prewarm")
             await self._llm.prewarm()
+            logger.info("Gemma prewarm complete")
         if REALTIME_TTS_PREWARM:
+            logger.info("Starting OmniVoice prewarm")
             await self._tts.prewarm()
+            logger.info("OmniVoice prewarm complete")
 
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
         try:
@@ -133,6 +139,7 @@ class LocalGemmaTurnPipeline:
             if pcm_rms(chunk) > TURN_SILENCE_THRESHOLD:
                 if not vad.is_speaking:
                     logger.info("Turn VAD: Speech started")
+                    dashboard_state.emit(call_id, "pipeline.speech_started", {})
                     vad.start()
                     self._interrupt_playback(call_id, output_track)
                 vad.add_speech(chunk)
@@ -146,6 +153,7 @@ class LocalGemmaTurnPipeline:
                 continue
 
             logger.info("Turn VAD: Speech ended")
+            dashboard_state.emit(call_id, "pipeline.speech_ended", {})
             turn = vad.finish()
             await self._handle_turn(
                 call_id=call_id,
@@ -178,11 +186,13 @@ class LocalGemmaTurnPipeline:
         if not transcript_text:
             return
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
+        dashboard_state.emit(call_id, "pipeline.asr_complete", {"text": transcript_text, "duration_ms": transcript_ms})
 
         async def announce_tool(tool_call) -> None:
             if tool_call.name not in {"search_properties", "book_appointment"}:
                 return
             hold_text = _tool_wait_message(transcript_text, tool_call.name)
+            dashboard_state.emit(call_id, "tool.announced", {"name": tool_call.name, "text": hold_text})
             dashboard_state.add_transcript(call_id, "assistant", hold_text)
             hold_audio_seconds, _ = await self._timed_speak(
                 call_id,
@@ -208,6 +218,7 @@ class LocalGemmaTurnPipeline:
             return
 
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
+        dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": llm_ms})
         dashboard_state.add_transcript(call_id, "assistant", response_text)
         self._append_conversation_turn(call_id, transcript_text, response_text)
         tts_audio_seconds, tts_ms = await self._timed_speak(
@@ -289,7 +300,13 @@ class LocalGemmaTurnPipeline:
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
 
         for _ in range(2):
+            dashboard_state.emit(call_id, "model.request", {
+                "transcript": transcript_text,
+                "history": history,
+                "continuation": continuation,
+            })
             response = await self._llm.generate(transcript_text, history, continuation)
+            dashboard_state.emit(call_id, "model.output", {"text": response})
             tool_call = parse_tool_call(response)
             if tool_call is None:
                 if "<tool_call" in response.casefold():
@@ -303,6 +320,8 @@ class LocalGemmaTurnPipeline:
                     await announce_tool(tool_call)
                 result = await self._tools.execute(tool_call, context)
             logger.info("Tool call for %s: name=%s ok=%s", call_id, tool_call.name, result.get("ok"))
+            dashboard_state.emit(call_id, "tool.call", {"name": tool_call.name, "arguments": tool_call.arguments})
+            dashboard_state.emit(call_id, "tool.result", {"name": tool_call.name, "result": result})
             continuation.extend(
                 [
                     {"role": "assistant", "content": tool_call_message(tool_call)},
@@ -313,7 +332,13 @@ class LocalGemmaTurnPipeline:
                 ]
             )
 
+        dashboard_state.emit(call_id, "model.request", {
+            "transcript": transcript_text,
+            "history": history,
+            "continuation": continuation,
+        })
         response = await self._llm.generate(transcript_text, history, continuation)
+        dashboard_state.emit(call_id, "model.output", {"text": response})
         if parse_tool_call(response) is not None:
             logger.warning("Gemma exceeded the tool-call limit for %s", call_id)
             return _tool_recovery_response(transcript_text)

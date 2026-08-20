@@ -33,6 +33,15 @@ async def receive_webhook(request: Request):
     if body.get("object") != "whatsapp_business_account":
         raise HTTPException(status_code=404, detail="Not a WhatsApp API event")
 
+    has_call_event = any(
+        change.get("value", {}).get("calls")
+        for entry in body.get("entry", [])
+        for change in entry.get("changes", [])
+    )
+    if has_call_event and not request.app.state.voice_ready:
+        logger.warning("Rejecting WhatsApp call event while voice models are not ready")
+        return Response(content="VOICE_MODELS_NOT_READY", status_code=503)
+
     try:
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):

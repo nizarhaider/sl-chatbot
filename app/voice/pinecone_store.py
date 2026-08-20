@@ -4,6 +4,26 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+GREATER_COLOMBO_LOCATIONS = (
+    "battaramulla",
+    "dehiwala",
+    "homagama",
+    "kottawa",
+    "maharagama",
+    "malabe",
+    "mount lavinia",
+    "nugegoda",
+    "piliyandala",
+    "rajagiriya",
+)
+GREATER_COLOMBO_ALIASES = {
+    "colombo",
+    "greater colombo",
+    "colombo metro",
+    "colombo metropolitan area",
+}
+LOCATION_CLARIFICATION_THRESHOLD = 5
+
 
 class PineconePropertyStore:
     def __init__(self, api_key: str, index_name: str, namespace: str) -> None:
@@ -32,6 +52,19 @@ class PineconePropertyStore:
     def search_properties(self, arguments: dict) -> dict:
         properties = self._search(arguments)
         requested_location = str(arguments.get("location", "")).strip()
+        if _is_greater_colombo(requested_location) and len(properties) > LOCATION_CLARIFICATION_THRESHOLD:
+            suggested_locations = list(dict.fromkeys(
+                property_data["location"]
+                for property_data in properties
+                if property_data.get("location")
+            ))
+            return {
+                "properties": [],
+                "count": len(properties),
+                "needs_clarification": True,
+                "requested_location": requested_location,
+                "suggested_locations": suggested_locations,
+            }
         if properties or not requested_location:
             return {
                 "properties": properties,
@@ -61,7 +94,7 @@ class PineconePropertyStore:
     def _search(self, arguments: dict) -> list[dict]:
         query = _search_text(arguments)
         query_payload: dict[str, Any] = {
-            "top_k": 10,
+            "top_k": 100,
             "inputs": {"text": query},
         }
         metadata_filter = _metadata_filter(arguments)
@@ -73,7 +106,7 @@ class PineconePropertyStore:
             query=query_payload,
             rerank={
                 "model": "bge-reranker-v2-m3",
-                "top_n": 5,
+                "top_n": 100,
                 "rank_fields": ["content"],
             },
         )
@@ -152,7 +185,11 @@ def _metadata_filter(arguments: dict) -> dict | None:
     filters: list[dict] = []
     location = str(arguments.get("location", "")).strip()
     if location:
-        filters.append({"location_lower": {"$eq": location.casefold()}})
+        normalized_location = " ".join(location.casefold().split())
+        if _is_greater_colombo(location):
+            filters.append({"location_lower": {"$in": list(GREATER_COLOMBO_LOCATIONS)}})
+        else:
+            filters.append({"location_lower": {"$eq": normalized_location}})
 
     property_type = str(arguments.get("property_type", "")).strip()
     if property_type:
@@ -181,6 +218,10 @@ def _metadata_filter(arguments: dict) -> dict | None:
     if len(filters) == 1:
         return filters[0]
     return {"$and": filters}
+
+
+def _is_greater_colombo(location: str) -> bool:
+    return " ".join(location.casefold().split()) in GREATER_COLOMBO_ALIASES
 
 
 def _value(value: Any, name: str, default: Any = None) -> Any:
