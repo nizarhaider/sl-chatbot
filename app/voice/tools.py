@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 import psycopg
 from psycopg.errors import UniqueViolation
 
+from app.voice.pinecone_store import PineconePropertyStore
+
 logger = logging.getLogger(__name__)
 COLOMBO_TZ = ZoneInfo("Asia/Colombo")
 PROPERTY_NAMESPACE = uuid.UUID("a1c78a4d-7d09-4d29-b24b-7c427ab7912f")
@@ -37,6 +39,20 @@ class ToolCall:
 class CallContext:
     call_id: str
     caller_phone: str
+
+
+def _property_dict(row: tuple) -> dict:
+    return {
+        "property_id": str(row[0]),
+        "name": row[1],
+        "location": row[2],
+        "property_type": row[3],
+        "bedrooms": row[4],
+        "price_lkr": row[5],
+        "price_millions": round(row[5] / 1_000_000, 2),
+        "price_label": f"LKR {row[5] / 1_000_000:g} million",
+        "details": row[6],
+    }
 
 
 def parse_tool_call(text: str) -> ToolCall | None:
@@ -137,72 +153,24 @@ class NeonRealEstateStore:
             self._customer_id = customer_id
             self._whatsapp_number_id = whatsapp_number_id
 
-    def search_properties(self, arguments: dict) -> list[dict]:
+    def list_active_properties(self) -> list[dict]:
         customer_id, _ = self._mapping()
-        clauses = ["customer_id = %s", "status = 'active'"]
-        values: list[object] = [customer_id]
-        for field in ("location", "property_type"):
-            value = str(arguments.get(field, "")).strip()
-            if value:
-                clauses.append(f"{field} ilike %s")
-                values.append(f"%{value}%")
-        query = str(arguments.get("query", "")).strip()
-        if query:
-            clauses.append("(name ilike %s or location ilike %s or details ilike %s)")
-            values.extend([f"%{query}%"] * 3)
-        if arguments.get("bedrooms") is not None:
-            bedrooms = arguments["bedrooms"]
-            if isinstance(bedrooms, list):
-                bedroom_values = [_positive_int(value, "bedrooms") for value in bedrooms]
-                if not bedroom_values:
-                    raise ValueError("bedrooms must contain at least one positive number")
-                clauses.append("bedrooms = any(%s)")
-                values.append(bedroom_values)
-            elif isinstance(bedrooms, str) and (match := re.fullmatch(
-                r"\s*(\d+)\s*(?:-|to|or)\s*(\d+)\s*", bedrooms, flags=re.IGNORECASE
-            )):
-                lower = _positive_int(match.group(1), "bedrooms")
-                upper = _positive_int(match.group(2), "bedrooms")
-                if lower > upper:
-                    lower, upper = upper, lower
-                clauses.extend(["bedrooms >= %s", "bedrooms <= %s"])
-                values.extend([lower, upper])
-            else:
-                clauses.append("bedrooms >= %s")
-                values.append(_positive_int(bedrooms, "bedrooms"))
-        if arguments.get("min_bedrooms") is not None:
-            clauses.append("bedrooms >= %s")
-            values.append(_positive_int(arguments["min_bedrooms"], "min_bedrooms"))
-        if arguments.get("max_bedrooms") is not None:
-            clauses.append("bedrooms <= %s")
-            values.append(_positive_int(arguments["max_bedrooms"], "max_bedrooms"))
-        if arguments.get("max_price_lkr") is not None:
-            clauses.append("price_lkr <= %s")
-            values.append(_positive_int(arguments["max_price_lkr"], "max_price_lkr"))
-
         sql = f"""
             select id, name, location, property_type, bedrooms, price_lkr, details
             from real_estate_properties
-            where {' and '.join(clauses)}
+            where customer_id = %s and status = 'active'
             order by price_lkr, name
-            limit 5
         """
         with psycopg.connect(self._database_url, connect_timeout=10) as connection:
-            rows = connection.execute(sql, values).fetchall()
+            rows = connection.execute(sql, (customer_id,)).fetchall()
         return [
-            {
-                "property_id": str(row[0]),
-                "name": row[1],
-                "location": row[2],
-                "property_type": row[3],
-                "bedrooms": row[4],
-                "price_lkr": row[5],
-                "price_millions": round(row[5] / 1_000_000, 2),
-                "price_label": f"LKR {row[5] / 1_000_000:g} million",
-                "details": row[6],
-            }
+            _property_dict(row)
             for row in rows
         ]
+
+    def customer_namespace(self) -> str:
+        customer_id, _ = self._mapping()
+        return customer_id
 
     def book_appointment(self, arguments: dict, context: CallContext) -> dict:
         customer_id, whatsapp_number_id = self._mapping()
@@ -268,24 +236,39 @@ class NeonRealEstateStore:
 
 
 class RealEstateToolService:
-    def __init__(self, store: NeonRealEstateStore) -> None:
+    def __init__(self, store: NeonRealEstateStore, vector_store: PineconePropertyStore | None = None) -> None:
         self._store = store
+        self._vector_store = vector_store
 
     @classmethod
     def from_env(cls) -> "RealEstateToolService | None":
         database_url = os.environ.get("DATABASE_URL")
         phone_number_id = os.environ.get("PHONE_NUMBER_ID")
-        if not database_url or not phone_number_id:
+        pinecone_api_key = os.environ.get("PINECONE_API_KEY")
+        if not database_url or not phone_number_id or not pinecone_api_key:
             return None
         return cls(NeonRealEstateStore(database_url, phone_number_id))
 
     async def ensure_ready(self) -> None:
         await asyncio.to_thread(self._store.ensure_schema)
+        namespace = await asyncio.to_thread(self._store.customer_namespace)
+        self._vector_store = await asyncio.to_thread(
+            PineconePropertyStore,
+            os.environ["PINECONE_API_KEY"],
+            os.environ.get("PINECONE_INDEX_NAME", "homelands-properties"),
+            namespace,
+        )
+        await asyncio.to_thread(
+            self._vector_store.upsert_properties,
+            self._store.list_active_properties(),
+        )
 
     async def execute(self, call: ToolCall, context: CallContext) -> dict:
         try:
             if call.name == "search_properties":
-                properties = await asyncio.to_thread(self._store.search_properties, call.arguments)
+                if self._vector_store is None:
+                    raise RuntimeError("The property search index is not ready.")
+                properties = await asyncio.to_thread(self._vector_store.search_properties, call.arguments)
                 return {"ok": True, "properties": properties, "count": len(properties)}
             if call.name == "book_appointment":
                 appointment = await asyncio.to_thread(self._store.book_appointment, call.arguments, context)

@@ -39,7 +39,8 @@ sequenceDiagram
     ASR-->>Pipeline: caller transcript
     Pipeline->>LLM: generate response or tool call
     LLM-->>Pipeline: optional property search or booking tool call
-    Pipeline->>Pipeline: execute tool against Neon
+    Pipeline->>Pipeline: search properties in Pinecone
+    Pipeline->>Pipeline: write confirmed appointments to Neon
     Pipeline->>LLM: tool result
     LLM-->>Pipeline: response text
     Pipeline->>TTS: synthesize response
@@ -57,7 +58,8 @@ sequenceDiagram
 | [`app/integrations/whatsapp/webrtc.py`](app/integrations/whatsapp/webrtc.py) | WhatsApp SDP handling and aiortc bridge. |
 | [`app/voice/agent.py`](app/voice/agent.py) | Active call task ownership and interruption counters. |
 | [`app/voice/turn_pipeline.py`](app/voice/turn_pipeline.py) | Greeting, VAD, ASR, LLM, TTS, and streaming turn loop. |
-| [`app/voice/tools.py`](app/voice/tools.py) | Neon property search and viewing-appointment tools. |
+| [`app/voice/tools.py`](app/voice/tools.py) | Pinecone property search and Neon appointment tools. |
+| [`app/voice/pinecone_store.py`](app/voice/pinecone_store.py) | Pinecone property indexing and semantic retrieval. |
 | [`app/voice/config.py`](app/voice/config.py) | Voice model settings, prompts, and turn-control constants. |
 | [`app/dashboard/router.py`](app/dashboard/router.py) | Browser dashboard for active and recent call sessions. |
 
@@ -80,6 +82,8 @@ VERIFY_TOKEN=my_secure_verify_token_123
 WHATSAPP_ACCESS_TOKEN=...
 PHONE_NUMBER_ID=...
 DATABASE_URL=postgresql://...
+PINECONE_API_KEY=...
+PINECONE_INDEX_NAME=homelands-properties
 ```
 
 `DATABASE_URL` should point to the same Neon database used by the hosted
@@ -87,10 +91,11 @@ dashboard so call status and transcript updates remain available after the GPU
 instance is terminated.
 
 At startup, the voice runtime creates `real_estate_properties` and
-`property_appointments` when needed and seeds the initial Homelands inventory
-for the customer mapped to `PHONE_NUMBER_ID`. Gemma reads property facts only
-through the Neon-backed tools and stores confirmed viewing appointments with
-the call ID and caller phone number.
+`property_appointments` when needed, seeds the initial Homelands inventory for
+the customer mapped to `PHONE_NUMBER_ID`, and synchronizes active property
+records into the Pinecone namespace for that customer. Gemma reads property
+facts only through Pinecone-backed retrieval. Confirmed viewing appointments
+remain transactional records in Neon with the call ID and caller phone number.
 
 Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
 
