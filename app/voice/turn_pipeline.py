@@ -253,7 +253,7 @@ class LocalGemmaTurnPipeline:
             if tool_call is None:
                 if "<tool_call" in response.casefold():
                     logger.warning("Gemma emitted an unparseable tool call for %s: %r", call_id, response[:500])
-                    return "Sorry, I couldn't complete that request. Please try again."
+                    return _tool_recovery_response(transcript_text)
                 return response
             if self._tools is None:
                 result = {"ok": False, "error": "The booking database is not configured."}
@@ -273,7 +273,7 @@ class LocalGemmaTurnPipeline:
         response = await self._llm.generate(transcript_text, history, continuation)
         if parse_tool_call(response) is not None:
             logger.warning("Gemma exceeded the tool-call limit for %s", call_id)
-            return "Sorry, I couldn't complete that request. Please try again."
+            return _tool_recovery_response(transcript_text)
         return response
 
     def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
@@ -400,4 +400,12 @@ def _is_repetitive_response(text: str) -> bool:
 def _repetition_fallback(text: str) -> str:
     if re.search(r"[\u0D80-\u0DFF]", text):
         return "සමාවෙන්න, මට ඒක පැහැදිලිව කියන්න බැරි වුණා. කරුණාකර නැවත කියන්න පුළුවන්ද?"
-    return "Sorry, I got stuck repeating myself. Could you say that again?"
+    return "I didn't catch that clearly. Could you say it again?"
+
+
+def _tool_recovery_response(transcript_text: str) -> str:
+    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
+        return "මට ඒක පැහැදිලිව තේරුම් ගන්න බැරි වුණා. location එක, budget එක සහ bedrooms ගණන ආයෙත් කියන්න පුළුවන්ද?"
+    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
+        return "எனக்கு அது தெளிவாகப் புரியவில்லை. இடம், budget மற்றும் bedrooms எண்ணிக்கையை மீண்டும் சொல்ல முடியுமா?"
+    return "I didn't catch that clearly. Could you repeat the location, budget, and number of bedrooms?"
