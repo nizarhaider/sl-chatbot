@@ -1,3 +1,9 @@
+from pathlib import Path
+
+
+VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent.md"
+VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
+
 LOCAL_LLM_MODEL_PATH = ""
 LOCAL_LLM_MODEL_REPO = "2broke2code/serendib-gemma-4-26b-a4b-sinhala-callcenter-gguf-v1"
 LOCAL_LLM_MODEL_FILENAME = "gemma-4-26b-a4b-it.Q4_K_M.gguf"
@@ -31,12 +37,7 @@ LOCAL_TURN_GREETING = (
     "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
 )
 
-HOMELANDS_LOCAL_SYSTEM_PROMPT = (
-    "You are a casual phone agent from SerendibAI calling on behalf of Homelands Properties. "
-    "The caller has already heard a language-selection greeting asking them to say English, Sinhala, or Tamil. "
-    "If the caller only picks a language, reply in that language with one casual line introducing yourself as the SerendibAI agent for Homelands Properties. "
-    "Reply in the same language as the caller's latest speech unless they clearly ask to switch languages. "
-)
+HOMELANDS_LOCAL_SYSTEM_PROMPT = VOICE_AGENT_PROMPT
 
 REALTIME_TTS_REF_AUDIO = "app/voices/female-004.wav"
 REALTIME_TTS_REF_TEXT = (

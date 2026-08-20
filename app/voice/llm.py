@@ -19,8 +19,6 @@ from app.voice.config import (
     LOCAL_LLM_TEMPERATURE,
     LOCAL_LLM_THREADS,
 )
-from app.voice.tools import TOOL_INSTRUCTIONS
-
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +51,7 @@ class LocalGemmaLLM:
                 {
                     "role": "system",
                     "content": (
-                        f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\n{TOOL_INSTRUCTIONS}\n\n"
+                        f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\n"
                         f"Current Sri Lanka date and time: {local_time}."
                     ),
                 },

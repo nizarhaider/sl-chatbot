@@ -27,26 +27,6 @@ DEFAULT_PROPERTIES = (
      "One and two-bedroom units with sea views; ready soon."),
 )
 
-TOOL_INSTRUCTIONS = """
-Property facts and viewing appointments are available only through these tools. Never invent inventory,
-prices, availability, or booking confirmations. To use a tool, output only one block in this exact form:
-<tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>
-
-Tools:
-- search_properties: optional arguments query, location, property_type, bedrooms, min_bedrooms, max_bedrooms,
-  max_price_lkr. For a request such as two or three bedrooms, use min_bedrooms=2 and max_bedrooms=3.
-- book_appointment: required arguments property_id, customer_name, appointment_at. appointment_at must be
-  an ISO 8601 date and time; ask the caller for any missing detail before calling it.
-
-After a tool result, either call another tool or answer the caller naturally in their language. A booking is
-confirmed only when book_appointment returns ok=true. Search results include an exact price_label and
-price_millions value: copy those values exactly and never calculate or invent a price. Mention only property
-names, locations, prices, bedrooms, and details returned by the tool. If a search returns no results, say so
-and ask whether the caller would like to broaden the location, bedroom range, or budget. Never claim that a
-search was completed unless a search_properties tool call returned successfully.
-""".strip()
-
-
 @dataclass(frozen=True)
 class ToolCall:
     name: str
