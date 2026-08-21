@@ -5,8 +5,8 @@ VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent
 VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 LOCAL_LLM_MODEL_PATH = ""
-LOCAL_LLM_MODEL_REPO = "2broke2code/serendib-gemma-4-26b-a4b-sinhala-callcenter-gguf-v1"
-LOCAL_LLM_MODEL_FILENAME = "gemma-4-26b-a4b-it.Q4_K_M.gguf"
+LOCAL_LLM_MODEL_REPO = "SanudaDev/SinLlama-GGUF"
+LOCAL_LLM_MODEL_FILENAME = "sinllama-q4_k_m.gguf"
 LOCAL_LLM_MODEL_DIR = ""
 LOCAL_LLM_N_GPU_LAYERS = -1
 LOCAL_LLM_CONTEXT_TOKENS = 2048

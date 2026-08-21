@@ -22,7 +22,7 @@ from app.voice.config import (
 logger = logging.getLogger(__name__)
 
 
-class LocalGemmaLLM:
+class LocalSinLlamaLLM:
     def __init__(self) -> None:
         self._llm = None
         self._lock = asyncio.Lock()
@@ -70,7 +70,7 @@ class LocalGemmaLLM:
         )
         cleaned = _strip_thinking_blocks(text)
         if text and not cleaned:
-            logger.info("Gemma response contained thinking without a final answer; raw_chars=%s", len(text))
+            logger.info("SinLlama response contained thinking without a final answer; raw_chars=%s", len(text))
         return cleaned
 
     def _get_llm(self):
@@ -81,7 +81,7 @@ class LocalGemmaLLM:
 
         model_path = self._resolve_model_path()
         logger.info(
-            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
+            "Loading local SinLlama model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
             model_path,
             LOCAL_LLM_N_GPU_LAYERS,
             LOCAL_LLM_CONTEXT_TOKENS,
@@ -99,7 +99,7 @@ class LocalGemmaLLM:
             flash_attn=LOCAL_LLM_FLASH_ATTENTION,
             verbose=False,
         )
-        logger.info("Local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
+        logger.info("Local SinLlama model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
         return self._llm
 
     def _resolve_model_path(self) -> str:
@@ -126,6 +126,11 @@ class LocalGemmaLLM:
         if LOCAL_LLM_MODEL_DIR:
             kwargs["local_dir"] = LOCAL_LLM_MODEL_DIR
         return hf_hub_download(**kwargs)
+
+
+# Keep the pipeline's existing integration name stable while the model backend
+# is switched from Gemma to SinLlama.
+LocalGemmaLLM = LocalSinLlamaLLM
 
 
 def _strip_thinking_blocks(text: str) -> str:
