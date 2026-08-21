@@ -175,6 +175,24 @@ tmux new-session -d -s sl-webhook \
 
 ## Verification
 
+### LLM-only Sinhala quality evaluation
+
+This evaluation hosts only local Gemma on a GPU. It uses an in-memory property
+search and appointment service with the production tool contract, then sends the
+full scripted conversation and tool traces to a separate judge model. It does not
+start Whisper, OmniVoice, WebRTC, Pinecone, or Neon.
+
+On a GPU host with the runtime environment installed:
+
+```bash
+GEMINI_API_KEY=... .venv/bin/python tests/llm_quality.py --report llm-quality-report.json
+```
+
+The stages cover Sinhala selection and continuity, property search, follow-up
+context, broad-request clarification, narrowed search, incomplete booking details,
+complete appointment booking, and confirmation. Every stage receives independent
+language, continuity, clarification, tool, safety, booking, and quality scores.
+
 Compile-check Python files:
 
 ```bash
