@@ -73,7 +73,7 @@ class RealtimeOmniVoiceTTS:
                             torch.cuda.synchronize()
 
                         audio = self._model.generate(
-                            language=self.current_voice.language,
+                            language=_language_for_text(text, self.current_voice.language),
                             text=text,
                             ref_audio=self.current_voice.ref_audio,
                             ref_text=self.current_voice.ref_text,
@@ -132,3 +132,19 @@ def _normalize_waveform(audio) -> np.ndarray:
     if waveform.ndim > 1:
         waveform = waveform[0]
     return waveform.astype(np.float32, copy=False)
+
+
+def _language_for_text(text: str, default: str = "si") -> str | None:
+    """Select a voice language only when the spoken text is unambiguous."""
+    has_sinhala = any("\u0d80" <= char <= "\u0dff" for char in text)
+    has_tamil = any("\u0b80" <= char <= "\u0bff" for char in text)
+    has_latin = any(char.isascii() and char.isalpha() for char in text)
+    if sum((has_sinhala, has_tamil, has_latin)) > 1:
+        return None
+    if has_sinhala:
+        return "si"
+    if has_tamil:
+        return "ta"
+    if has_latin:
+        return "en"
+    return default

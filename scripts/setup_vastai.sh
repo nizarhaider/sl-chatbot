@@ -15,7 +15,7 @@ REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
 NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN:-}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
-PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-60}"
+PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 
 PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
 USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
@@ -59,6 +59,12 @@ if [ -f .env ]; then
 else
   : > "${ENV_SYNC_FILE}"
   echo "WARNING: .env not found locally; syncing only exported runtime variables."
+fi
+
+VERIFY_TOKEN="${VERIFY_TOKEN:-$(sed -n 's/^VERIFY_TOKEN=//p' "${ENV_SYNC_FILE}" | head -n 1)}"
+if [ -z "${VERIFY_TOKEN}" ]; then
+  echo "ERROR: VERIFY_TOKEN is not set in .env or the environment."
+  exit 1
 fi
 
 # Credentials kept in ~/.zshrc are not necessarily exported into a child bash
@@ -179,7 +185,7 @@ $SSH "
   until [ \$attempt -ge ${APP_STARTUP_TIMEOUT_ATTEMPTS} ]; do
     if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1 \
       && curl -fsS http://127.0.0.1:${APP_PORT}/ \
-      | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
+      | grep -q ready; then
       ready=true
       break
     fi
@@ -207,7 +213,10 @@ $SSH "
   fi
 
   curl -sS http://127.0.0.1:${APP_PORT}/ && echo ''
-  curl -sS 'http://127.0.0.1:${APP_PORT}/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
+  curl -sS --get 'http://127.0.0.1:${APP_PORT}/webhook' \
+    --data-urlencode 'hub.mode=subscribe' \
+    --data-urlencode "hub.verify_token=${VERIFY_TOKEN}" \
+    --data-urlencode 'hub.challenge=12345'
   echo ''
 "
 
@@ -249,7 +258,10 @@ log ""
 
 VERIFICATION_OK=false
 for attempt in $(seq 1 "${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS}"); do
-  public_response="$(curl -sS -m 15 "${PUBLIC_WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345" || true)"
+  public_response="$(curl -sS -m 15 --get "${PUBLIC_WEBHOOK_URL}" \
+    --data-urlencode 'hub.mode=subscribe' \
+    --data-urlencode "hub.verify_token=${VERIFY_TOKEN}" \
+    --data-urlencode 'hub.challenge=12345' || true)"
 
   if [ "${public_response}" = "12345" ]; then
     log "WhatsApp webhook verification is working: ${PUBLIC_WEBHOOK_URL}"

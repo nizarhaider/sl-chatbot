@@ -61,6 +61,11 @@ class VoiceAgent:
     ) -> None:
         if call_id is not None:
             self.playback_generation[call_id] = self.playback_generation.get(call_id, 0) + 1
+            dashboard_state.emit(
+                call_id,
+                "pipeline.playback_interrupted",
+                {"generation": self.playback_generation[call_id]},
+            )
         if output_track is not None:
             output_track.clear_buffer()
 

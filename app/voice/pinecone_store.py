@@ -52,7 +52,13 @@ class PineconePropertyStore:
     def search_properties(self, arguments: dict) -> dict:
         properties = self._search(arguments)
         requested_location = str(arguments.get("location", "")).strip()
-        if _is_greater_colombo(requested_location) and len(properties) > LOCATION_CLARIFICATION_THRESHOLD:
+        if (
+            len(properties) > LOCATION_CLARIFICATION_THRESHOLD
+            and (
+                not requested_location
+                or _is_greater_colombo(requested_location)
+            )
+        ):
             suggested_locations = list(dict.fromkeys(
                 property_data["location"]
                 for property_data in properties

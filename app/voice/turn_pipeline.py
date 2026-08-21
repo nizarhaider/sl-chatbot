@@ -102,25 +102,33 @@ class LocalGemmaTurnPipeline:
         vad = VadState()
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
+        turn_task: asyncio.Task | None = None
 
-        while True:
-            try:
-                frame = await input_track.recv()
-            except Exception as exc:
-                logger.info("Input ended for %s: %s", call_id, exc)
-                return
+        try:
+            while True:
+                try:
+                    frame = await input_track.recv()
+                except Exception as exc:
+                    logger.info("Input ended for %s: %s", call_id, exc)
+                    return
 
-            for resampled in resampler.resample(frame):
-                chunk_buffer.extend(resampled.to_ndarray().tobytes())
-                await self._consume_chunks(
-                    call_id,
-                    caller_phone,
-                    input_track,
-                    chunk_buffer,
-                    vad,
-                    output_track,
-                    playback_generation,
-                )
+                for resampled in resampler.resample(frame):
+                    chunk_buffer.extend(resampled.to_ndarray().tobytes())
+                    turn_task = await self._consume_chunks(
+                        call_id,
+                        caller_phone,
+                        input_track,
+                        chunk_buffer,
+                        vad,
+                        output_track,
+                        playback_generation,
+                        turn_task,
+                    )
+        finally:
+            if turn_task is not None and not turn_task.done():
+                turn_task.cancel()
+            if turn_task is not None:
+                await asyncio.gather(turn_task, return_exceptions=True)
 
     async def _consume_chunks(
         self,
@@ -131,7 +139,8 @@ class LocalGemmaTurnPipeline:
         vad: VadState,
         output_track,
         playback_generation,
-    ) -> None:
+        turn_task: asyncio.Task | None,
+    ) -> asyncio.Task | None:
         while len(chunk_buffer) >= TURN_INPUT_CHUNK_SIZE:
             chunk = bytes(chunk_buffer[:TURN_INPUT_CHUNK_SIZE])
             del chunk_buffer[:TURN_INPUT_CHUNK_SIZE]
@@ -142,6 +151,11 @@ class LocalGemmaTurnPipeline:
                     dashboard_state.emit(call_id, "pipeline.speech_started", {})
                     vad.start()
                     self._interrupt_playback(call_id, output_track)
+                    if turn_task is not None:
+                        if not turn_task.done():
+                            turn_task.cancel()
+                        await asyncio.gather(turn_task, return_exceptions=True)
+                        turn_task = None
                 vad.add_speech(chunk)
                 continue
 
@@ -155,7 +169,10 @@ class LocalGemmaTurnPipeline:
             logger.info("Turn VAD: Speech ended")
             dashboard_state.emit(call_id, "pipeline.speech_ended", {})
             turn = vad.finish()
-            await self._handle_turn(
+            if turn_task is not None and turn_task.done():
+                await asyncio.gather(turn_task, return_exceptions=True)
+                turn_task = None
+            turn_task = asyncio.create_task(self._handle_turn(
                 call_id=call_id,
                 caller_phone=caller_phone,
                 input_track=input_track,
@@ -164,7 +181,9 @@ class LocalGemmaTurnPipeline:
                 turn_started_at=turn.started_at,
                 turn_end_at=time.perf_counter(),
                 utterance_pcm=turn.pcm,
-            )
+            ), name=f"turn-{call_id}")
+
+        return turn_task
 
     async def _handle_turn(
         self,
@@ -200,12 +219,6 @@ class LocalGemmaTurnPipeline:
                 output_track,
                 playback_generation,
             )
-            await self._discard_playback_echo(
-                call_id,
-                input_track,
-                output_track,
-                hold_audio_seconds,
-            )
 
         response_text, llm_ms = await self._timed_response(
             call_id,
@@ -226,12 +239,6 @@ class LocalGemmaTurnPipeline:
             response_text,
             output_track,
             playback_generation,
-        )
-        await self._discard_playback_echo(
-            call_id,
-            input_track,
-            output_track,
-            tts_audio_seconds,
         )
         self._log_turn_timings(
             call_id,
@@ -309,7 +316,7 @@ class LocalGemmaTurnPipeline:
             dashboard_state.emit(call_id, "model.output", {"text": response})
             tool_call = parse_tool_call(response)
             if tool_call is None:
-                if "<tool_call" in response.casefold():
+                if _contains_internal_control_text(response):
                     logger.warning("Gemma emitted an unparseable tool call for %s: %r", call_id, response[:500])
                     return _tool_recovery_response(transcript_text)
                 return response
@@ -322,6 +329,18 @@ class LocalGemmaTurnPipeline:
             logger.info("Tool call for %s: name=%s ok=%s", call_id, tool_call.name, result.get("ok"))
             dashboard_state.emit(call_id, "tool.call", {"name": tool_call.name, "arguments": tool_call.arguments})
             dashboard_state.emit(call_id, "tool.result", {"name": tool_call.name, "result": result})
+            if not result.get("ok"):
+                logger.warning(
+                    "Tool call failed for %s: name=%s reason=%s",
+                    call_id,
+                    tool_call.name,
+                    result.get("error", "unknown error"),
+                )
+                return _tool_failure_response(
+                    transcript_text,
+                    tool_call.name,
+                    str(result.get("error", "")),
+                )
             continuation.extend(
                 [
                     {"role": "assistant", "content": tool_call_message(tool_call)},
@@ -339,7 +358,7 @@ class LocalGemmaTurnPipeline:
         })
         response = await self._llm.generate(transcript_text, history, continuation)
         dashboard_state.emit(call_id, "model.output", {"text": response})
-        if parse_tool_call(response) is not None:
+        if parse_tool_call(response) is not None or _contains_internal_control_text(response):
             logger.warning("Gemma exceeded the tool-call limit for %s", call_id)
             return _tool_recovery_response(transcript_text)
         return response
@@ -465,6 +484,15 @@ def _is_repetitive_response(text: str) -> bool:
     return False
 
 
+def _contains_internal_control_text(text: str) -> bool:
+    lowered = text.casefold()
+    return (
+        "<tool_call" in lowered
+        or "<tool_result" in lowered
+        or ("\"name\"" in lowered and "\"arguments\"" in lowered)
+    )
+
+
 def _repetition_fallback(text: str) -> str:
     if re.search(r"[\u0D80-\u0DFF]", text):
         return "සමාවෙන්න, මට ඒක පැහැදිලිව කියන්න බැරි වුණා. කරුණාකර නැවත කියන්න පුළුවන්ද?"
@@ -477,6 +505,37 @@ def _tool_recovery_response(transcript_text: str) -> str:
     if re.search(r"[\u0B80-\u0BFF]", transcript_text):
         return "எனக்கு அது தெளிவாகப் புரியவில்லை. இடம், budget மற்றும் bedrooms எண்ணிக்கையை மீண்டும் சொல்ல முடியுமா?"
     return "I didn't catch that clearly. Could you repeat the location, budget, and number of bedrooms?"
+
+
+def _tool_failure_response(transcript_text: str, tool_name: str, error: str) -> str:
+    """Turn internal tool failures into a short, caller-safe clarification."""
+    lowered = error.casefold()
+    if "missing required argument: property_id" in lowered:
+        english = "Which property would you like to view? Please tell me its name or location."
+        sinhala = "ඔබට බලන්න අවශ්‍ය property එක මොකක්ද? ඒකේ නම හෝ location එක කියන්න පුළුවන්ද?"
+        tamil = "எந்த property-ஐ பார்க்க விரும்புகிறீர்கள்? அதன் பெயர் அல்லது location-ஐ சொல்ல முடியுமா?"
+    elif "missing required argument: customer_name" in lowered:
+        english = "What name should I use for the appointment?"
+        sinhala = "Appointment එකට යොදන්න ඕන නම මොකක්ද?"
+        tamil = "Appointment-க்கு எந்த பெயரை பயன்படுத்த வேண்டும்?"
+    elif "missing required argument: appointment_at" in lowered:
+        english = "What exact date and time would you like for the viewing?"
+        sinhala = "Viewing එකට ඔබට අවශ්‍ය exact date එක සහ time එක මොකක්ද?"
+        tamil = "Viewing-க்கு உங்களுக்கு வேண்டிய சரியான date மற்றும் time என்ன?"
+    elif "already been booked" in lowered:
+        english = "That time is already booked. What other exact date and time would work for you?"
+        sinhala = "ඒ වෙලාව දැනටමත් book කරලා. වෙනත් exact date එකක් සහ time එකක් කියන්න පුළුවන්ද?"
+        tamil = "அந்த நேரம் ஏற்கனவே book செய்யப்பட்டுள்ளது. வேறு சரியான date மற்றும் time சொல்ல முடியுமா?"
+    else:
+        english = "I couldn't complete that just now. Could you repeat the details so I can try again?"
+        sinhala = "ඒක දැන් complete කරන්න බැරි වුණා. Details ටික ආයෙත් කියන්න පුළුවන්ද?"
+        tamil = "அதை இப்போது முடிக்க முடியவில்லை. Details-ஐ மீண்டும் சொல்ல முடியுமா?"
+
+    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
+        return sinhala
+    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
+        return tamil
+    return english
 
 
 def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
