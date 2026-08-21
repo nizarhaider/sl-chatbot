@@ -18,10 +18,6 @@ from pathlib import Path
 
 import httpx
 
-from app.voice.llm import LocalGemmaLLM
-from app.voice.tools import CallContext, ToolCall
-from app.voice.turn_pipeline import LocalGemmaTurnPipeline
-
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemini-2.5-flash")
 CALL_ID = "llm-quality-sinhala"
 CALLER_PHONE = "94770000000"
@@ -148,6 +144,9 @@ class Conversation:
 
 
 async def run_conversation() -> dict:
+    from app.voice.llm import LocalGemmaLLM
+    from app.voice.turn_pipeline import LocalGemmaTurnPipeline
+
     llm = LocalGemmaLLM()
     await llm.prewarm()
     tools = InMemoryPropertyTools()
@@ -236,9 +235,19 @@ def gpu_memory_mib() -> int:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", default="llm-quality-report.json")
+    parser.add_argument("--evidence", help="Judge an existing evidence JSON without loading Gemma")
+    parser.add_argument("--evidence-only", action="store_true", help="Run Gemma and write evidence without judging")
     args = parser.parse_args()
-    evidence = asyncio.run(run_conversation())
-    evidence["gpu_memory_mib"] = gpu_memory_mib()
+    if args.evidence:
+        stored = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
+        evidence = stored.get("evidence", stored)
+    else:
+        evidence = asyncio.run(run_conversation())
+        evidence["gpu_memory_mib"] = gpu_memory_mib()
+    if args.evidence_only:
+        Path(args.report).write_text(json.dumps({"evidence": evidence}, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({"report": args.report, "stages": len(evidence["stages"])}, ensure_ascii=False))
+        return
     verdict = judge(evidence)
     report = {"evidence": evidence, "judge": verdict, "judge_model": JUDGE_MODEL}
     Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
