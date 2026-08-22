@@ -11,7 +11,7 @@ from langchain.tools import tool
 from pydantic import BaseModel, Field
 from psycopg.errors import UniqueViolation
 
-from app.integrations.whatsapp.client import whatsapp_api
+from app.integrations.whatsapp.client import _normalize_phone_number, whatsapp_api
 from app.voice.pinecone_store import PineconePropertyStore
 
 logger = logging.getLogger(__name__)
@@ -292,9 +292,18 @@ class RealEstateToolService:
                     return {"ok": True, **search_result}
                 return {"ok": True, "properties": search_result, "count": len(search_result)}
             if name == "book_appointment":
+                if not _normalize_phone_number(context.caller_phone):
+                    return {"ok": False, "error": "A valid WhatsApp number is required to book a viewing."}
                 appointment = await asyncio.to_thread(self._store.book_appointment, arguments, context)
+                confirmation_sent = await whatsapp_api.send_text_message(
+                    context.caller_phone,
+                    (
+                        f"Your viewing is confirmed: {appointment['property_name']} in "
+                        f"{appointment['location']} on {appointment['appointment_at']}."
+                    ),
+                )
                 logger.info("Appointment persisted for %s: appointment_id=%s", context.call_id, appointment["appointment_id"])
-                return {"ok": True, "appointment": appointment}
+                return {"ok": True, "appointment": appointment, "confirmation_sent": confirmation_sent}
             if name == "send_whatsapp_message":
                 sent = await whatsapp_api.send_text_message(context.caller_phone, _required(arguments, "message"))
                 return {"ok": sent, "message_sent": sent}

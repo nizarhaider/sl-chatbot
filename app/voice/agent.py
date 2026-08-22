@@ -3,6 +3,7 @@ import logging
 import re
 
 from aiortc import MediaStreamTrack
+from num2words import num2words
 
 from app.dashboard.state import dashboard_state
 from app.voice.audio_track import RealtimeAudioTrack
@@ -71,7 +72,12 @@ class VoiceAgent:
 
     def _prepare_tts_text(self, text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
-        return cleaned.rstrip(",;:").strip()
+        spoken = re.sub(
+            r"\b\d[\d,]*(?:\.\d+)?\b",
+            _number_to_words,
+            cleaned,
+        )
+        return spoken.rstrip(",;:").strip()
 
     async def _run_turn_pipeline(self, call_id, caller_phone, input_track, output_track):
         try:
@@ -94,3 +100,8 @@ class VoiceAgent:
 
 
 voice_agent = VoiceAgent()
+
+
+def _number_to_words(match: re.Match[str]) -> str:
+    value = match.group().replace(",", "")
+    return num2words(float(value) if "." in value else int(value), lang="en")
