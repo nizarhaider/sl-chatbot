@@ -175,6 +175,8 @@ class _ForceToolCall(AgentMiddleware):
         self._tool_name = tool_name
 
     def wrap_model_call(self, request: ModelRequest, handler):
+        if any(message.__class__.__name__ == "ToolMessage" for message in request.messages):
+            return handler(request)
         return handler(request.override(
             tool_choice={"type": "function", "function": {"name": self._tool_name}},
         ))
