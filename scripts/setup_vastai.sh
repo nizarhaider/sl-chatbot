@@ -13,12 +13,10 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
-NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN:-}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 
-PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:-}"
-USE_TEMP_TUNNEL="${USE_TEMP_TUNNEL:-true}"
+PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:?PUBLIC_WEBHOOK_URL must point to the permanent webhook hostname}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
@@ -102,10 +100,6 @@ fi
 
 $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
 
-if [ -f .env ] && [ -z "${NGROK_AUTH_TOKEN}" ]; then
-  NGROK_AUTH_TOKEN="$(sed -n 's/^NGROK_AUTH_TOKEN=//p' .env | head -n 1)"
-fi
-
 log "Waiting for base image package setup..."
 $SSH "
   for attempt in \$(seq 1 60); do
@@ -127,40 +121,6 @@ $SSH "cd ${REMOTE_DIR} && env -u UV_NO_CACHE uv sync --frozen"
 
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
-
-log "Installing ngrok..."
-if [ -z "${NGROK_AUTH_TOKEN}" ]; then
-  echo "WARNING: NGROK_AUTH_TOKEN not set; ngrok will run in demo mode if allowed."
-fi
-$SSH "if ! command -v ngrok >/dev/null 2>&1; then \
-    curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-  | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-  && echo 'deb https://ngrok-agent.s3.amazonaws.com bookworm main' \
-  | tee /etc/apt/sources.list.d/ngrok.list \
-  && apt-get update -qq \
-  && apt-get install -y ngrok; \
-  else echo 'ngrok already installed'; fi"
-
-if [ -n "${NGROK_AUTH_TOKEN}" ]; then
-  log "Configuring ngrok auth token on remote..."
-  $SSH "ngrok config add-authtoken '${NGROK_AUTH_TOKEN}'"
-fi
-
-log "Starting ngrok in tmux..."
-$SSH "
-  if tmux has-session -t sl-ngrok 2>/dev/null; then
-    if curl -sS http://127.0.0.1:4040/api/tunnels >/dev/null 2>&1; then
-      echo 'ngrok is already running and healthy; skipping startup'
-      exit 0
-    fi
-    echo 'Found existing sl-ngrok session but ngrok API is unavailable; restarting'
-    tmux kill-session -t sl-ngrok 2>/dev/null || true
-  fi
-  tmux new-session -d -s sl-ngrok \
-    'cd ${REMOTE_DIR} && ngrok http ${APP_PORT} --log=stdout > /tmp/ngrok.log 2>&1'
-"
-
-sleep 3
 
 log "Starting webhook in tmux..."
 $SSH "
@@ -220,37 +180,6 @@ $SSH "
   echo ''
 "
 
-if [ -z "${PUBLIC_WEBHOOK_URL}" ] && [ "${USE_TEMP_TUNNEL}" = "true" ]; then
-  log "Retrieving ngrok tunnel URL..."
-
-  TMP_TUNNEL_URL=""
-  for i in 1 2 3 4 5; do
-    TMP_TUNNEL_URL="$($SSH "curl -sS http://127.0.0.1:4040/api/tunnels | python3 -c 'import sys,json;obj=json.load(sys.stdin);t=obj.get(\"tunnels\") or [];print(t[0].get(\"public_url\", \"\") if t else \"\")' || true")"
-    if [ -n "${TMP_TUNNEL_URL}" ]; then
-      break
-    fi
-    echo "Waiting for ngrok API to become available... attempt ${i}"
-    sleep 2
-  done
-
-  if [ -z "${TMP_TUNNEL_URL}" ]; then
-    echo "ERROR: Failed to obtain ngrok tunnel URL."
-    echo "Check ngrok status on remote host:"
-    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'ps aux | grep ngrok'"
-    echo "  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'cat /tmp/ngrok.log'"
-    exit 1
-  fi
-
-  PUBLIC_WEBHOOK_URL="${TMP_TUNNEL_URL}/webhook"
-  log "Temporary webhook URL: ${PUBLIC_WEBHOOK_URL}"
-fi
-
-if [ -z "${PUBLIC_WEBHOOK_URL}" ]; then
-  echo "ERROR: PUBLIC_WEBHOOK_URL is empty."
-  echo "Set PUBLIC_WEBHOOK_URL or enable USE_TEMP_TUNNEL=true."
-  exit 1
-fi
-
 log "Waiting for WhatsApp webhook verification..."
 log "Use this callback URL in WhatsApp:"
 log "  ${PUBLIC_WEBHOOK_URL}"
@@ -285,7 +214,5 @@ log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 log "Useful commands:"
 log "  Attach to webhook:  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-webhook'"
-log "  Attach to ngrok:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-ngrok'"
-log "  Get ngrok URL:      ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'curl http://127.0.0.1:4040/api/tunnels | jq .tunnels[0].public_url'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"

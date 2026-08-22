@@ -153,7 +153,7 @@ To set up an instance that has already been rented:
 REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
 ```
 
-The setup script prepares `/workspace/sl-chatbot`, syncs `.env` when present, builds `llama-cpp-python` with CUDA, starts ngrok, starts the webhook in `tmux`, and waits for webhook verification.
+The setup script prepares `/workspace/sl-chatbot`, syncs `.env` when present, installs the locked vLLM/CUDA dependencies, starts the webhook in `tmux`, and verifies the configured permanent webhook URL.
 
 Manual dependency sync on the remote host:
 
