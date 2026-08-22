@@ -498,7 +498,10 @@ def _property_search_query(history: list, transcript_text: str) -> str | None:
     latest_detail = re.search(
         f"{property_type_pattern}|{location_pattern}|{bedroom_pattern}", latest
     )
-    if property_type and (location or bedrooms) and latest_detail:
+    has_usable_request = (
+        property_type and (location or bedrooms)
+    ) or (location and bedrooms)
+    if has_usable_request and latest_detail:
         return query
     return None
 
