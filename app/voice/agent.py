@@ -73,9 +73,15 @@ class VoiceAgent:
     def _prepare_tts_text(self, text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
         spoken = re.sub(
+            r"\b\d[\d,]*(?:\.\d+)?(?=(?:am|pm)\b)",
+            lambda match: f"{_number_to_words(match)} ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        spoken = re.sub(
             r"\b\d[\d,]*(?:\.\d+)?\b",
             _number_to_words,
-            cleaned,
+            spoken,
         )
         return spoken.rstrip(",;:").strip()
 
