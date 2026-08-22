@@ -46,8 +46,6 @@ class VllmTurnPipeline:
         self._llm = VllmAgent()
         self._tools = RealEstateToolService.from_env()
         self._conversation_history: dict[str, list] = {}
-        self._initial_prompt_calls: set[str] = set()
-        self._initial_prompt_generation_complete: set[str] = set()
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -68,7 +66,6 @@ class VllmTurnPipeline:
             logger.info("OmniVoice prewarm complete")
 
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
-        self._initial_prompt_calls.add(call_id)
         greeting_task = asyncio.create_task(
             self._play_greeting(call_id, output_track, playback_generation),
             name=f"greeting-{call_id}",
@@ -79,8 +76,6 @@ class VllmTurnPipeline:
             greeting_task.cancel()
             await asyncio.gather(greeting_task, return_exceptions=True)
             self._conversation_history.pop(call_id, None)
-            self._initial_prompt_calls.discard(call_id)
-            self._initial_prompt_generation_complete.discard(call_id)
 
     async def _play_greeting(self, call_id, output_track, playback_generation) -> None:
         if TURN_GREETING_DELAY_SECONDS:
@@ -88,15 +83,12 @@ class VllmTurnPipeline:
 
         greeting_started_at = time.perf_counter()
         greeting_seconds = 0.0
-        try:
-            greeting_seconds = await self._speak(
-                call_id,
-                LOCAL_TURN_GREETING,
-                output_track,
-                playback_generation,
-            )
-        finally:
-            self._initial_prompt_generation_complete.add(call_id)
+        greeting_seconds = await self._speak(
+            call_id,
+            LOCAL_TURN_GREETING,
+            output_track,
+            playback_generation,
+        )
 
         logger.info(
             "Greeting timings for %s: tts_wall=%.0f ms tts_audio=%.0f ms",
@@ -156,16 +148,6 @@ class VllmTurnPipeline:
             del chunk_buffer[:TURN_INPUT_CHUNK_SIZE]
 
             now = time.monotonic()
-            if call_id in self._initial_prompt_calls:
-                if (
-                    call_id not in self._initial_prompt_generation_complete
-                    or output_track.pending_audio_seconds > 0
-                ):
-                    vad.discard()
-                    continue
-                self._initial_prompt_calls.discard(call_id)
-                self._initial_prompt_generation_complete.discard(call_id)
-                playback_echo_state["until"] = now + TURN_PLAYBACK_ECHO_TAIL_SECONDS
             if output_track.pending_audio_seconds > 0:
                 playback_echo_state["was_playing"] = True
             elif playback_echo_state["was_playing"]:
