@@ -49,7 +49,11 @@ class LocalWhisperASR:
                 attention_mask=attention_mask,
                 **generate_kwargs,
             )
-        return processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+        return processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0].strip()
 
     def _get_model(self):
         if self._model is not None:

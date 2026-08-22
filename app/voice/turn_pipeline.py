@@ -16,8 +16,10 @@ from app.voice.config import (
     LOCAL_LLM_PREWARM,
     LOCAL_TURN_GREETING,
     REALTIME_TTS_PREWARM,
+    TURN_BARGE_IN_MIN_SPEECH_CHUNKS,
     TURN_END_SILENCE_CHUNKS,
     TURN_GREETING_DELAY_SECONDS,
+    TURN_INPUT_CHUNK_MS,
     TURN_INPUT_CHUNK_SIZE,
     TURN_MIN_AUDIO_MS,
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
@@ -151,13 +153,21 @@ class LocalGemmaTurnPipeline:
                     logger.info("Turn VAD: Speech started")
                     dashboard_state.emit(call_id, "pipeline.speech_started", {})
                     vad.start()
+                vad.add_speech(chunk)
+                if (
+                    vad.speech_chunks == TURN_BARGE_IN_MIN_SPEECH_CHUNKS
+                    and output_track.pending_audio_seconds > 0
+                ):
+                    logger.info(
+                        "Turn VAD: confirmed barge-in after %.0f ms",
+                        vad.speech_chunks * TURN_INPUT_CHUNK_MS,
+                    )
                     self._interrupt_playback(call_id, output_track)
                     if turn_task is not None:
                         if not turn_task.done():
                             turn_task.cancel()
                         await asyncio.gather(turn_task, return_exceptions=True)
                         turn_task = None
-                vad.add_speech(chunk)
                 continue
 
             if not vad.is_speaking:
@@ -406,15 +416,12 @@ class LocalGemmaTurnPipeline:
         if not generated_audio_seconds:
             return
 
-        pending_seconds = min(
+        protected_seconds = generated_audio_seconds + TURN_PLAYBACK_ECHO_TAIL_SECONDS
+        logger.info(
+            "Suppressing inbound audio for %s during playback: generated=%.2f seconds pending=%.2f seconds tail=%.2f seconds",
+            call_id,
             generated_audio_seconds,
             output_track.pending_audio_seconds,
-        )
-        protected_seconds = pending_seconds + TURN_PLAYBACK_ECHO_TAIL_SECONDS
-        logger.info(
-            "Suppressing inbound audio for %s during playback: pending=%.2f seconds tail=%.2f seconds",
-            call_id,
-            pending_seconds,
             TURN_PLAYBACK_ECHO_TAIL_SECONDS,
         )
         await self._discard_input_audio(input_track, protected_seconds)

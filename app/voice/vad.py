@@ -8,17 +8,20 @@ class VadState:
         self.is_speaking = False
         self.started_at: float | None = None
         self.silence_chunks = 0
+        self.speech_chunks = 0
         self._utterance_buffer = bytearray()
 
     def start(self) -> None:
         self.is_speaking = True
         self.started_at = time.perf_counter()
         self.silence_chunks = 0
+        self.speech_chunks = 0
         self._utterance_buffer.clear()
 
     def add_speech(self, chunk: bytes) -> None:
         self._utterance_buffer.extend(chunk)
         self.silence_chunks = 0
+        self.speech_chunks += 1
 
     def add_silence(self, chunk: bytes) -> None:
         self._utterance_buffer.extend(chunk)
@@ -29,6 +32,7 @@ class VadState:
         self.is_speaking = False
         self.started_at = None
         self.silence_chunks = 0
+        self.speech_chunks = 0
         self._utterance_buffer.clear()
         return turn
 
