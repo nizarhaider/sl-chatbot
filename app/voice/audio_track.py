@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from collections import deque
 from fractions import Fraction
 
 import numpy as np
@@ -29,8 +28,6 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._logged_non_silent_frames = 0
         self._initial_buffer_seconds = 0.24
         self._initial_buffer_wait_seconds = 3.0
-        self._echo_reference_chunks: deque[np.ndarray] = deque(maxlen=900)
-        self._echo_reference_norms: deque[float] = deque(maxlen=900)
 
     @property
     def sample_rate(self) -> int:
@@ -59,31 +56,11 @@ class RealtimeAudioTrack(MediaStreamTrack):
             return
 
         mono = self._resample_if_needed(pcm, sample_rate)
-        self._remember_echo_reference(mono)
         stereo = np.repeat(mono[:, None], self._channels, axis=1)
         output_bytes = stereo.astype(np.int16).tobytes()
         self._pending_audio_bytes += len(output_bytes)
         self._log_queued_audio(pcm, sample_rate, mono, output_bytes)
         self.queue.put_nowait(output_bytes)
-
-    def matches_recent_playback(self, pcm: bytes) -> bool:
-        """Detect delayed WhatsApp feedback by correlating incoming and sent PCM."""
-        if not self._echo_reference_chunks:
-            return False
-
-        incoming = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-        chunk_size = 320  # 20 ms at the turn pipeline's 16 kHz input rate.
-        references = np.stack(self._echo_reference_chunks)
-        reference_norms = np.asarray(self._echo_reference_norms)
-        for start in range(0, len(incoming) - chunk_size + 1, chunk_size):
-            chunk = incoming[start:start + chunk_size]
-            chunk_norm = float(np.linalg.norm(chunk))
-            if chunk_norm < 1_000:
-                continue
-            correlations = references @ chunk / (reference_norms * chunk_norm + 1e-6)
-            if float(np.max(correlations)) >= 0.82:
-                return True
-        return False
 
     async def recv(self):
         if self._start_time is None:
@@ -109,18 +86,6 @@ class RealtimeAudioTrack(MediaStreamTrack):
         chunks = [resampled.to_ndarray().tobytes() for resampled in resampler.resample(frame)]
         chunks.extend(resampled.to_ndarray().tobytes() for resampled in resampler.resample(None))
         return np.frombuffer(b"".join(chunks), dtype=np.int16)
-
-    def _remember_echo_reference(self, mono: np.ndarray) -> None:
-        # Both directions are PCM16. Downsample the 48 kHz outbound stream to
-        # the 16 kHz format consumed by the input VAD before comparing them.
-        at_input_rate = mono[::3].astype(np.float32, copy=False)
-        chunk_size = 320
-        for start in range(0, len(at_input_rate) - chunk_size + 1, chunk_size):
-            chunk = at_input_rate[start:start + chunk_size].copy()
-            norm = float(np.linalg.norm(chunk))
-            if norm >= 1_000:
-                self._echo_reference_chunks.append(chunk)
-                self._echo_reference_norms.append(norm)
 
     async def _pace_next_frame(self) -> None:
         if self._start_time is None:
