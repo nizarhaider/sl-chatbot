@@ -21,7 +21,10 @@ TURN_SILENCE_THRESHOLD = 1000
 # or budget details without receiving a reply after each fragment.
 TURN_END_SILENCE_CHUNKS = 40
 TURN_MIN_AUDIO_MS = 500
-TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 5
+# Interrupting spoken output is deliberately stricter than normal turn
+# detection so speaker noise and incidental sounds do not cut the bot off.
+TURN_BARGE_IN_RMS_THRESHOLD = 1600
+TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 12
 TURN_GREETING_DELAY_SECONDS = 1.2
 TURN_PLAYBACK_ECHO_TAIL_SECONDS = 0.35
 

@@ -15,6 +15,7 @@ from app.voice.config import (
     LOCAL_TURN_GREETING,
     REALTIME_TTS_PREWARM,
     TURN_BARGE_IN_MIN_SPEECH_CHUNKS,
+    TURN_BARGE_IN_RMS_THRESHOLD,
     TURN_END_SILENCE_CHUNKS,
     TURN_GREETING_DELAY_SECONDS,
     TURN_INPUT_CHUNK_MS,
@@ -166,6 +167,7 @@ class VllmTurnPipeline:
                 if (
                     vad.speech_chunks == TURN_BARGE_IN_MIN_SPEECH_CHUNKS
                     and output_track.pending_audio_seconds > 0
+                    and pcm_rms(chunk) > TURN_BARGE_IN_RMS_THRESHOLD
                 ):
                     logger.info(
                         "Turn VAD: confirmed barge-in after %.0f ms",
