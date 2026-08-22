@@ -6,6 +6,13 @@ from app.voice.config import WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_MODEL, WH
 
 logger = logging.getLogger(__name__)
 
+# Whisper's documented prompt_ids vocabulary bias keeps property locations from
+# being treated as unfamiliar Sinhala words.
+PROPERTY_VOCABULARY = (
+    "Homelands Properties. Colombo, Malabe, Battaramulla, Kottawa, Dehiwala, "
+    "Piliyandala, Kurunegala, Nugegoda, Rajagiriya, Maharagama."
+)
+
 
 class LocalWhisperASR:
     def __init__(self) -> None:
@@ -37,7 +44,12 @@ class LocalWhisperASR:
         if attention_mask is not None:
             attention_mask = attention_mask.to(device)
 
-        generate_kwargs = {"task": WHISPER_TASK}
+        generate_kwargs = {
+            "task": WHISPER_TASK,
+            "prompt_ids": processor.get_prompt_ids(
+                PROPERTY_VOCABULARY, return_tensors="pt"
+            ).to(device),
+        }
         if WHISPER_LANGUAGE:
             generate_kwargs["language"] = WHISPER_LANGUAGE
 
