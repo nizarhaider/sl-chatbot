@@ -20,7 +20,6 @@ from app.voice.config import (
     TURN_INPUT_CHUNK_MS,
     TURN_INPUT_CHUNK_SIZE,
     TURN_MIN_AUDIO_MS,
-    TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
     VLLM_PREWARM,
 )
@@ -66,13 +65,18 @@ class VllmTurnPipeline:
             logger.info("OmniVoice prewarm complete")
 
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
+        greeting_task = asyncio.create_task(
+            self._play_greeting(call_id, output_track, playback_generation),
+            name=f"greeting-{call_id}",
+        )
         try:
-            await self._play_greeting(call_id, input_track, output_track, playback_generation)
             await self._run_turn_loop(call_id, caller_phone, input_track, output_track, playback_generation)
         finally:
+            greeting_task.cancel()
+            await asyncio.gather(greeting_task, return_exceptions=True)
             self._conversation_history.pop(call_id, None)
 
-    async def _play_greeting(self, call_id, input_track, output_track, playback_generation) -> None:
+    async def _play_greeting(self, call_id, output_track, playback_generation) -> None:
         if TURN_GREETING_DELAY_SECONDS:
             await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
 
@@ -89,15 +93,6 @@ class VllmTurnPipeline:
             call_id,
             (time.perf_counter() - greeting_started_at) * 1000.0,
             greeting_seconds * 1000.0,
-        )
-        if not greeting_seconds:
-            return
-
-        await self._discard_playback_echo(
-            call_id,
-            input_track,
-            output_track,
-            greeting_seconds,
         )
 
     async def _run_turn_loop(self, call_id, caller_phone, input_track, output_track, playback_generation) -> None:
@@ -384,43 +379,6 @@ class VllmTurnPipeline:
             logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
             return 0.0
         return audio_seconds
-
-    async def _discard_input_audio(self, input_track, duration_seconds: float) -> None:
-        deadline = time.perf_counter() + max(0.0, duration_seconds)
-        discarded_frames = 0
-
-        while time.perf_counter() < deadline:
-            try:
-                timeout = max(0.01, deadline - time.perf_counter())
-                await asyncio.wait_for(input_track.recv(), timeout=timeout)
-                discarded_frames += 1
-            except asyncio.TimeoutError:
-                break
-            except Exception as exc:
-                logger.info("Protected prompt input drain ended: %s", exc)
-                break
-
-        logger.info("Discarded %s inbound frames during protected playback", discarded_frames)
-
-    async def _discard_playback_echo(
-        self,
-        call_id,
-        input_track,
-        output_track,
-        generated_audio_seconds: float,
-    ) -> None:
-        if not generated_audio_seconds:
-            return
-
-        protected_seconds = generated_audio_seconds + TURN_PLAYBACK_ECHO_TAIL_SECONDS
-        logger.info(
-            "Suppressing inbound audio for %s during playback: generated=%.2f seconds pending=%.2f seconds tail=%.2f seconds",
-            call_id,
-            generated_audio_seconds,
-            output_track.pending_audio_seconds,
-            TURN_PLAYBACK_ECHO_TAIL_SECONDS,
-        )
-        await self._discard_input_audio(input_track, protected_seconds)
 
     def _log_turn_timings(
         self,
