@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 from app.voice.config import (
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
     LOCAL_LLM_BATCH_TOKENS,
-    LOCAL_LLM_CHAT_FORMAT,
     LOCAL_LLM_CONTEXT_TOKENS,
     LOCAL_LLM_FLASH_ATTENTION,
     LOCAL_LLM_MAX_OUTPUT_TOKENS,
@@ -23,7 +22,7 @@ from app.voice.config import (
 logger = logging.getLogger(__name__)
 
 
-class LocalSinLlamaLLM:
+class LocalGemmaLLM:
     def __init__(self) -> None:
         self._llm = None
         self._lock = asyncio.Lock()
@@ -71,7 +70,7 @@ class LocalSinLlamaLLM:
         )
         cleaned = _strip_thinking_blocks(text)
         if text and not cleaned:
-            logger.info("SinLlama response contained thinking without a final answer; raw_chars=%s", len(text))
+            logger.info("Gemma response contained thinking without a final answer; raw_chars=%s", len(text))
         return cleaned
 
     def _get_llm(self):
@@ -82,7 +81,7 @@ class LocalSinLlamaLLM:
 
         model_path = self._resolve_model_path()
         logger.info(
-            "Loading local SinLlama model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
+            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
             model_path,
             LOCAL_LLM_N_GPU_LAYERS,
             LOCAL_LLM_CONTEXT_TOKENS,
@@ -98,10 +97,9 @@ class LocalSinLlamaLLM:
             n_batch=LOCAL_LLM_BATCH_TOKENS,
             n_threads=LOCAL_LLM_THREADS,
             flash_attn=LOCAL_LLM_FLASH_ATTENTION,
-            chat_format=LOCAL_LLM_CHAT_FORMAT,
             verbose=False,
         )
-        logger.info("Local SinLlama model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
+        logger.info("Local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
         return self._llm
 
     def _resolve_model_path(self) -> str:
@@ -128,11 +126,6 @@ class LocalSinLlamaLLM:
         if LOCAL_LLM_MODEL_DIR:
             kwargs["local_dir"] = LOCAL_LLM_MODEL_DIR
         return hf_hub_download(**kwargs)
-
-
-# Keep the pipeline's existing integration name stable while the model backend
-# is switched from Gemma to SinLlama.
-LocalGemmaLLM = LocalSinLlamaLLM
 
 
 def _strip_thinking_blocks(text: str) -> str:
