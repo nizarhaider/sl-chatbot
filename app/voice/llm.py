@@ -1,9 +1,11 @@
 import asyncio
+import json
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.voice.config import HOMELANDS_LOCAL_SYSTEM_PROMPT, VLLM_BASE_URL, VLLM_MODEL, VLLM_TEMPERATURE
@@ -29,6 +31,24 @@ class VllmAgent:
         async with self._lock:
             agent = create_agent(model=self._model, tools=tools, system_prompt=system_prompt)
             return await agent.ainvoke({"messages": messages})
+
+    async def summarize_search(
+        self, transcript_text: str, search_result: dict, system_prompt: str
+    ) -> str:
+        """Turn a completed deterministic property search into a short spoken reply."""
+        async with self._lock:
+            response = await self._model.ainvoke([
+                SystemMessage(content=(
+                    f"{system_prompt}\n\nA property search has already completed. "
+                    "Answer the caller using only its result. Do not call tools or ask again "
+                    "for details that are present in the caller's request."
+                )),
+                HumanMessage(content=(
+                    f"Caller request: {transcript_text}\n"
+                    f"Search result: {json.dumps(search_result, ensure_ascii=False)}"
+                )),
+            ])
+        return message_text(response)
 
 
 def agent_system_prompt() -> str:

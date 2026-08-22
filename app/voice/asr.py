@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 # being treated as unfamiliar Sinhala words.
 PROPERTY_VOCABULARY = (
     "Homelands Properties. Colombo, Malabe, Battaramulla, Kottawa, Dehiwala, "
-    "Piliyandala, Kurunegala, Nugegoda, Rajagiriya, Maharagama."
+    "Piliyandala, Kurunegala, Nugegoda, Rajagiriya, Maharagama. "
+    "එක, දෙක, තුන, හතර, පහ, හය, හත, අට, නවය, දහය, විස්ස, තිහ, "
+    "පනහ, සියය, දහස, ලක්ෂ, මිලියන, රුපියල්, නිදන කාමර."
 )
 
 

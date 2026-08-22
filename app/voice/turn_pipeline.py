@@ -20,6 +20,7 @@ from app.voice.config import (
     TURN_INPUT_CHUNK_MS,
     TURN_INPUT_CHUNK_SIZE,
     TURN_MIN_AUDIO_MS,
+    TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
     VLLM_PREWARM,
 )
@@ -97,6 +98,7 @@ class VllmTurnPipeline:
 
     async def _run_turn_loop(self, call_id, caller_phone, input_track, output_track, playback_generation) -> None:
         vad = VadState()
+        playback_echo_state = {"until": 0.0}
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
         turn_task: asyncio.Task | None = None
@@ -120,6 +122,7 @@ class VllmTurnPipeline:
                         output_track,
                         playback_generation,
                         turn_task,
+                        playback_echo_state,
                     )
         finally:
             if turn_task is not None and not turn_task.done():
@@ -137,10 +140,20 @@ class VllmTurnPipeline:
         output_track,
         playback_generation,
         turn_task: asyncio.Task | None,
+        playback_echo_state: dict[str, float],
     ) -> asyncio.Task | None:
         while len(chunk_buffer) >= TURN_INPUT_CHUNK_SIZE:
             chunk = bytes(chunk_buffer[:TURN_INPUT_CHUNK_SIZE])
             del chunk_buffer[:TURN_INPUT_CHUNK_SIZE]
+
+            now = time.monotonic()
+            if output_track.pending_audio_seconds > 0:
+                playback_echo_state["until"] = now + TURN_PLAYBACK_ECHO_TAIL_SECONDS
+                vad.discard()
+                continue
+            if now < playback_echo_state["until"]:
+                vad.discard()
+                continue
 
             if pcm_rms(chunk) > TURN_SILENCE_THRESHOLD:
                 if not vad.is_speaking:
@@ -315,6 +328,11 @@ class VllmTurnPipeline:
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         history = list(self._conversation_history.get(call_id, []))
         dashboard_state.emit(call_id, "model.request", {"transcript": transcript_text})
+        search_query = _property_search_query(history, transcript_text)
+        if self._tools is not None and search_query:
+            return await self._search_properties(
+                call_id, caller_phone, search_query, announce_tool
+            )
         tools = self._tools.langchain_tools(context, announce_tool) if self._tools else []
         result = await self._llm.invoke(
             [*history, HumanMessage(content=transcript_text)],
@@ -333,6 +351,33 @@ class VllmTurnPipeline:
             ),
             AIMessage(content=""),
         ))
+        dashboard_state.emit(call_id, "model.output", {"text": response})
+        return response
+
+    async def _search_properties(
+        self,
+        call_id: str,
+        caller_phone: str,
+        transcript_text: str,
+        announce_tool: Callable[[object], Awaitable[None]] | None,
+    ) -> str:
+        assert self._tools is not None
+        arguments = {"query": transcript_text}
+        dashboard_state.emit(call_id, "tool.call", {
+            "name": "search_properties", "arguments": arguments,
+        })
+        if announce_tool is not None:
+            await announce_tool("search_properties")
+        result = await self._tools.execute(
+            "search_properties", arguments, CallContext(call_id=call_id, caller_phone=caller_phone)
+        )
+        dashboard_state.emit(call_id, "tool.result", {
+            "name": "search_properties", "result": result,
+        })
+        response = await self._llm.summarize_search(
+            transcript_text, result, agent_system_prompt()
+        )
+        self._append_conversation_turn(call_id, transcript_text, response)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
@@ -420,6 +465,41 @@ def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
     if tool_name == "book_appointment":
         return "Okay, I’ll confirm that appointment now. Please hold for a moment."
     return "Okay, I’ll check those details now. Please hold for a moment."
+
+
+def _property_search_query(history: list, transcript_text: str) -> str | None:
+    """Return a usable property query without relying on the model to choose a tool."""
+    caller_turns = [
+        message_text(message)
+        for message in history
+        if isinstance(message, HumanMessage) and message_text(message)
+    ]
+    query = " ".join([*caller_turns[-3:], transcript_text]).strip()
+    normalized = query.casefold()
+    latest = transcript_text.casefold()
+    property_type_pattern = (
+        r"\b(?:apartment|apartments|house|villa|land|property)\b|"
+        r"(?:අපාර්ට්මන්ට්|ගෙයක්|නිවසක්|විලා|ඉඩමක්|දේපලක්)"
+    )
+    location_pattern = (
+        r"\b(?:colombo|malabe|battaramulla|kottawa|dehiwala|piliyandala|"
+        r"kurunegala|nugegoda|rajagiriya|maharagama)\b|"
+        r"(?:කොළඹ|මාලබේ|බත්තරමුල්ල|කොට්ටාව|දෙහිවල|පිළියන්දල|"
+        r"කුරුණෑගල|නුගේගොඩ|රාජගිරිය|මහරගම)"
+    )
+    bedroom_pattern = (
+        r"\b(?:one|two|three|four|five|[1-9])\s*(?:bed|bedroom|bedrooms)\b|"
+        r"(?:නිදන\s*කාමර|කාමර\s*(?:එකක්|දෙකක්|තුනක්|හතරක්|පහක්))"
+    )
+    property_type = re.search(property_type_pattern, normalized)
+    location = re.search(location_pattern, normalized)
+    bedrooms = re.search(bedroom_pattern, normalized)
+    latest_detail = re.search(
+        f"{property_type_pattern}|{location_pattern}|{bedroom_pattern}", latest
+    )
+    if property_type and (location or bedrooms) and latest_detail:
+        return query
+    return None
 
 
 def _is_wait_request(text: str) -> bool:

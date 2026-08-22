@@ -36,6 +36,14 @@ class VadState:
         self._utterance_buffer.clear()
         return turn
 
+    def discard(self) -> None:
+        """Drop audio captured while the agent's own playback is active."""
+        self.is_speaking = False
+        self.started_at = None
+        self.silence_chunks = 0
+        self.speech_chunks = 0
+        self._utterance_buffer.clear()
+
 
 class TurnAudio:
     def __init__(self, started_at: float | None, pcm: bytes) -> None:
