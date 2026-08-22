@@ -134,14 +134,11 @@ class GemmaChatLlamaCpp(ChatLlamaCpp):
                 message_dict["content"] = f"{message_dict.get('content') or ''}{calls}"
                 message_dict.pop("tool_calls", None)
             elif isinstance(message, ToolMessage):
-                if not rendered or rendered[-1].get("role") != "assistant":
-                    raise ValueError("Gemma tool responses must follow an assistant tool call")
                 result = _gemma_value(message.content)
-                rendered[-1]["content"] = (
-                    f"{rendered[-1].get('content') or ''}"
+                message_dict["role"] = "user"
+                message_dict["content"] = (
                     f"<|tool_response>response:{message.name or 'tool'}{{result:{result}}}<tool_response|>"
                 )
-                continue
             rendered.append(message_dict)
         return rendered
 
