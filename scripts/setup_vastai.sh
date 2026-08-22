@@ -13,6 +13,8 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
+VLLM_PORT="${VLLM_PORT:-8000}"
+VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-E4B-it}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 
@@ -64,6 +66,27 @@ if [ -z "${VERIFY_TOKEN}" ]; then
   echo "ERROR: VERIFY_TOKEN is not set in .env or the environment."
   exit 1
 fi
+
+CLOUDFLARED_TUNNEL_TOKEN="${CLOUDFLARED_TUNNEL_TOKEN:-$(sed -n 's/^CLOUDFLARED_TUNNEL_TOKEN=//p' "${ENV_SYNC_FILE}" | head -n 1)}"
+if [ -z "${CLOUDFLARED_TUNNEL_TOKEN}" ]; then
+  echo "ERROR: CLOUDFLARED_TUNNEL_TOKEN is not set in .env or the environment."
+  exit 1
+fi
+
+CLOUDFLARED_TUNNEL_TOKEN="${CLOUDFLARED_TUNNEL_TOKEN}" python3 - "${ENV_SYNC_FILE}" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines() if path.exists() else []
+key = "CLOUDFLARED_TUNNEL_TOKEN"
+value = os.environ[key]
+output = [f"{key}={value}" if line.startswith(key + "=") else line for line in lines]
+if not any(line.startswith(key + "=") for line in lines):
+    output.append(f"{key}={value}")
+path.write_text("\n".join(output) + "\n")
+PY
 
 # Credentials kept in ~/.zshrc are not necessarily exported into a child bash
 # process. Pull the deployment key from the login zsh environment when needed,
@@ -121,6 +144,36 @@ $SSH "cd ${REMOTE_DIR} && env -u UV_NO_CACHE uv sync --frozen"
 
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
+
+log "Starting vLLM and the permanent Cloudflare tunnel..."
+$SSH "
+  mkdir -p ${REMOTE_DIR}/run_logs
+  if ! tmux has-session -t sl-vllm 2>/dev/null; then
+    tmux new-session -d -s sl-vllm \
+      'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
+       .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
+       --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.55 \
+       > run_logs/vllm.log 2>&1'
+  fi
+  if ! tmux has-session -t sl-cloudflared 2>/dev/null; then
+    tmux new-session -d -s sl-cloudflared \
+      'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
+       TUNNEL_TOKEN=\"\$CLOUDFLARED_TUNNEL_TOKEN\" exec /opt/instance-tools/bin/cloudflared tunnel run \
+       > run_logs/cloudflared.log 2>&1'
+  fi
+"
+
+log "Waiting for vLLM to become ready..."
+$SSH "
+  for attempt in \$(seq 1 300); do
+    if curl -fsS http://127.0.0.1:${VLLM_PORT}/v1/models >/dev/null; then
+      exit 0
+    fi
+    sleep 2
+  done
+  tail -n 120 ${REMOTE_DIR}/run_logs/vllm.log || true
+  exit 1
+"
 
 log "Starting webhook in tmux..."
 $SSH "
@@ -187,7 +240,7 @@ log ""
 
 VERIFICATION_OK=false
 for attempt in $(seq 1 "${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS}"); do
-  public_response="$(curl -sS -m 15 --get "${PUBLIC_WEBHOOK_URL}" \
+  public_response="$(curl -4 -sS -m 15 --get "${PUBLIC_WEBHOOK_URL}" \
     --data-urlencode 'hub.mode=subscribe' \
     --data-urlencode "hub.verify_token=${VERIFY_TOKEN}" \
     --data-urlencode 'hub.challenge=12345' || true)"
