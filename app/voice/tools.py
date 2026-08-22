@@ -6,7 +6,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
 import psycopg
 from langchain.tools import tool
 from pydantic import BaseModel, Field
@@ -51,15 +50,9 @@ def _property_dict(row: tuple) -> dict:
 
 
 class SearchPropertiesInput(BaseModel):
-    """Filters for the property search."""
+    """A natural-language property request."""
 
-    query: str | None = Field(default=None, description="Useful free-text property query")
-    location: str | None = Field(default=None, description="Specific suburb or wider area")
-    property_type: str | None = Field(default=None, description="apartment, villa, house, or land")
-    bedrooms: int | None = Field(default=None, description="Exact bedroom count")
-    min_bedrooms: int | None = Field(default=None, description="Minimum bedrooms")
-    max_bedrooms: int | None = Field(default=None, description="Maximum bedrooms")
-    max_price_lkr: int | None = Field(default=None, description="Maximum budget in Sri Lankan rupees")
+    query: str = Field(description="The complete property request inferred from the conversation")
 
 
 class BookAppointmentInput(BaseModel):
@@ -68,6 +61,12 @@ class BookAppointmentInput(BaseModel):
     property_id: str = Field(description="Exact property_id returned by search_properties")
     customer_name: str = Field(description="Caller name")
     appointment_at: str = Field(description="ISO 8601 appointment date and time in Asia/Colombo")
+
+
+class SendWhatsAppMessageInput(BaseModel):
+    """The text to send to the current caller."""
+
+    message: str = Field(description="The concise WhatsApp message to send to the caller")
 
 
 class NeonRealEstateStore:
@@ -274,42 +273,31 @@ class RealEstateToolService:
             result = await self.execute("book_appointment", arguments, context)
             return json.dumps(result, ensure_ascii=False)
 
-        return [search_properties, book_appointment]
+        @tool(args_schema=SendWhatsAppMessageInput)
+        async def send_whatsapp_message(**arguments) -> str:
+            """Send a WhatsApp message to the current caller only when they explicitly ask for one."""
+            await announce_tool("send_whatsapp_message")
+            result = await self.execute("send_whatsapp_message", arguments, context)
+            return json.dumps(result, ensure_ascii=False)
+
+        return [search_properties, book_appointment, send_whatsapp_message]
 
     async def execute(self, name: str, arguments: dict, context: CallContext) -> dict:
         try:
             if name == "search_properties":
                 if self._vector_store is None:
                     raise RuntimeError("The property search index is not ready.")
-                search_result = await asyncio.to_thread(self._vector_store.search_properties, arguments)
+                search_result = await asyncio.to_thread(self._vector_store.search_properties, arguments["query"])
                 if isinstance(search_result, dict):
                     return {"ok": True, **search_result}
                 return {"ok": True, "properties": search_result, "count": len(search_result)}
             if name == "book_appointment":
                 appointment = await asyncio.to_thread(self._store.book_appointment, arguments, context)
                 logger.info("Appointment persisted for %s: appointment_id=%s", context.call_id, appointment["appointment_id"])
-                try:
-                    confirmation_sent = await whatsapp_api.send_text_message(
-                        context.caller_phone,
-                        _appointment_confirmation_message(appointment),
-                    )
-                except Exception:
-                    logger.exception(
-                        "Appointment confirmation delivery failed for %s: appointment_id=%s",
-                        context.call_id,
-                        appointment["appointment_id"],
-                    )
-                    confirmation_sent = False
-                logger.info(
-                    "Appointment booked for %s: whatsapp_confirmation_sent=%s",
-                    context.call_id,
-                    confirmation_sent,
-                )
-                return {
-                    "ok": True,
-                    "appointment": appointment,
-                    "whatsapp_confirmation_sent": confirmation_sent,
-                }
+                return {"ok": True, "appointment": appointment}
+            if name == "send_whatsapp_message":
+                sent = await whatsapp_api.send_text_message(context.caller_phone, _required(arguments, "message"))
+                return {"ok": sent, "message_sent": sent}
             return {"ok": False, "error": f"Unknown tool: {name}"}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
@@ -335,15 +323,3 @@ def _appointment_time(value: str) -> datetime:
     if parsed <= datetime.now(COLOMBO_TZ):
         raise ValueError("The appointment time must be in the future")
     return parsed
-
-
-def _appointment_confirmation_message(appointment: dict) -> str:
-    appointment_at = datetime.fromisoformat(appointment["appointment_at"])
-    local_time = appointment_at.astimezone(COLOMBO_TZ)
-    formatted_time = local_time.strftime("%A, %d %B %Y at %I:%M %p")
-    return (
-        "Homelands Properties booking confirmed.\n"
-        f"Property: {appointment['property_name']}\n"
-        f"Location: {appointment['location']}\n"
-        f"Viewing: {formatted_time} (Sri Lanka time)"
-    )

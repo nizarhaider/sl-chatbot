@@ -4,19 +4,10 @@ from pathlib import Path
 VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent.md"
 VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
-LOCAL_LLM_MODEL_PATH = ""
-LOCAL_LLM_MODEL_REPO = "2broke2code/serendib-gemma-4-26b-a4b-sinhala-callcenter-gguf-v1"
-LOCAL_LLM_MODEL_FILENAME = "gemma-4-26b-a4b-it.Q4_K_M.gguf"
-LOCAL_LLM_MODEL_DIR = ""
-LOCAL_LLM_N_GPU_LAYERS = -1
-LOCAL_LLM_CONTEXT_TOKENS = 2048
-LOCAL_LLM_BATCH_TOKENS = 128
-LOCAL_LLM_THREADS = 8
-LOCAL_LLM_FLASH_ATTENTION = True
-LOCAL_LLM_TEMPERATURE = 0.2
-LOCAL_LLM_MAX_OUTPUT_TOKENS = 256
-LOCAL_LLM_HISTORY_MAX_MESSAGES = 12
-LOCAL_LLM_PREWARM = True
+VLLM_BASE_URL = "http://127.0.0.1:8000/v1"
+VLLM_MODEL = "google/gemma-4-E4B-it"
+VLLM_TEMPERATURE = 0.2
+VLLM_PREWARM = True
 
 WHISPER_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
 WHISPER_DEVICE = "cuda"

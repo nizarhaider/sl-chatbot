@@ -6,7 +6,7 @@ from aiortc import MediaStreamTrack
 
 from app.dashboard.state import dashboard_state
 from app.voice.audio_track import RealtimeAudioTrack
-from app.voice.turn_pipeline import LocalGemmaTurnPipeline
+from app.voice.turn_pipeline import VllmTurnPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class VoiceAgent:
     def __init__(self):
         self.active_calls: dict[str, asyncio.Task] = {}
         self.playback_generation: dict[str, int] = {}
-        self.turn_pipeline = LocalGemmaTurnPipeline(
+        self.turn_pipeline = VllmTurnPipeline(
             prepare_tts_text=self._prepare_tts_text,
             interrupt_playback=self._interrupt_playback,
         )
@@ -83,9 +83,9 @@ class VoiceAgent:
                 playback_generation=self.playback_generation,
             )
         except asyncio.CancelledError:
-            logger.info("Local Gemma turn pipeline cancelled for %s", call_id)
+            logger.info("vLLM turn pipeline cancelled for %s", call_id)
         except Exception as exc:
-            logger.error("Local Gemma turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
+            logger.error("vLLM turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
         finally:
             self.active_calls.pop(call_id, None)
             self.playback_generation.pop(call_id, None)

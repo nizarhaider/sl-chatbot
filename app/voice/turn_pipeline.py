@@ -12,8 +12,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.dashboard.state import dashboard_state
 from app.voice.asr import LocalWhisperASR, is_noise_text
 from app.voice.config import (
-    LOCAL_LLM_HISTORY_MAX_MESSAGES,
-    LOCAL_LLM_PREWARM,
     LOCAL_TURN_GREETING,
     REALTIME_TTS_PREWARM,
     TURN_BARGE_IN_MIN_SPEECH_CHUNKS,
@@ -24,8 +22,9 @@ from app.voice.config import (
     TURN_MIN_AUDIO_MS,
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
+    VLLM_PREWARM,
 )
-from app.voice.llm import LocalGemmaAgent, agent_system_prompt, message_text
+from app.voice.llm import VllmAgent, agent_system_prompt, message_text
 from app.voice.tts import RealtimeOmniVoiceTTS
 from app.voice.tools import CallContext, RealEstateToolService
 from app.voice.vad import VadState, pcm_rms
@@ -33,7 +32,7 @@ from app.voice.vad import VadState, pcm_rms
 logger = logging.getLogger(__name__)
 
 
-class LocalGemmaTurnPipeline:
+class VllmTurnPipeline:
     def __init__(
         self,
         prepare_tts_text,
@@ -44,9 +43,9 @@ class LocalGemmaTurnPipeline:
         self._interrupt_playback = interrupt_playback
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
-        self._llm = LocalGemmaAgent()
+        self._llm = VllmAgent()
         self._tools = RealEstateToolService.from_env()
-        self._conversation_history: dict[str, list[dict[str, str]]] = {}
+        self._conversation_history: dict[str, list] = {}
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -57,10 +56,10 @@ class LocalGemmaTurnPipeline:
             logger.info("Voice tool service ready")
         await asyncio.to_thread(self._asr.prewarm)
         logger.info("Whisper prewarm complete")
-        if LOCAL_LLM_PREWARM:
-            logger.info("Starting Gemma prewarm")
+        if VLLM_PREWARM:
+            logger.info("Starting vLLM prewarm")
             await self._llm.prewarm()
-            logger.info("Gemma prewarm complete")
+            logger.info("vLLM prewarm complete")
         if REALTIME_TTS_PREWARM:
             logger.info("Starting OmniVoice prewarm")
             await self._tts.prewarm()
@@ -227,7 +226,7 @@ class LocalGemmaTurnPipeline:
             return
 
         async def announce_tool(tool_name: str) -> None:
-            if tool_name not in {"search_properties", "book_appointment"}:
+            if tool_name not in {"search_properties", "book_appointment", "send_whatsapp_message"}:
                 return
             hold_text = _tool_wait_message(transcript_text, tool_name)
             dashboard_state.emit(call_id, "tool.announced", {"name": tool_name, "text": hold_text})
@@ -292,9 +291,6 @@ class LocalGemmaTurnPipeline:
             transcript_text,
             announce_tool,
         )
-        if _is_repetitive_response(response_text):
-            logger.info("Dropping repetitive Gemma response for %s: %r", call_id, response_text)
-            response_text = _repetition_fallback(response_text)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if not response_text:
             logger.info("Empty Gemma response for %s in %.0f ms", call_id, elapsed_ms)
@@ -332,7 +328,7 @@ class LocalGemmaTurnPipeline:
         messages = result.get("messages", [])
         new_messages = messages[len(history):]
         self._emit_agent_events(call_id, new_messages)
-        self._conversation_history[call_id] = messages[-LOCAL_LLM_HISTORY_MAX_MESSAGES:]
+        self._conversation_history[call_id] = list(messages)
         response = message_text(next(
             (
                 message
@@ -368,7 +364,6 @@ class LocalGemmaTurnPipeline:
             HumanMessage(content=transcript_text),
             AIMessage(content=response_text),
         ])
-        del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
 
     async def _speak(self, call_id, text, output_track, playback_generation):
         prepared = self._prepare_tts_text(text)
@@ -452,36 +447,6 @@ class LocalGemmaTurnPipeline:
             after_vad_ms,
             total_turn_ms,
         )
-
-
-def _is_repetitive_response(text: str) -> bool:
-    normalized = re.sub(r"\s+", " ", text.casefold()).strip()
-    words = normalized.split()
-    if len(words) < 12:
-        return False
-    segments = re.split(r"(?:\r?\n)+|(?<=[.!?。！？])\s+", text.casefold())
-    segment_counts: dict[str, int] = {}
-    for segment in segments:
-        segment = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", segment).strip()
-        if len(segment.split()) >= 6:
-            segment_counts[segment] = segment_counts.get(segment, 0) + 1
-    if any(count >= 2 for count in segment_counts.values()):
-        return True
-
-    for size in (6, 8, 10):
-        grams = [" ".join(words[index : index + size]) for index in range(len(words) - size + 1)]
-        if any(
-            grams.count(gram) >= 3 and (grams.count(gram) * size) / len(words) >= 0.35
-            for gram in set(grams)
-        ):
-            return True
-    return False
-
-
-def _repetition_fallback(text: str) -> str:
-    if re.search(r"[\u0D80-\u0DFF]", text):
-        return "සමාවෙන්න, මට ඒක පැහැදිලිව කියන්න බැරි වුණා. කරුණාකර නැවත කියන්න පුළුවන්ද?"
-    return "I didn't catch that clearly. Could you say it again?"
 
 
 def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
