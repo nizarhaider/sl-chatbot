@@ -156,6 +156,9 @@ class VllmTurnPipeline:
             del chunk_buffer[:TURN_INPUT_CHUNK_SIZE]
 
             now = time.monotonic()
+            if output_track.matches_recent_playback(chunk):
+                vad.discard()
+                continue
             if call_id in self._initial_prompt_calls:
                 if (
                     call_id not in self._initial_prompt_generation_complete
