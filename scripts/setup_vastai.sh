@@ -153,6 +153,7 @@ $SSH "
       'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
        .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
        --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.55 \
+       --enable-auto-tool-choice --tool-call-parser gemma4 \
        > run_logs/vllm.log 2>&1'
   fi
   if ! tmux has-session -t sl-cloudflared 2>/dev/null; then
