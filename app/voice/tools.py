@@ -1,15 +1,15 @@
 import asyncio
-import ast
 import json
 import logging
 import os
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import psycopg
+from langchain.tools import tool
+from pydantic import BaseModel, Field
 from psycopg.errors import UniqueViolation
 
 from app.integrations.whatsapp.client import whatsapp_api
@@ -31,12 +31,6 @@ DEFAULT_PROPERTIES = (
 )
 
 @dataclass(frozen=True)
-class ToolCall:
-    name: str
-    arguments: dict
-
-
-@dataclass(frozen=True)
 class CallContext:
     call_id: str
     caller_phone: str
@@ -56,41 +50,24 @@ def _property_dict(row: tuple) -> dict:
     }
 
 
-def parse_tool_call(text: str) -> ToolCall | None:
-    match = re.search(
-        r"<tool_call>\s*(\{.*?\})\s*(?:</tool_call>|$)",
-        text,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if not match:
-        return None
-    raw_payload = match.group(1).strip()
-    payload = None
-    candidates = (
-        raw_payload,
-        re.sub(r",\s*([}\]])", r"\1", raw_payload),
-    )
-    for candidate in candidates:
-        try:
-            payload = json.loads(candidate)
-            break
-        except json.JSONDecodeError:
-            continue
-    if payload is None:
-        try:
-            payload = ast.literal_eval(raw_payload)
-        except (SyntaxError, ValueError):
-            return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
-        return None
-    arguments = payload.get("arguments", {})
-    if not isinstance(arguments, dict):
-        return None
-    return ToolCall(name=payload["name"], arguments=arguments)
+class SearchPropertiesInput(BaseModel):
+    """Filters for the property search."""
+
+    query: str | None = Field(default=None, description="Useful free-text property query")
+    location: str | None = Field(default=None, description="Specific suburb or wider area")
+    property_type: str | None = Field(default=None, description="apartment, villa, house, or land")
+    bedrooms: int | None = Field(default=None, description="Exact bedroom count")
+    min_bedrooms: int | None = Field(default=None, description="Minimum bedrooms")
+    max_bedrooms: int | None = Field(default=None, description="Maximum bedrooms")
+    max_price_lkr: int | None = Field(default=None, description="Maximum budget in Sri Lankan rupees")
 
 
-def tool_call_message(call: ToolCall) -> str:
-    return f"<tool_call>{json.dumps({'name': call.name, 'arguments': call.arguments}, separators=(',', ':'))}</tool_call>"
+class BookAppointmentInput(BaseModel):
+    """Details required to book a property viewing."""
+
+    property_id: str = Field(description="Exact property_id returned by search_properties")
+    customer_name: str = Field(description="Caller name")
+    appointment_at: str = Field(description="ISO 8601 appointment date and time in Asia/Colombo")
 
 
 class NeonRealEstateStore:
@@ -282,17 +259,34 @@ class RealEstateToolService:
             self._store.list_active_properties(),
         )
 
-    async def execute(self, call: ToolCall, context: CallContext) -> dict:
+    def langchain_tools(self, context: CallContext, announce_tool) -> list:
+        @tool(args_schema=SearchPropertiesInput)
+        async def search_properties(**arguments) -> str:
+            """Search the live Homelands Properties listings."""
+            await announce_tool("search_properties")
+            result = await self.execute("search_properties", arguments, context)
+            return json.dumps(result, ensure_ascii=False)
+
+        @tool(args_schema=BookAppointmentInput)
+        async def book_appointment(**arguments) -> str:
+            """Book a viewing for the exact property returned by search_properties."""
+            await announce_tool("book_appointment")
+            result = await self.execute("book_appointment", arguments, context)
+            return json.dumps(result, ensure_ascii=False)
+
+        return [search_properties, book_appointment]
+
+    async def execute(self, name: str, arguments: dict, context: CallContext) -> dict:
         try:
-            if call.name == "search_properties":
+            if name == "search_properties":
                 if self._vector_store is None:
                     raise RuntimeError("The property search index is not ready.")
-                search_result = await asyncio.to_thread(self._vector_store.search_properties, call.arguments)
+                search_result = await asyncio.to_thread(self._vector_store.search_properties, arguments)
                 if isinstance(search_result, dict):
                     return {"ok": True, **search_result}
                 return {"ok": True, "properties": search_result, "count": len(search_result)}
-            if call.name == "book_appointment":
-                appointment = await asyncio.to_thread(self._store.book_appointment, call.arguments, context)
+            if name == "book_appointment":
+                appointment = await asyncio.to_thread(self._store.book_appointment, arguments, context)
                 logger.info("Appointment persisted for %s: appointment_id=%s", context.call_id, appointment["appointment_id"])
                 try:
                     confirmation_sent = await whatsapp_api.send_text_message(
@@ -316,11 +310,11 @@ class RealEstateToolService:
                     "appointment": appointment,
                     "whatsapp_confirmation_sent": confirmation_sent,
                 }
-            return {"ok": False, "error": f"Unknown tool: {call.name}"}
+            return {"ok": False, "error": f"Unknown tool: {name}"}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception:
-            logger.exception("Real-estate tool %s failed", call.name)
+            logger.exception("Real-estate tool %s failed", name)
             return {"ok": False, "error": "The booking database is temporarily unavailable."}
 
 
@@ -329,16 +323,6 @@ def _required(arguments: dict, name: str) -> str:
     if not value:
         raise ValueError(f"Missing required argument: {name}")
     return value
-
-
-def _positive_int(value: object, name: str) -> int:
-    try:
-        result = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name} must be a positive number") from exc
-    if result <= 0:
-        raise ValueError(f"{name} must be a positive number")
-    return result
 
 
 def _appointment_time(value: str) -> datetime:

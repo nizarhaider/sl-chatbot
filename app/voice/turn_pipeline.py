@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 
 import numpy as np
 from av.audio.resampler import AudioResampler
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.dashboard.state import dashboard_state
 from app.voice.asr import LocalWhisperASR, is_noise_text
@@ -22,9 +23,9 @@ from app.voice.config import (
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
 )
-from app.voice.llm import LocalGemmaLLM
+from app.voice.llm import LocalGemmaAgent, agent_system_prompt, message_text
 from app.voice.tts import RealtimeOmniVoiceTTS
-from app.voice.tools import CallContext, RealEstateToolService, parse_tool_call, tool_call_message
+from app.voice.tools import CallContext, RealEstateToolService
 from app.voice.vad import VadState, pcm_rms
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class LocalGemmaTurnPipeline:
         self._interrupt_playback = interrupt_playback
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
-        self._llm = LocalGemmaLLM()
+        self._llm = LocalGemmaAgent()
         self._tools = RealEstateToolService.from_env()
         self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
@@ -215,11 +216,11 @@ class LocalGemmaTurnPipeline:
             await self._timed_speak(call_id, response_text, output_track, playback_generation)
             return
 
-        async def announce_tool(tool_call) -> None:
-            if tool_call.name not in {"search_properties", "book_appointment"}:
+        async def announce_tool(tool_name: str) -> None:
+            if tool_name not in {"search_properties", "book_appointment"}:
                 return
-            hold_text = _tool_wait_message(transcript_text, tool_call.name)
-            dashboard_state.emit(call_id, "tool.announced", {"name": tool_call.name, "text": hold_text})
+            hold_text = _tool_wait_message(transcript_text, tool_name)
+            dashboard_state.emit(call_id, "tool.announced", {"name": tool_name, "text": hold_text})
             dashboard_state.add_transcript(call_id, "assistant", hold_text)
             hold_audio_seconds, _ = await self._timed_speak(
                 call_id,
@@ -241,7 +242,6 @@ class LocalGemmaTurnPipeline:
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
         dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": llm_ms})
         dashboard_state.add_transcript(call_id, "assistant", response_text)
-        self._append_conversation_turn(call_id, transcript_text, response_text)
         tts_audio_seconds, tts_ms = await self._timed_speak(
             call_id,
             response_text,
@@ -310,92 +310,50 @@ class LocalGemmaTurnPipeline:
         transcript_text: str,
         announce_tool: Callable[[object], Awaitable[None]] | None = None,
     ) -> str:
-        history = list(self._conversation_history.get(call_id, []))
-        continuation: list[dict[str, str]] = []
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
-
-        for _ in range(2):
-            dashboard_state.emit(call_id, "model.request", {
-                "transcript": transcript_text,
-                "history": history,
-                "continuation": continuation,
-            })
-            response = await self._llm.generate(transcript_text, history, continuation)
-            dashboard_state.emit(call_id, "model.output", {"text": response})
-            tool_call = parse_tool_call(response)
-            if tool_call is None:
-                if _contains_internal_control_text(response):
-                    logger.warning("Gemma emitted an unparseable tool call for %s: %r", call_id, response[:500])
-                    return _tool_recovery_response(transcript_text)
-                if continuation:
-                    history.extend(continuation)
-                    del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
-                    self._conversation_history[call_id] = history
-                return response
-            if self._tools is None:
-                result = {"ok": False, "error": "The booking database is not configured."}
-            else:
-                if tool_call.name == "search_properties":
-                    guard_response = _search_guard_response(transcript_text, tool_call.arguments)
-                    if guard_response:
-                        logger.info(
-                            "Holding incomplete property search for %s: arguments=%s",
-                            call_id,
-                            tool_call.arguments,
-                        )
-                        return guard_response
-                if announce_tool is not None:
-                    await announce_tool(tool_call)
-                result = await self._tools.execute(tool_call, context)
-            logger.info("Tool call for %s: name=%s ok=%s", call_id, tool_call.name, result.get("ok"))
-            dashboard_state.emit(call_id, "tool.call", {"name": tool_call.name, "arguments": tool_call.arguments})
-            dashboard_state.emit(call_id, "tool.result", {"name": tool_call.name, "result": result})
-            if not result.get("ok"):
-                logger.warning(
-                    "Tool call failed for %s: name=%s reason=%s",
-                    call_id,
-                    tool_call.name,
-                    result.get("error", "unknown error"),
-                )
-                return _tool_failure_response(
-                    transcript_text,
-                    tool_call.name,
-                    str(result.get("error", "")),
-                )
-            continuation.extend(
-                [
-                    {"role": "assistant", "content": tool_call_message(tool_call)},
-                    {
-                        "role": "user",
-                        "content": f"<tool_result>{json.dumps(result, ensure_ascii=False)}</tool_result>",
-                    },
-                ]
-            )
-
-        dashboard_state.emit(call_id, "model.request", {
-            "transcript": transcript_text,
-            "history": history,
-            "continuation": continuation,
-        })
-        response = await self._llm.generate(transcript_text, history, continuation)
+        history = list(self._conversation_history.get(call_id, []))
+        dashboard_state.emit(call_id, "model.request", {"transcript": transcript_text})
+        tools = self._tools.langchain_tools(context, announce_tool) if self._tools else []
+        result = await self._llm.invoke(
+            [*history, HumanMessage(content=transcript_text)],
+            tools,
+            agent_system_prompt(),
+        )
+        messages = result.get("messages", [])
+        new_messages = messages[len(history):]
+        self._emit_agent_events(call_id, new_messages)
+        self._conversation_history[call_id] = messages[-LOCAL_LLM_HISTORY_MAX_MESSAGES:]
+        response = message_text(next(
+            (message for message in reversed(messages) if isinstance(message, AIMessage)),
+            AIMessage(content=""),
+        ))
         dashboard_state.emit(call_id, "model.output", {"text": response})
-        if parse_tool_call(response) is not None or _contains_internal_control_text(response):
-            logger.warning("Gemma exceeded the tool-call limit for %s", call_id)
-            return _tool_recovery_response(transcript_text)
-        if continuation:
-            history.extend(continuation)
-            del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
-            self._conversation_history[call_id] = history
         return response
+
+    def _emit_agent_events(self, call_id, messages) -> None:
+        for message in messages:
+            for tool_call in getattr(message, "tool_calls", []) or []:
+                dashboard_state.emit(call_id, "tool.call", {
+                    "name": tool_call.get("name", ""),
+                    "arguments": tool_call.get("args", {}),
+                })
+            if message.__class__.__name__ != "ToolMessage":
+                continue
+            try:
+                result = json.loads(message_text(message))
+            except json.JSONDecodeError:
+                result = {"ok": False, "error": message_text(message)}
+            dashboard_state.emit(call_id, "tool.result", {
+                "name": getattr(message, "name", ""),
+                "result": result,
+            })
 
     def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
         history = self._conversation_history.setdefault(call_id, [])
-        history.extend(
-            [
-                {"role": "user", "content": transcript_text},
-                {"role": "assistant", "content": response_text},
-            ]
-        )
+        history.extend([
+            HumanMessage(content=transcript_text),
+            AIMessage(content=response_text),
+        ])
         del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
 
     async def _speak(self, call_id, text, output_track, playback_generation):
@@ -509,58 +467,10 @@ def _is_repetitive_response(text: str) -> bool:
     return False
 
 
-def _contains_internal_control_text(text: str) -> bool:
-    lowered = text.casefold()
-    return (
-        "<tool_call" in lowered
-        or "<tool_result" in lowered
-        or ("\"name\"" in lowered and "\"arguments\"" in lowered)
-    )
-
-
 def _repetition_fallback(text: str) -> str:
     if re.search(r"[\u0D80-\u0DFF]", text):
         return "සමාවෙන්න, මට ඒක පැහැදිලිව කියන්න බැරි වුණා. කරුණාකර නැවත කියන්න පුළුවන්ද?"
     return "I didn't catch that clearly. Could you say it again?"
-
-
-def _tool_recovery_response(transcript_text: str) -> str:
-    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
-        return "මට ඒක පැහැදිලිව තේරුම් ගන්න බැරි වුණා. location එක, budget එක සහ bedrooms ගණන ආයෙත් කියන්න පුළුවන්ද?"
-    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
-        return "எனக்கு அது தெளிவாகப் புரியவில்லை. இடம், budget மற்றும் bedrooms எண்ணிக்கையை மீண்டும் சொல்ல முடியுமா?"
-    return "I didn't catch that clearly. Could you repeat the location, budget, and number of bedrooms?"
-
-
-def _tool_failure_response(transcript_text: str, tool_name: str, error: str) -> str:
-    """Turn internal tool failures into a short, caller-safe clarification."""
-    lowered = error.casefold()
-    if "missing required argument: property_id" in lowered:
-        english = "Which property would you like to view? Please tell me its name or location."
-        sinhala = "ඔබට බලන්න අවශ්‍ය property එක මොකක්ද? ඒකේ නම හෝ location එක කියන්න පුළුවන්ද?"
-        tamil = "எந்த property-ஐ பார்க்க விரும்புகிறீர்கள்? அதன் பெயர் அல்லது location-ஐ சொல்ல முடியுமா?"
-    elif "missing required argument: customer_name" in lowered:
-        english = "What name should I use for the appointment?"
-        sinhala = "Appointment එකට යොදන්න ඕන නම මොකක්ද?"
-        tamil = "Appointment-க்கு எந்த பெயரை பயன்படுத்த வேண்டும்?"
-    elif "missing required argument: appointment_at" in lowered:
-        english = "What exact date and time would you like for the viewing?"
-        sinhala = "Viewing එකට ඔබට අවශ්‍ය exact date එක සහ time එක මොකක්ද?"
-        tamil = "Viewing-க்கு உங்களுக்கு வேண்டிய சரியான date மற்றும் time என்ன?"
-    elif "already been booked" in lowered:
-        english = "That time is already booked. What other exact date and time would work for you?"
-        sinhala = "ඒ වෙලාව දැනටමත් book කරලා. වෙනත් exact date එකක් සහ time එකක් කියන්න පුළුවන්ද?"
-        tamil = "அந்த நேரம் ஏற்கனவே book செய்யப்பட்டுள்ளது. வேறு சரியான date மற்றும் time சொல்ல முடியுமா?"
-    else:
-        english = "I couldn't complete that just now. Could you repeat the details so I can try again?"
-        sinhala = "ඒක දැන් complete කරන්න බැරි වුණා. Details ටික ආයෙත් කියන්න පුළුවන්ද?"
-        tamil = "அதை இப்போது முடிக்க முடியவில்லை. Details-ஐ மீண்டும் சொல்ல முடியுமா?"
-
-    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
-        return sinhala
-    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
-        return tamil
-    return english
 
 
 def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
@@ -592,44 +502,3 @@ def _wait_response(text: str) -> str:
     if re.search(r"[\u0B80-\u0BFF]", text):
         return "சரி, நான் காத்திருக்கிறேன்."
     return "Sure, I’ll wait."
-
-
-def _search_guard_response(transcript_text: str, arguments: dict) -> str | None:
-    """Prevent an incomplete model search from becoming an unhelpful broad search."""
-    normalized_location = " ".join(str(arguments.get("location", "")).casefold().split())
-    broad_location = normalized_location in {
-        "colombo",
-        "greater colombo",
-        "colombo metro",
-        "colombo metropolitan area",
-    }
-    has_constraint = any(
-        arguments.get(name) not in (None, "", [], {})
-        for name in (
-            "property_type",
-            "bedrooms",
-            "min_bedrooms",
-            "max_bedrooms",
-            "max_price_lkr",
-        )
-    )
-    has_query = bool(str(arguments.get("query", "")).strip())
-    if normalized_location and not broad_location:
-        return None
-    if has_query and not broad_location:
-        return None
-    if broad_location and has_constraint:
-        return None
-    if has_query and has_constraint:
-        return None
-    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
-        if broad_location:
-            return "Colombo area එකේ search එක narrow කරන්න budget එක හෝ property type එක කියන්න පුළුවන්ද?"
-        return "Search කරන්න location එකත්, budget එක හෝ property type එකත් කියන්න පුළුවන්ද?"
-    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
-        if broad_location:
-            return "Colombo area search-ஐ narrow செய்ய budget அல்லது property type சொல்ல முடியுமா?"
-        return "Search செய்ய location-உம் budget அல்லது property type-உம் சொல்ல முடியுமா?"
-    if broad_location:
-        return "Which budget or property type should I use to narrow the Colombo search?"
-    return "Which location and budget or property type should I search for?"

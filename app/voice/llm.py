@@ -1,8 +1,8 @@
 import asyncio
 import logging
-import re
 import time
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.voice.config import (
@@ -19,69 +19,41 @@ from app.voice.config import (
     LOCAL_LLM_TEMPERATURE,
     LOCAL_LLM_THREADS,
 )
+
 logger = logging.getLogger(__name__)
 
 
-class LocalGemmaLLM:
+class LocalGemmaAgent:
     def __init__(self) -> None:
-        self._llm = None
+        self._model = None
         self._lock = asyncio.Lock()
 
     async def prewarm(self) -> None:
-        await asyncio.to_thread(self._get_llm)
+        await asyncio.to_thread(self._get_model)
 
-    async def generate(
-        self,
-        transcript_text: str,
-        history: list[dict[str, str]],
-        continuation: list[dict[str, str]] | None = None,
-    ) -> str:
+    async def invoke(self, messages: list[Any], tools: list, system_prompt: str) -> dict:
         async with self._lock:
-            return await asyncio.to_thread(self._generate_sync, transcript_text, history, continuation or [])
+            return await asyncio.to_thread(self._invoke_sync, messages, tools, system_prompt)
 
-    def _generate_sync(
-        self,
-        transcript_text: str,
-        history: list[dict[str, str]],
-        continuation: list[dict[str, str]],
-    ) -> str:
-        local_time = datetime.now(ZoneInfo("Asia/Colombo")).isoformat(timespec="minutes")
-        response = self._get_llm().create_chat_completion(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\n"
-                        f"Current Sri Lanka date and time: {local_time}."
-                    ),
-                },
-                *history,
-                {"role": "user", "content": transcript_text},
-                *continuation,
-            ],
-            temperature=LOCAL_LLM_TEMPERATURE,
-            max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,
+    def _invoke_sync(self, messages: list[Any], tools: list, system_prompt: str) -> dict:
+        from langchain.agents import create_agent
+
+        agent = create_agent(
+            model=self._get_model(),
+            tools=tools,
+            system_prompt=system_prompt,
         )
-        text = (
-            response.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-        cleaned = _strip_thinking_blocks(text)
-        if text and not cleaned:
-            logger.info("Gemma response contained thinking without a final answer; raw_chars=%s", len(text))
-        return cleaned
+        return agent.invoke({"messages": messages})
 
-    def _get_llm(self):
-        if self._llm is not None:
-            return self._llm
+    def _get_model(self):
+        if self._model is not None:
+            return self._model
 
-        from llama_cpp import Llama
+        from langchain_community.chat_models import ChatLlamaCpp
 
         model_path = self._resolve_model_path()
         logger.info(
-            "Loading local Gemma model: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
+            "Loading local Gemma model through LangChain: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
             model_path,
             LOCAL_LLM_N_GPU_LAYERS,
             LOCAL_LLM_CONTEXT_TOKENS,
@@ -90,17 +62,19 @@ class LocalGemmaLLM:
             LOCAL_LLM_FLASH_ATTENTION,
         )
         started = time.perf_counter()
-        self._llm = Llama(
+        self._model = ChatLlamaCpp(
             model_path=model_path,
             n_gpu_layers=LOCAL_LLM_N_GPU_LAYERS,
             n_ctx=LOCAL_LLM_CONTEXT_TOKENS,
             n_batch=LOCAL_LLM_BATCH_TOKENS,
             n_threads=LOCAL_LLM_THREADS,
             flash_attn=LOCAL_LLM_FLASH_ATTENTION,
+            temperature=LOCAL_LLM_TEMPERATURE,
+            max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,
             verbose=False,
         )
-        logger.info("Local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
-        return self._llm
+        logger.info("LangChain local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
+        return self._model
 
     def _resolve_model_path(self) -> str:
         if LOCAL_LLM_MODEL_PATH:
@@ -128,19 +102,19 @@ class LocalGemmaLLM:
         return hf_hub_download(**kwargs)
 
 
-def _strip_thinking_blocks(text: str) -> str:
-    text = text.strip()
-    if re.search(r"<think\b", text, flags=re.IGNORECASE) and not re.search(
-        r"</think>",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return ""
-    text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"^.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(
-        r"(?is)^\s*(thinking|reasoning|analysis)\s*:\s*.*?(final|answer)\s*:\s*",
-        "",
-        text,
-    )
-    return text.strip()
+def agent_system_prompt() -> str:
+    local_time = datetime.now(ZoneInfo("Asia/Colombo")).isoformat(timespec="minutes")
+    return f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\nCurrent Sri Lanka date and time: {local_time}."
+
+
+def message_text(message: Any) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict)
+        ).strip()
+    return str(content).strip()
