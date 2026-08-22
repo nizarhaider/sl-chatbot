@@ -207,6 +207,14 @@ class LocalGemmaTurnPipeline:
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
         dashboard_state.emit(call_id, "pipeline.asr_complete", {"text": transcript_text, "duration_ms": transcript_ms})
 
+        if _is_wait_request(transcript_text):
+            response_text = _wait_response(transcript_text)
+            dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": 0})
+            dashboard_state.add_transcript(call_id, "assistant", response_text)
+            self._append_conversation_turn(call_id, transcript_text, response_text)
+            await self._timed_speak(call_id, response_text, output_track, playback_generation)
+            return
+
         async def announce_tool(tool_call) -> None:
             if tool_call.name not in {"search_properties", "book_appointment"}:
                 return
@@ -319,10 +327,23 @@ class LocalGemmaTurnPipeline:
                 if _contains_internal_control_text(response):
                     logger.warning("Gemma emitted an unparseable tool call for %s: %r", call_id, response[:500])
                     return _tool_recovery_response(transcript_text)
+                if continuation:
+                    history.extend(continuation)
+                    del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
+                    self._conversation_history[call_id] = history
                 return response
             if self._tools is None:
                 result = {"ok": False, "error": "The booking database is not configured."}
             else:
+                if tool_call.name == "search_properties":
+                    guard_response = _search_guard_response(transcript_text, tool_call.arguments)
+                    if guard_response:
+                        logger.info(
+                            "Holding incomplete property search for %s: arguments=%s",
+                            call_id,
+                            tool_call.arguments,
+                        )
+                        return guard_response
                 if announce_tool is not None:
                     await announce_tool(tool_call)
                 result = await self._tools.execute(tool_call, context)
@@ -361,6 +382,10 @@ class LocalGemmaTurnPipeline:
         if parse_tool_call(response) is not None or _contains_internal_control_text(response):
             logger.warning("Gemma exceeded the tool-call limit for %s", call_id)
             return _tool_recovery_response(transcript_text)
+        if continuation:
+            history.extend(continuation)
+            del history[:-LOCAL_LLM_HISTORY_MAX_MESSAGES]
+            self._conversation_history[call_id] = history
         return response
 
     def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
@@ -550,3 +575,55 @@ def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
     if tool_name == "book_appointment":
         return "Okay, I’ll confirm that appointment now. Please hold for a moment."
     return "Okay, I’ll check those details now. Please hold for a moment."
+
+
+def _is_wait_request(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    return bool(re.search(
+        r"\b(?:please\s+)?(?:wait|hold\s+on|one\s+moment)\b|"
+        r"(?:පොඩ්ඩක්|ටිකක්)\s*(?:ඉන්න|රැඳී|හිටින්න)",
+        normalized,
+    ))
+
+
+def _wait_response(text: str) -> str:
+    if re.search(r"[\u0D80-\u0DFF]", text):
+        return "හරි, මම ඉන්නම්."
+    if re.search(r"[\u0B80-\u0BFF]", text):
+        return "சரி, நான் காத்திருக்கிறேன்."
+    return "Sure, I’ll wait."
+
+
+def _search_guard_response(transcript_text: str, arguments: dict) -> str | None:
+    """Prevent an incomplete model search from becoming an unhelpful broad search."""
+    normalized_location = " ".join(str(arguments.get("location", "")).casefold().split())
+    broad_location = normalized_location in {
+        "colombo",
+        "greater colombo",
+        "colombo metro",
+        "colombo metropolitan area",
+    }
+    has_constraint = any(
+        arguments.get(name) not in (None, "", [], {})
+        for name in (
+            "property_type",
+            "bedrooms",
+            "min_bedrooms",
+            "max_bedrooms",
+            "max_price_lkr",
+        )
+    )
+    has_query = bool(str(arguments.get("query", "")).strip())
+    if (normalized_location and not broad_location) or (has_query and not broad_location) or (has_query and has_constraint):
+        return None
+    if re.search(r"[\u0D80-\u0DFF]", transcript_text):
+        if broad_location:
+            return "Colombo area එකේ search එක narrow කරන්න budget එක හෝ property type එක කියන්න පුළුවන්ද?"
+        return "Search කරන්න location එකත්, budget එක හෝ property type එකත් කියන්න පුළුවන්ද?"
+    if re.search(r"[\u0B80-\u0BFF]", transcript_text):
+        if broad_location:
+            return "Colombo area search-ஐ narrow செய்ய budget அல்லது property type சொல்ல முடியுமா?"
+        return "Search செய்ய location-உம் budget அல்லது property type-உம் சொல்ல முடியுமா?"
+    if broad_location:
+        return "Which budget or property type should I use to narrow the Colombo search?"
+    return "Which location and budget or property type should I search for?"

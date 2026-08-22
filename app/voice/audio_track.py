@@ -26,6 +26,8 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._pending_audio_bytes = 0
         self._start_time = None
         self._logged_non_silent_frames = 0
+        self._initial_buffer_seconds = 0.24
+        self._initial_buffer_wait_seconds = 3.0
 
     @property
     def sample_rate(self) -> int:
@@ -61,6 +63,12 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self.queue.put_nowait(output_bytes)
 
     async def recv(self):
+        if self._start_time is None:
+            deadline = asyncio.get_event_loop().time() + self._initial_buffer_wait_seconds
+            while self.pending_audio_seconds < self._initial_buffer_seconds:
+                if asyncio.get_event_loop().time() >= deadline:
+                    break
+                await asyncio.sleep(0.01)
         await self._pace_next_frame()
         data_to_send = self._next_frame_bytes()
         self._log_emitted_audio(data_to_send)
