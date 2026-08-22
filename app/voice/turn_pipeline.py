@@ -98,7 +98,7 @@ class VllmTurnPipeline:
 
     async def _run_turn_loop(self, call_id, caller_phone, input_track, output_track, playback_generation) -> None:
         vad = VadState()
-        playback_echo_state = {"until": 0.0}
+        playback_echo_state = {"until": 0.0, "was_playing": False}
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         chunk_buffer = bytearray()
         turn_task: asyncio.Task | None = None
@@ -140,7 +140,7 @@ class VllmTurnPipeline:
         output_track,
         playback_generation,
         turn_task: asyncio.Task | None,
-        playback_echo_state: dict[str, float],
+        playback_echo_state: dict[str, float | bool],
     ) -> asyncio.Task | None:
         while len(chunk_buffer) >= TURN_INPUT_CHUNK_SIZE:
             chunk = bytes(chunk_buffer[:TURN_INPUT_CHUNK_SIZE])
@@ -148,10 +148,11 @@ class VllmTurnPipeline:
 
             now = time.monotonic()
             if output_track.pending_audio_seconds > 0:
+                playback_echo_state["was_playing"] = True
+            elif playback_echo_state["was_playing"]:
+                playback_echo_state["was_playing"] = False
                 playback_echo_state["until"] = now + TURN_PLAYBACK_ECHO_TAIL_SECONDS
-                vad.discard()
-                continue
-            if now < playback_echo_state["until"]:
+            if now < float(playback_echo_state["until"]):
                 vad.discard()
                 continue
 
