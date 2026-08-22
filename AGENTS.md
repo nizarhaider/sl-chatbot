@@ -118,13 +118,18 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to local Gemma 4 E4B Q4 via `llama-cpp-python`.
+5. Sends transcript text to local Gemma 4 E4B through the OpenAI-compatible
+   vLLM server.
 6. Sends Gemma response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
 
 ### `app/voice/asr.py`, `app/voice/llm.py`, `app/voice/tts.py`, `app/voice/config.py`
 
 Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, and turn-control constants.
+
+The vLLM command for Gemma 4 must include `--enable-auto-tool-choice` and
+`--tool-call-parser gemma4`. The voice agent uses tools on normal turns; without
+these flags, vLLM rejects those requests with HTTP 400 and callers hear no reply.
 
 ## Environment Variables That Matter
 
@@ -147,6 +152,10 @@ for fine-tuning, merging, and initial full-stack validation. The prebuilt
 llama.cpp CUDA 12.5 wheel is not compatible with RTX 50-series GPUs.
 Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
+
+Before deploying a change, commit and push it to `main`. The remote setup must
+check out that `main` commit so a later task can reliably continue from the
+same source state.
 
 Startup timeout: allow a new instance no more than five minutes to become
 SSH-ready. If it is still loading or SSH is unavailable after five minutes,
