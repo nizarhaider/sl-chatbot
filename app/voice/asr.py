@@ -46,7 +46,6 @@ class LocalWhisperASR:
 
         generate_kwargs = {
             "task": WHISPER_TASK,
-            "no_speech_threshold": 0.6,
             "prompt_ids": processor.get_prompt_ids(
                 PROPERTY_VOCABULARY, return_tensors="pt"
             ).to(device),
