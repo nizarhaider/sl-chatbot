@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from app.voice.config import (
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
     LOCAL_LLM_BATCH_TOKENS,
+    LOCAL_LLM_CHAT_FORMAT,
     LOCAL_LLM_CONTEXT_TOKENS,
     LOCAL_LLM_FLASH_ATTENTION,
     LOCAL_LLM_MAX_OUTPUT_TOKENS,
@@ -97,6 +98,7 @@ class LocalSinLlamaLLM:
             n_batch=LOCAL_LLM_BATCH_TOKENS,
             n_threads=LOCAL_LLM_THREADS,
             flash_attn=LOCAL_LLM_FLASH_ATTENTION,
+            chat_format=LOCAL_LLM_CHAT_FORMAT,
             verbose=False,
         )
         logger.info("Local SinLlama model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
