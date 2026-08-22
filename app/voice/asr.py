@@ -1,4 +1,5 @@
 import logging
+import re
 
 import numpy as np
 
@@ -105,4 +106,9 @@ class LocalWhisperASR:
 
 def is_noise_text(text: str) -> bool:
     cleaned = text.strip()
-    return bool(cleaned) and all(char in "_- .,\n\t" for char in cleaned)
+    if not cleaned:
+        return False
+    if all(char in "_- .,\n\t" for char in cleaned):
+        return True
+    tokens = re.findall(r"\w+", cleaned.casefold())
+    return len(tokens) >= 6 and len(set(tokens)) <= 2
