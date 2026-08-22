@@ -35,9 +35,16 @@ jobs:
           public_key=$(cat "$RUNNER_TEMP/vast-ci.pub")
           uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw create ssh-key "$public_key" -y
           marker=$(cut -d' ' -f2 "$RUNNER_TEMP/vast-ci.pub")
-          keys=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show ssh-keys)
-          key_id=$(printf '%s' "$keys" | jq -r --arg marker "$marker" \
-            '.[] | select(.public_key | contains($marker)) | .id' | tail -n 1)
+          key_id=''
+          for attempt in $(seq 1 12); do
+            keys=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw show ssh-keys)
+            key_id=$(printf '%s' "$keys" | jq -r --arg marker "$marker" \
+              '.[] | select(.public_key | contains($marker)) | .id' | tail -n 1)
+            if test -n "$key_id" && test "$key_id" != null; then
+              break
+            fi
+            sleep 2
+          done
           test -n "$key_id" && test "$key_id" != null
           query='num_gpus=1 gpu_ram>=32768 cpu_arch=amd64 disk_space>=80 cuda_vers>=12.8 direct_port_count>=1 reliability>=0.98 verified=true'
           offers=$(uvx --from vastai vastai --api-key "$VAST_AI_API_KEY" --raw search offers "$query" --storage 80 --order dph --limit 100)
