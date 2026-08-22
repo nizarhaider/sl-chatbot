@@ -57,7 +57,11 @@ def _property_dict(row: tuple) -> dict:
 
 
 def parse_tool_call(text: str) -> ToolCall | None:
-    match = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL | re.IGNORECASE)
+    match = re.search(
+        r"<tool_call>\s*(\{.*?\})\s*(?:</tool_call>|$)",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
     if not match:
         return None
     raw_payload = match.group(1).strip()

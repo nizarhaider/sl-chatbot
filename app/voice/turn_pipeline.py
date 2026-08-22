@@ -614,7 +614,13 @@ def _search_guard_response(transcript_text: str, arguments: dict) -> str | None:
         )
     )
     has_query = bool(str(arguments.get("query", "")).strip())
-    if (normalized_location and not broad_location) or (has_query and not broad_location) or (has_query and has_constraint):
+    if normalized_location and not broad_location:
+        return None
+    if has_query and not broad_location:
+        return None
+    if broad_location and has_constraint:
+        return None
+    if has_query and has_constraint:
         return None
     if re.search(r"[\u0D80-\u0DFF]", transcript_text):
         if broad_location:
