@@ -1,5 +1,6 @@
 import asyncio
 import ast
+import json
 import re
 import logging
 import time
@@ -11,7 +12,7 @@ from zoneinfo import ZoneInfo
 from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain.agents import create_agent
 from langchain_community.chat_models import ChatLlamaCpp
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from app.voice.config import (
@@ -121,6 +122,29 @@ class LocalGemmaAgent:
 class GemmaChatLlamaCpp(ChatLlamaCpp):
     """Adapt Gemma 4's native tool syntax to LangChain tool calls."""
 
+    def _create_message_dicts(self, messages):
+        message_dicts = super()._create_message_dicts(messages)
+        rendered = []
+        for message, message_dict in zip(messages, message_dicts, strict=True):
+            if isinstance(message, AIMessage) and message.tool_calls:
+                calls = "".join(
+                    f"<|tool_call>call:{call['name']}{{{_gemma_arguments(call.get('args', {}))}}}<tool_call|>"
+                    for call in message.tool_calls
+                )
+                message_dict["content"] = f"{message_dict.get('content') or ''}{calls}"
+                message_dict.pop("tool_calls", None)
+            elif isinstance(message, ToolMessage):
+                if not rendered or rendered[-1].get("role") != "assistant":
+                    raise ValueError("Gemma tool responses must follow an assistant tool call")
+                result = _gemma_value(message.content)
+                rendered[-1]["content"] = (
+                    f"{rendered[-1].get('content') or ''}"
+                    f"<|tool_response>response:{message.name or 'tool'}{{result:{result}}}<tool_response|>"
+                )
+                continue
+            rendered.append(message_dict)
+        return rendered
+
     def _create_chat_result(self, response: dict) -> ChatResult:
         result = super()._create_chat_result(response)
         generations = []
@@ -198,6 +222,20 @@ def _parse_gemma_tool_call(text: str) -> tuple[str, str, dict] | None:
             value = raw_value.strip('"\'')
         arguments[argument.group(1)] = value
     return text[:match.start()].strip(), match.group(1), arguments
+
+
+def _gemma_arguments(arguments: dict) -> str:
+    return ",".join(f"{key}:{_gemma_value(value)}" for key, value in arguments.items())
+
+
+def _gemma_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return f'<|"|>{value}<|"|>'
 
 
 def _split_tool_arguments(arguments: str) -> list[str]:
