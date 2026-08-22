@@ -140,15 +140,14 @@ class GemmaChatLlamaCpp(ChatLlamaCpp):
 
 
 def _parse_gemma_tool_call(text: str) -> tuple[str, str, dict] | None:
-    match = re.search(
-        r"<tool_call\s*:\s*([A-Za-z_]\w*)\s*\((.*?)\)\s*</tool_call>",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
+    match = re.search(r"<tool_call\s*:\s*([A-Za-z_]\w*)\s*\((.*?)\)\s*</tool_call>", text, re.IGNORECASE | re.DOTALL)
+    if match is None:
+        match = re.search(r"<\|tool_call>\s*call:([A-Za-z_]\w*)\s*\{(.*?)\}\s*<tool_call\|>", text, re.IGNORECASE | re.DOTALL)
     if match is None:
         return None
     arguments: dict[str, Any] = {}
-    for item in _split_tool_arguments(match.group(2)):
+    raw_arguments = match.group(2).replace('<|"|>', '"')
+    for item in _split_tool_arguments(raw_arguments):
         argument = re.match(r"\s*([A-Za-z_]\w*)\s*(?:=|:)\s*(.*?)\s*$", item, re.DOTALL)
         if argument is None:
             return None
