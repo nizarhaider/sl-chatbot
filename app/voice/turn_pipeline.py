@@ -68,6 +68,7 @@ class VllmTurnPipeline:
             logger.info("OmniVoice prewarm complete")
 
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
+        self._initial_prompt_calls.add(call_id)
         greeting_task = asyncio.create_task(
             self._play_greeting(call_id, output_track, playback_generation),
             name=f"greeting-{call_id}",
@@ -86,7 +87,6 @@ class VllmTurnPipeline:
             await asyncio.sleep(TURN_GREETING_DELAY_SECONDS)
 
         greeting_started_at = time.perf_counter()
-        self._initial_prompt_calls.add(call_id)
         greeting_seconds = 0.0
         try:
             greeting_seconds = await self._speak(
