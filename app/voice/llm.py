@@ -8,6 +8,8 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from langchain.agents.middleware import AgentMiddleware, ModelRequest
+from langchain.agents import create_agent
 from langchain_community.chat_models import ChatLlamaCpp
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -43,14 +45,22 @@ class LocalGemmaAgent:
             return await asyncio.to_thread(self._invoke_sync, messages, tools, system_prompt)
 
     def _invoke_sync(self, messages: list[Any], tools: list, system_prompt: str) -> dict:
-        from langchain.agents import create_agent
-
         agent = create_agent(
             model=self._get_model(),
             tools=tools,
             system_prompt=system_prompt,
         )
-        return agent.invoke({"messages": messages})
+        result = agent.invoke({"messages": messages})
+        if _needs_search_recovery(result):
+            logger.warning("Recovering a search intent with a forced LangChain tool call")
+            agent = create_agent(
+                model=self._get_model(),
+                tools=tools,
+                system_prompt=system_prompt,
+                middleware=[_ForceToolCall("search_properties")],
+            )
+            return agent.invoke({"messages": messages})
+        return result
 
     def _get_model(self):
         if self._model is not None:
@@ -137,6 +147,36 @@ class GemmaChatLlamaCpp(ChatLlamaCpp):
                 generation_info=generation.generation_info,
             ))
         return ChatResult(generations=generations, llm_output=result.llm_output)
+
+
+class _ForceToolCall(AgentMiddleware):
+    def __init__(self, tool_name: str) -> None:
+        self._tool_name = tool_name
+
+    def wrap_model_call(self, request: ModelRequest, handler):
+        return handler(request.override(
+            tool_choice={"type": "function", "function": {"name": self._tool_name}},
+        ))
+
+
+def _needs_search_recovery(result: dict) -> bool:
+    messages = result.get("messages", [])
+    if any(message.__class__.__name__ == "ToolMessage" for message in messages):
+        return False
+    if not messages:
+        return False
+    response = message_text(messages[-1]).casefold()
+    all_text = " ".join(message_text(message) for message in messages).casefold()
+    search_intent = (
+        any(word in response for word in ("search", "check", "find", "listing", "details", "හොය", "බලන්න"))
+        or ("property" in response and "තියෙන" in response)
+    )
+    criteria = sum(bool(marker in all_text) for marker in (
+        "colombo", "කොළඹ", "කළම්බෝ", "කොලම්බු",
+        "million", "මිලිය",
+        "bedroom", "bedrooms", "බෙඩ්",
+    ))
+    return search_intent and criteria >= 3
 
 
 def _parse_gemma_tool_call(text: str) -> tuple[str, str, dict] | None:
