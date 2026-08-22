@@ -1,9 +1,16 @@
 import asyncio
+import ast
+import re
 import logging
 import time
+import uuid
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from langchain_community.chat_models import ChatLlamaCpp
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 from app.voice.config import (
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
@@ -49,8 +56,6 @@ class LocalGemmaAgent:
         if self._model is not None:
             return self._model
 
-        from langchain_community.chat_models import ChatLlamaCpp
-
         model_path = self._resolve_model_path()
         logger.info(
             "Loading local Gemma model through LangChain: path=%s n_gpu_layers=%s n_ctx=%s n_batch=%s n_threads=%s flash_attn=%s",
@@ -62,7 +67,7 @@ class LocalGemmaAgent:
             LOCAL_LLM_FLASH_ATTENTION,
         )
         started = time.perf_counter()
-        self._model = ChatLlamaCpp(
+        self._model = GemmaChatLlamaCpp(
             model_path=model_path,
             n_gpu_layers=LOCAL_LLM_N_GPU_LAYERS,
             n_ctx=LOCAL_LLM_CONTEXT_TOKENS,
@@ -71,6 +76,7 @@ class LocalGemmaAgent:
             flash_attn=LOCAL_LLM_FLASH_ATTENTION,
             temperature=LOCAL_LLM_TEMPERATURE,
             max_tokens=LOCAL_LLM_MAX_OUTPUT_TOKENS,
+            streaming=False,
             verbose=False,
         )
         logger.info("LangChain local Gemma model loaded in %.0f ms", (time.perf_counter() - started) * 1000.0)
@@ -100,6 +106,83 @@ class LocalGemmaAgent:
         if LOCAL_LLM_MODEL_DIR:
             kwargs["local_dir"] = LOCAL_LLM_MODEL_DIR
         return hf_hub_download(**kwargs)
+
+
+class GemmaChatLlamaCpp(ChatLlamaCpp):
+    """Adapt Gemma 4's native tool syntax to LangChain tool calls."""
+
+    def _create_chat_result(self, response: dict) -> ChatResult:
+        result = super()._create_chat_result(response)
+        generations = []
+        for generation in result.generations:
+            message = generation.message
+            if not isinstance(message, AIMessage) or not isinstance(message.content, str):
+                generations.append(generation)
+                continue
+            parsed = _parse_gemma_tool_call(message.content)
+            if parsed is None:
+                generations.append(generation)
+                continue
+            text, name, arguments = parsed
+            generations.append(ChatGeneration(
+                message=AIMessage(
+                    content=text,
+                    tool_calls=[{
+                        "name": name,
+                        "args": arguments,
+                        "id": f"call_{uuid.uuid4().hex}",
+                        "type": "tool_call",
+                    }],
+                ),
+                generation_info=generation.generation_info,
+            ))
+        return ChatResult(generations=generations, llm_output=result.llm_output)
+
+
+def _parse_gemma_tool_call(text: str) -> tuple[str, str, dict] | None:
+    match = re.search(
+        r"<tool_call\s*:\s*([A-Za-z_]\w*)\s*\((.*?)\)\s*</tool_call>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return None
+    arguments: dict[str, Any] = {}
+    for item in _split_tool_arguments(match.group(2)):
+        argument = re.match(r"\s*([A-Za-z_]\w*)\s*(?:=|:)\s*(.*?)\s*$", item, re.DOTALL)
+        if argument is None:
+            return None
+        raw_value = argument.group(2).strip()
+        try:
+            value = ast.literal_eval(raw_value)
+        except (SyntaxError, ValueError):
+            value = raw_value.strip('"\'')
+        arguments[argument.group(1)] = value
+    return text[:match.start()].strip(), match.group(1), arguments
+
+
+def _split_tool_arguments(arguments: str) -> list[str]:
+    items: list[str] = []
+    start = 0
+    quote: str | None = None
+    depth = 0
+    for index, char in enumerate(arguments):
+        if quote:
+            if char == quote and (index == 0 or arguments[index - 1] != "\\"):
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char in "[{(":
+            depth += 1
+        elif char in "]})":
+            depth -= 1
+        elif char == "," and depth == 0:
+            items.append(arguments[start:index].strip())
+            start = index + 1
+    final = arguments[start:].strip()
+    if final:
+        items.append(final)
+    return items
 
 
 def agent_system_prompt() -> str:
