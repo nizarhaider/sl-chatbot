@@ -324,7 +324,11 @@ class LocalGemmaTurnPipeline:
         self._emit_agent_events(call_id, new_messages)
         self._conversation_history[call_id] = messages[-LOCAL_LLM_HISTORY_MAX_MESSAGES:]
         response = message_text(next(
-            (message for message in reversed(messages) if isinstance(message, AIMessage)),
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, AIMessage) and not message.tool_calls
+            ),
             AIMessage(content=""),
         ))
         dashboard_state.emit(call_id, "model.output", {"text": response})
