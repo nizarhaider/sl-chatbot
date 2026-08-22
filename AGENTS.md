@@ -125,9 +125,9 @@ What it does:
 
 ### `app/voice/asr.py`, `app/voice/llm.py`, `app/voice/tts.py`, `app/voice/config.py`
 
-Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, and turn-control constants. Use
-`openai/whisper-large-v3-turbo` for mixed Sinhala-English call audio; it supports the multilingual
-language-selection flow and is more robust than the prior Sinhala-only checkpoint in live calls.
+Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, and turn-control constants.
+Use `SPEAK-ASR/whisper-medium-si-merged` for Sinhala call audio. The general multilingual Whisper
+model did not meet live-call quality requirements for this runtime.
 
 The vLLM command for Gemma 4 must include `--enable-auto-tool-choice` and
 `--tool-call-parser gemma4`. The voice agent uses tools on normal turns; without
