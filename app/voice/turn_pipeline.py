@@ -248,9 +248,10 @@ class VllmTurnPipeline:
             logger.info("Dropping empty/noise Gemma response for %s: %r", call_id, response_text)
             return
 
+        spoken_response_text = self._prepare_tts_text(response_text)
         logger.info("Turn response for %s in %.0f ms: %s", call_id, llm_ms, response_text)
-        dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": llm_ms})
-        dashboard_state.add_transcript(call_id, "assistant", response_text)
+        dashboard_state.emit(call_id, "pipeline.response_ready", {"text": spoken_response_text, "duration_ms": llm_ms})
+        dashboard_state.add_transcript(call_id, "assistant", spoken_response_text)
         tts_audio_seconds, tts_ms = await self._timed_speak(
             call_id,
             response_text,

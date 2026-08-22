@@ -23,7 +23,6 @@ class PineconePropertyStore:
         result = self._index.search(
             namespace=self._namespace,
             query={"top_k": 5, "inputs": {"text": query}},
-            rerank={"model": "bge-reranker-v2-m3", "top_n": 5, "rank_fields": ["content"]},
         )
         hits = _value(_value(result, "result", {}), "hits", []) or []
         properties = []

@@ -18,6 +18,7 @@ class VllmAgent:
             api_key="local-vllm",
             model=VLLM_MODEL,
             temperature=VLLM_TEMPERATURE,
+            max_tokens=128,
         )
         self._lock = asyncio.Lock()
 
