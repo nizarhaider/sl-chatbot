@@ -18,7 +18,7 @@ VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-E4B-it}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 
-PUBLIC_WEBHOOK_URL="${PUBLIC_WEBHOOK_URL:?PUBLIC_WEBHOOK_URL must point to the permanent webhook hostname}"
+PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE}"
