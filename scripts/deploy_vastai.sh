@@ -14,7 +14,10 @@ INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-whatsapp}"
 DRY_RUN="${DRY_RUN:-false}"
 STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-60}"
 MAX_INSTANCE_ATTEMPTS="${MAX_INSTANCE_ATTEMPTS:-3}"
-SETUP_TIMEOUT_SECONDS="${SETUP_TIMEOUT_SECONDS:-1200}"
+# A new machine may need to download several GiB of CUDA wheels, the model, and
+# complete model prewarming. Keep this bounded, but do not tear it down during
+# a healthy first-time install.
+SETUP_TIMEOUT_SECONDS="${SETUP_TIMEOUT_SECONDS:-5400}"
 
 log() { printf '▶ %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
