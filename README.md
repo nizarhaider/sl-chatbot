@@ -12,7 +12,7 @@ flowchart LR
     API -->|SDP offer| RTC[aiortc peer connection]
     RTC -->|inbound audio| VAD[Local RMS VAD]
     VAD -->|completed turn PCM| ASR[Local Whisper STT]
-    ASR -->|transcript| LLM[Local Gemma 4 12B int4]
+    ASR -->|transcript| LLM[Official Gemma 4 12B QAT int4]
     LLM -->|response text| TTS[RealtimeTTS OmniVoice]
     TTS -->|48 kHz stereo PCM| RTC
     RTC -->|outbound audio| WA

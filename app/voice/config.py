@@ -5,7 +5,7 @@ VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent
 VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 VLLM_BASE_URL = "http://127.0.0.1:8000/v1"
-VLLM_MODEL = "google/gemma-4-12B-it"
+VLLM_MODEL = "google/gemma-4-12B-it-qat-w4a16-ct"
 VLLM_TEMPERATURE = 0.2
 VLLM_PREWARM = True
 

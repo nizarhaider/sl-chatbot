@@ -14,7 +14,7 @@ REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
 VLLM_PORT="${VLLM_PORT:-8000}"
-VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-12B-it}"
+VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-12B-it-qat-w4a16-ct}"
 VLLM_STARTUP_TIMEOUT_ATTEMPTS="${VLLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
@@ -156,7 +156,7 @@ $SSH "
       exec .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
       --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.65 \
       --kv-cache-memory 536870912 --enforce-eager \
-      --quantization bitsandbytes --load-format bitsandbytes \
+      --quantization compressed-tensors \
       --enable-auto-tool-choice --tool-call-parser gemma4' \
       > run_logs/vllm.log 2>&1 < /dev/null &
     echo \$! > run_logs/vllm.pid
