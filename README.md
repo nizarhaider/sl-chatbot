@@ -2,7 +2,7 @@
 
 Voice-only WhatsApp assistant powered by local models on a GPU host.
 
-Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through `llama-cpp-python`, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
+Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through vLLM, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ flowchart LR
     API -->|SDP offer| RTC[aiortc peer connection]
     RTC -->|inbound audio| VAD[Local RMS VAD]
     VAD -->|completed turn PCM| ASR[Local Whisper STT]
-    ASR -->|transcript| LLM[Local Gemma 4 E4B Q4]
+    ASR -->|transcript| LLM[Local Gemma 4 12B int4]
     LLM -->|response text| TTS[RealtimeTTS OmniVoice]
     TTS -->|48 kHz stereo PCM| RTC
     RTC -->|outbound audio| WA

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
-# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 E4B Q4.
+# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 12B int4.
 # =============================================================================
 
 set -euo pipefail
@@ -14,7 +14,7 @@ REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
 VLLM_PORT="${VLLM_PORT:-8000}"
-VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-E4B-it}"
+VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-12B-it}"
 VLLM_STARTUP_TIMEOUT_ATTEMPTS="${VLLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"

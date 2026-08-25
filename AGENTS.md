@@ -8,7 +8,7 @@ The current voice path is:
 WhatsApp Cloud webhook -> FastAPI /webhook
 WhatsApp Calling SDP offer -> aiortc peer connection
 Inbound WhatsApp audio -> local VAD -> local Whisper STT
-Whisper transcript -> local Gemma 4 E4B Q4 via llama.cpp
+Whisper transcript -> local Gemma 4 12B int4 via vLLM
 Gemma text -> RealtimeTTS OmniVoice
 OmniVoice PCM -> outbound aiortc audio track -> WhatsApp call
 ```
@@ -118,7 +118,7 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to local Gemma 4 E4B through the OpenAI-compatible
+5. Sends transcript text to local Gemma 4 12B through the OpenAI-compatible
    vLLM server.
 6. Sends Gemma response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
