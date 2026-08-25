@@ -15,6 +15,7 @@ REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-E4B-it}"
+VLLM_STARTUP_TIMEOUT_ATTEMPTS="${VLLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 
@@ -166,7 +167,7 @@ $SSH "
 
 log "Waiting for vLLM to become ready..."
 $SSH "
-  for attempt in \$(seq 1 300); do
+  for attempt in \$(seq 1 ${VLLM_STARTUP_TIMEOUT_ATTEMPTS}); do
     if curl -fsS http://127.0.0.1:${VLLM_PORT}/v1/models >/dev/null; then
       exit 0
     fi
