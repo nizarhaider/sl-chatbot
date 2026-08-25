@@ -15,22 +15,12 @@ INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-whatsapp}"
 DRY_RUN="${DRY_RUN:-false}"
 STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-60}"
 MAX_INSTANCE_ATTEMPTS="${MAX_INSTANCE_ATTEMPTS:-3}"
-# A new machine may need to download several GiB of CUDA wheels, the model, and
-# complete model prewarming. Keep this bounded, but do not tear it down during
-# a healthy first-time install.
-SETUP_TIMEOUT_SECONDS="${SETUP_TIMEOUT_SECONDS:-5400}"
+# Once SSH is available, let the host complete its build and model prewarm.
 
 log() { printf '▶ %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/uv/"
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_BIN="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_BIN="gtimeout"
-else
-  fail "GNU timeout is required (install coreutils: brew install coreutils)"
-fi
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
@@ -167,8 +157,8 @@ done
     continue
   fi
 
-  log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID} (hard limit ${SETUP_TIMEOUT_SECONDS}s)..."
-  if "${TIMEOUT_BIN}" --foreground "${SETUP_TIMEOUT_SECONDS}" env \
+  log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID}; it will remain running during setup..."
+  if env \
     REMOTE_BRANCH="${REMOTE_BRANCH}" SSH_KEY="${SSH_KEY}" \
     "${ROOT_DIR}/scripts/setup_vastai.sh" "${SSH_PORT}" "${SSH_HOST}"; then
     log "Deployment complete."
@@ -177,8 +167,8 @@ done
     exit 0
   fi
 
-  log "Setup failed or exceeded ${SETUP_TIMEOUT_SECONDS}s on instance ${INSTANCE_ID}."
-  destroy_instance "${INSTANCE_ID}"
+  log "Setup failed after SSH became available; leaving instance ${INSTANCE_ID} running for diagnosis and recovery."
+  exit 1
 done
 
 fail "All ${MAX_INSTANCE_ATTEMPTS} instance attempts failed; no server was left running."

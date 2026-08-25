@@ -18,7 +18,6 @@ VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-E4B-it}"
 VLLM_STARTUP_TIMEOUT_ATTEMPTS="${VLLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
-HF_RUNTIME_CACHE_BUCKET="${HF_RUNTIME_CACHE_BUCKET:-2broke2code/serendibai-vllm-cuda-cache}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -27,8 +26,6 @@ SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-n
 SCP="scp -o StrictHostKeyChecking=accept-new -P ${SSH_PORT} -i ${SSH_KEY}"
 
 log() { echo "▶ $*"; }
-
-RUNTIME_CACHE_KEY="vllm-cuda128-$(sha256sum uv.lock | awk '{print $1}')"
 
 log "Checking machine..."
 $SSH "uname -a && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader && which uv git python3"
@@ -143,33 +140,8 @@ $SSH "
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
-log "Running cached, locked uv sync with prebuilt CUDA dependencies..."
-$SSH "
-  cd ${REMOTE_DIR}
-  set -a && . ./.env && set +a
-  if [ -n \"\${HF_TOKEN:-}\" ]; then
-    cache_dir=\$(env -u UV_NO_CACHE uv cache dir)
-    mkdir -p \"\${cache_dir}\"
-    env -u UV_NO_CACHE uvx --from huggingface_hub hf buckets sync \
-      hf://buckets/${HF_RUNTIME_CACHE_BUCKET}/${RUNTIME_CACHE_KEY} \
-      \"\${cache_dir}\" --ignore-times --quiet || true
-  fi
-"
+log "Running locked uv sync..."
 $SSH "cd ${REMOTE_DIR} && env -u UV_NO_CACHE uv sync --frozen"
-
-log "Saving reusable CUDA and vLLM packages to Hugging Face..."
-$SSH "
-  cd ${REMOTE_DIR}
-  set -a && . ./.env && set +a
-  if [ -n \"\${HF_TOKEN:-}\" ]; then
-    env -u UV_NO_CACHE uvx --from huggingface_hub hf buckets sync \
-      \"\$(env -u UV_NO_CACHE uv cache dir)\" \
-      hf://buckets/${HF_RUNTIME_CACHE_BUCKET}/${RUNTIME_CACHE_KEY} \
-      --ignore-times --quiet
-  else
-    echo 'HF_TOKEN is unavailable; skipping runtime cache upload.'
-  fi
-"
 
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
