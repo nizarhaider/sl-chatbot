@@ -154,7 +154,8 @@ $SSH "
     nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
       export LD_LIBRARY_PATH=\$(find .venv/lib -type d -name lib -printf %p: 2>/dev/null)\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
       exec .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
-      --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.75 --enforce-eager \
+      --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.65 \
+      --kv-cache-memory 536870912 --enforce-eager \
       --quantization bitsandbytes --load-format bitsandbytes \
       --enable-auto-tool-choice --tool-call-parser gemma4' \
       > run_logs/vllm.log 2>&1 < /dev/null &
