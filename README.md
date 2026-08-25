@@ -135,6 +135,7 @@ offer with at least 16 GB VRAM and rents an 80 GB disk,
 waits for SSH, then runs the setup and health checks. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
 `MIN_GPU_RAM_GB` override cannot be set below the 16 GB hard floor.
+The selected host must also support CUDA 13 or newer.
 
 The deployer caches lockfile-matched CUDA and vLLM package artifacts in a private
 Hugging Face bucket. Subsequent hosts download them before `uv sync`, avoiding

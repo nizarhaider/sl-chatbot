@@ -7,6 +7,7 @@ cd "${ROOT_DIR}"
 
 DISK_GB="${DISK_GB:-80}"
 MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
+MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-13.0}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-18e97fc6703dea11057cee364a8eaa8c}"
@@ -43,7 +44,7 @@ VASTAI_API_KEY="$(${PYTHON} -c \
 test -n "${VASTAI_API_KEY}" || fail "VASTAI_API_KEY is missing from .env"
 
 VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
-QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=12.8 direct_port_count>=1"
+QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=${MIN_CUDA_VERSION} direct_port_count>=1"
 
 log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM..."
 OFFER="$("${VASTAI[@]}" search offers "${QUERY}" \
