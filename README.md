@@ -136,6 +136,10 @@ waits for SSH, then runs the setup and health checks. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
 `MIN_GPU_RAM_GB` override cannot be set below the 16 GB hard floor.
 
+The deployer caches lockfile-matched CUDA and vLLM package artifacts in a private
+Hugging Face bucket. Subsequent hosts download them before `uv sync`, avoiding
+repeated individual package downloads and builds.
+
 Reproduce the Gemma 4 26B-A4B response-only LoRA run on a 48 GB CUDA host with:
 
 ```bash
