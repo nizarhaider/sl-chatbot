@@ -147,9 +147,9 @@ log "Running cached, locked uv sync with prebuilt CUDA dependencies..."
 $SSH "
   cd ${REMOTE_DIR}
   if [ -n \"\${HF_TOKEN:-}\" ]; then
-    cache_dir=\$(uv cache dir)
+    cache_dir=\$(env -u UV_NO_CACHE uv cache dir)
     mkdir -p \"\${cache_dir}\"
-    uvx --from huggingface_hub hf buckets sync \
+    env -u UV_NO_CACHE uvx --from huggingface_hub hf buckets sync \
       hf://buckets/${HF_RUNTIME_CACHE_BUCKET}/${RUNTIME_CACHE_KEY} \
       \"\${cache_dir}\" --ignore-times --quiet || true
   fi
@@ -160,8 +160,8 @@ log "Saving reusable CUDA and vLLM packages to Hugging Face..."
 $SSH "
   cd ${REMOTE_DIR}
   if [ -n \"\${HF_TOKEN:-}\" ]; then
-    uvx --from huggingface_hub hf buckets sync \
-      \"\$(uv cache dir)\" \
+    env -u UV_NO_CACHE uvx --from huggingface_hub hf buckets sync \
+      \"\$(env -u UV_NO_CACHE uv cache dir)\" \
       hf://buckets/${HF_RUNTIME_CACHE_BUCKET}/${RUNTIME_CACHE_KEY} \
       --ignore-times --quiet
   else
