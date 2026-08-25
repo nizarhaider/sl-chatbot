@@ -178,6 +178,7 @@ $SSH "
   if ! tmux has-session -t sl-vllm 2>/dev/null; then
     tmux new-session -d -s sl-vllm \
       'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
+       export LD_LIBRARY_PATH=\$(find .venv/lib -type d -name lib -printf %p: 2>/dev/null)\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
        .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
        --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.55 \
        --enable-auto-tool-choice --tool-call-parser gemma4 \
