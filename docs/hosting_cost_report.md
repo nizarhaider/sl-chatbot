@@ -4,20 +4,15 @@ Snapshot date: 2026-08-16
 
 ## Recommendation
 
-Use two distinct sizing rules for the Gemma 4 26B-A4B voice agent:
+Use two distinct sizing rules for the voice agent:
 
-- **32 GB VRAM is the hard runtime floor.** Select the cheapest compatible,
-  verified listing at or above this capacity. It should hold the Q4 LLM,
-  Whisper, OmniVoice, KV cache, and useful operating headroom on one GPU. The
-  final requirement must still be confirmed with a full-stack measurement.
+- **16 GB VRAM is the hard runtime floor.** Select the cheapest compatible,
+  verified listing at or above this capacity.
 - **48 GB VRAM is the training and validation tier.** Use it for LoRA training,
   adapter merging, GGUF conversion, and the first end-to-end deployment. It is
   not automatically required for steady-state hosting.
 
-The previous 4B voice runtime used about 13.1 GiB of VRAM with a 4.8 GiB GGUF.
-Replacing that file with the 16.8 GB 26B-A4B Q4 model puts the
-combined workload near or above a 24 GB card once CUDA overhead and KV cache
-are included. The deployer therefore rejects configurations below 32 GB.
+The deployer rejects configurations below 16 GB.
 
 ## Cheapest Live Vast.ai Listings
 
@@ -26,10 +21,10 @@ on-demand listings with an 80 GB disk on 2026-08-16:
 
 | Tier | Cheapest observed GPU | Hourly total | 730-hour month |
 | --- | --- | ---: | ---: |
-| 32 GB+ | Quadro RTX 8000 48 GB | $0.25111 | $183.31 |
+| 16 GB+ | Quadro RTX 8000 48 GB | $0.25111 | $183.31 |
 | 48 GB+ | Quadro RTX 8000 48 GB | $0.25111 | $183.31 |
 
-There was no cheaper compatible 32 GB listing at the snapshot, so the 32 GB
+There was no cheaper compatible 16 GB listing at the snapshot, so the 16 GB
 query selected a 48 GB Quadro RTX 8000. This older Turing card is inexpensive
 and has ample memory, but a newer A6000, A40, L40, or RTX 6000 Ada may deliver
 better latency. The A6000 48 GB contract used for the current training run costs
@@ -58,7 +53,7 @@ record the following before selecting the long-running tier:
 | End-to-end turn latency | Acceptable during an actual WhatsApp call |
 | Disk usage | Leaves room for model cache and logs |
 
-If peak usage is at most roughly 27-28 GiB, a 32 GB production card is the
+If peak usage is at most roughly 14-15 GiB, a 16 GB production card is the
 right value target. If it approaches 32 GiB or concurrent calls are required,
 use 48 GB.
 

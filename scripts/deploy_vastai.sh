@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 DISK_GB="${DISK_GB:-80}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-32}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-18e97fc6703dea11057cee364a8eaa8c}"
@@ -33,7 +33,7 @@ fi
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
-[ "${MIN_GPU_RAM_GB}" -ge 32 ] || fail "Gemma 4 26B deployments require at least 32 GB VRAM"
+[ "${MIN_GPU_RAM_GB}" -ge 16 ] || fail "Voice runtime deployments require at least 16 GB VRAM"
 
 PYTHON="${ROOT_DIR}/.venv/bin/python"
 test -x "${PYTHON}" || fail "Run 'uv sync' locally once before deploying"
