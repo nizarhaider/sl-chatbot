@@ -147,7 +147,7 @@ PHONE_NUMBER_ID=...
 
 ## Setup Commands For A New Vast.ai Box
 
-Rental policy: use an on-demand instance with a hard minimum of 16 GB VRAM and
+Rental policy: use an on-demand instance with a hard minimum of 24 GB VRAM and
 an 80 GB disk for the voice runtime. Select the cheapest compatible,
 verified listing that meets that memory floor. Use 48 GB VRAM and a 200 GB disk
 for fine-tuning, merging, and initial full-stack validation. The prebuilt

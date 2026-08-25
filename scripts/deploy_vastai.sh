@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 DISK_GB="${DISK_GB:-80}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-24}"
 MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-13.0}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
@@ -24,7 +24,7 @@ command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
-[ "${MIN_GPU_RAM_GB}" -ge 16 ] || fail "Voice runtime deployments require at least 16 GB VRAM"
+[ "${MIN_GPU_RAM_GB}" -ge 24 ] || fail "Voice runtime deployments require at least 24 GB VRAM"
 
 PYTHON="${ROOT_DIR}/.venv/bin/python"
 test -x "${PYTHON}" || fail "Run 'uv sync' locally once before deploying"
@@ -76,7 +76,12 @@ import sys
 rows = json.load(sys.stdin)
 if isinstance(rows, dict):
     rows = rows.get("instances", [])
-rows = [row for row in rows if row.get("label") == "'"${INSTANCE_LABEL}"'" and row.get("actual_status") == "running"]
+rows = [
+    row for row in rows
+    if row.get("label") == "'"${INSTANCE_LABEL}"'"
+    and row.get("actual_status") == "running"
+    and float(row.get("gpu_ram") or 0) >= '"${MIN_GPU_RAM_GB}"' * 1024
+]
 rows.sort(key=lambda row: float(row.get("start_date") or 0), reverse=True)
 for row in rows:
     mappings = (row.get("ports") or {}).get("22/tcp") or []
