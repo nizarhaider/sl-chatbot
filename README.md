@@ -2,7 +2,7 @@
 
 Voice-only WhatsApp assistant powered by local models on a GPU host.
 
-Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, local Gemma through vLLM, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
+Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, official Gemma 4 12B QAT GGUF through CUDA llama.cpp, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
 
 ## Architecture
 
@@ -153,7 +153,7 @@ To set up an instance that has already been rented:
 REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
 ```
 
-The setup script prepares `/workspace/sl-chatbot`, syncs `.env` when present, installs the locked vLLM/CUDA dependencies, starts the webhook in `tmux`, and verifies the configured permanent webhook URL.
+The setup script prepares `/workspace/sl-chatbot`, syncs `.env` when present, builds CUDA llama.cpp, downloads the official Gemma QAT GGUF, starts the webhook, and verifies the configured permanent webhook URL.
 
 Manual dependency sync on the remote host:
 

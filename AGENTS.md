@@ -8,7 +8,7 @@ The current voice path is:
 WhatsApp Cloud webhook -> FastAPI /webhook
 WhatsApp Calling SDP offer -> aiortc peer connection
 Inbound WhatsApp audio -> local VAD -> local Whisper STT
-Whisper transcript -> official Gemma 4 12B QAT int4 via vLLM
+Whisper transcript -> official Gemma 4 12B QAT Q4_0 GGUF via CUDA llama.cpp
 Gemma text -> RealtimeTTS OmniVoice
 OmniVoice PCM -> outbound aiortc audio track -> WhatsApp call
 ```
@@ -118,8 +118,8 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to official Gemma 4 12B QAT int4 through the OpenAI-compatible
-   vLLM server.
+5. Sends transcript text to official Gemma 4 12B QAT Q4_0 GGUF through the
+   OpenAI-compatible CUDA llama.cpp server.
 6. Sends Gemma response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
 
@@ -129,9 +129,9 @@ Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, 
 Use `SPEAK-ASR/whisper-medium-si-merged` for Sinhala call audio. The general multilingual Whisper
 model did not meet live-call quality requirements for this runtime.
 
-The vLLM command for Gemma 4 must include `--enable-auto-tool-choice` and
-`--tool-call-parser gemma4`. The voice agent uses tools on normal turns; without
-these flags, vLLM rejects those requests with HTTP 400 and callers hear no reply.
+The llama.cpp server loads all Gemma layers on the GPU with `--n_gpu_layers -1`.
+Property searches remain deterministic in the turn pipeline; do not depend on
+server-side tool-call parsing for the Q4_0 GGUF runtime.
 
 ## Environment Variables That Matter
 

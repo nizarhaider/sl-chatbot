@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
-# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 12B int4.
+# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 12B QAT GGUF.
 # =============================================================================
 
 set -euo pipefail
@@ -13,9 +13,12 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
-VLLM_PORT="${VLLM_PORT:-8000}"
-VLLM_MODEL="${VLLM_MODEL:-google/gemma-4-12B-it-qat-w4a16-ct}"
-VLLM_STARTUP_TIMEOUT_ATTEMPTS="${VLLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
+LLM_PORT="${LLM_PORT:-8000}"
+LLM_MODEL="${LLM_MODEL:-google/gemma-4-12B-it-qat-q4_0-gguf}"
+LLM_MODEL_REPO="google/gemma-4-12B-it-qat-q4_0-gguf"
+LLM_MODEL_FILE="gemma-4-12b-it-qat-q4_0.gguf"
+LLM_MODEL_DIR="/workspace/models/gemma-4-12b-it-qat-q4_0"
+LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 
@@ -143,23 +146,24 @@ $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 log "Running locked uv sync..."
 $SSH "cd ${REMOTE_DIR} && env -u UV_NO_CACHE uv sync --frozen"
 
+log "Building CUDA llama.cpp and downloading the official Gemma QAT GGUF..."
+$SSH "cd ${REMOTE_DIR} && CMAKE_ARGS='-DGGML_CUDA=on' CMAKE_BUILD_PARALLEL_LEVEL=4 uv pip install --python .venv/bin/python --reinstall --no-binary llama-cpp-python 'llama-cpp-python[server]==0.3.35'"
+$SSH "cd ${REMOTE_DIR} && hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1) && test -n \"\$hf_token\" && HF_TOKEN=\"\$hf_token\" .venv/bin/hf download ${LLM_MODEL_REPO} --local-dir ${LLM_MODEL_DIR}"
+
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
 
-log "Starting vLLM and the permanent Cloudflare tunnel..."
+log "Starting local Gemma and the permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
   mkdir -p run_logs
-  if ! { test -s run_logs/vllm.pid && kill -0 \"\$(cat run_logs/vllm.pid)\" 2>/dev/null; }; then
-    nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
-      export LD_LIBRARY_PATH=\$(find .venv/lib -type d -name lib -printf %p: 2>/dev/null)\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
-      exec .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
-      --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.65 \
-      --kv-cache-memory 536870912 --enforce-eager \
-      --quantization compressed-tensors \
-      --enable-auto-tool-choice --tool-call-parser gemma4' \
-      > run_logs/vllm.log 2>&1 < /dev/null &
-    echo \$! > run_logs/vllm.pid
+  if ! { test -s run_logs/llm.pid && kill -0 \"\$(cat run_logs/llm.pid)\" 2>/dev/null; }; then
+    nohup .venv/bin/python -m llama_cpp.server \
+      --model ${LLM_MODEL_DIR}/${LLM_MODEL_FILE} --model_alias ${LLM_MODEL} \
+      --n_gpu_layers -1 --n_ctx 4096 --flash_attn true \
+      --host 127.0.0.1 --port ${LLM_PORT} --verbose false \
+      > run_logs/llm.log 2>&1 < /dev/null &
+    echo \$! > run_logs/llm.pid
   fi
   if ! { test -s run_logs/cloudflared.pid && kill -0 \"\$(cat run_logs/cloudflared.pid)\" 2>/dev/null; }; then
     nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
@@ -169,18 +173,17 @@ $SSH "
   fi
 "
 
-log "Waiting for vLLM to become ready..."
+log "Waiting for local Gemma to become ready..."
 $SSH "
-  for attempt in \$(seq 1 ${VLLM_STARTUP_TIMEOUT_ATTEMPTS}); do
-    if curl -fsS http://127.0.0.1:${VLLM_PORT}/v1/models >/dev/null; then
+  for attempt in \$(seq 1 ${LLM_STARTUP_TIMEOUT_ATTEMPTS}); do
+    if curl -fsS http://127.0.0.1:${LLM_PORT}/v1/models >/dev/null; then
       exit 0
     fi
     sleep 2
   done
-  tail -n 120 ${REMOTE_DIR}/run_logs/vllm.log || true
+  tail -n 120 ${REMOTE_DIR}/run_logs/llm.log || true
   exit 1
 "
-
 log "Starting webhook..."
 $SSH "
   cd ${REMOTE_DIR}
