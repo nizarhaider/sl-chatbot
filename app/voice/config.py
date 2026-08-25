@@ -10,7 +10,7 @@ VLLM_TEMPERATURE = 0.2
 VLLM_PREWARM = True
 
 WHISPER_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
-WHISPER_DEVICE = "cpu"
+WHISPER_DEVICE = "cuda:0"
 WHISPER_LANGUAGE = "sinhala"
 WHISPER_TASK = "transcribe"
 
