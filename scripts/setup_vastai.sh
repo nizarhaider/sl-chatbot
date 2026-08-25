@@ -175,7 +175,7 @@ $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/pyt
 log "Starting vLLM and the permanent Cloudflare tunnel..."
 $SSH "
   mkdir -p ${REMOTE_DIR}/run_logs
-  if ! pgrep -f '.venv/bin/vllm serve' >/dev/null 2>&1; then
+  if ! pgrep -f '.venv/bin/[v]llm serve' >/dev/null 2>&1; then
     nohup sh -c 'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
       export LD_LIBRARY_PATH=\$(find .venv/lib -type d -name lib -printf %p: 2>/dev/null)\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
       exec .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
@@ -183,7 +183,7 @@ $SSH "
       --enable-auto-tool-choice --tool-call-parser gemma4' \
       > run_logs/vllm.log 2>&1 < /dev/null &
   fi
-  if ! pgrep -f 'cloudflared tunnel run' >/dev/null 2>&1; then
+  if ! pgrep -f '[c]loudflared tunnel run' >/dev/null 2>&1; then
     nohup sh -c 'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
       TUNNEL_TOKEN=\"\$CLOUDFLARED_TUNNEL_TOKEN\" exec /opt/instance-tools/bin/cloudflared tunnel run' \
       > run_logs/cloudflared.log 2>&1 < /dev/null &
@@ -206,7 +206,7 @@ log "Starting webhook..."
 $SSH "
   if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
     echo 'Webhook is already listening; keeping the existing process.'
-  elif pgrep -f 'uvicorn app.main:app' >/dev/null 2>&1; then
+  elif pgrep -f '[u]vicorn app.main:app' >/dev/null 2>&1; then
     echo 'Webhook startup is already in progress; keeping the existing process.'
   else
     mkdir -p ${REMOTE_DIR}/run_logs
