@@ -146,6 +146,7 @@ $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 log "Running cached, locked uv sync with prebuilt CUDA dependencies..."
 $SSH "
   cd ${REMOTE_DIR}
+  set -a && . ./.env && set +a
   if [ -n \"\${HF_TOKEN:-}\" ]; then
     cache_dir=\$(env -u UV_NO_CACHE uv cache dir)
     mkdir -p \"\${cache_dir}\"
@@ -159,6 +160,7 @@ $SSH "cd ${REMOTE_DIR} && env -u UV_NO_CACHE uv sync --frozen"
 log "Saving reusable CUDA and vLLM packages to Hugging Face..."
 $SSH "
   cd ${REMOTE_DIR}
+  set -a && . ./.env && set +a
   if [ -n \"\${HF_TOKEN:-}\" ]; then
     env -u UV_NO_CACHE uvx --from huggingface_hub hf buckets sync \
       \"\$(env -u UV_NO_CACHE uv cache dir)\" \
@@ -176,7 +178,7 @@ log "Starting vLLM and the permanent Cloudflare tunnel..."
 $SSH "
   mkdir -p ${REMOTE_DIR}/run_logs
   if ! pgrep -f '.venv/bin/[v]llm serve' >/dev/null 2>&1; then
-    nohup sh -c 'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
+    nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
       export LD_LIBRARY_PATH=\$(find .venv/lib -type d -name lib -printf %p: 2>/dev/null)\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
       exec .venv/bin/vllm serve ${VLLM_MODEL} --host 127.0.0.1 --port ${VLLM_PORT} \
       --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.55 \
@@ -184,7 +186,7 @@ $SSH "
       > run_logs/vllm.log 2>&1 < /dev/null &
   fi
   if ! pgrep -f '[c]loudflared tunnel run' >/dev/null 2>&1; then
-    nohup sh -c 'cd ${REMOTE_DIR} && set -a && . .env && set +a && \
+    nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
       TUNNEL_TOKEN=\"\$CLOUDFLARED_TUNNEL_TOKEN\" exec /opt/instance-tools/bin/cloudflared tunnel run' \
       > run_logs/cloudflared.log 2>&1 < /dev/null &
   fi
