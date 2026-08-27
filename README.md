@@ -135,7 +135,7 @@ offer with at least 32 GB VRAM and rents an 80 GB disk,
 waits for SSH, then runs the setup and health checks. It terminates a host that
 does not become SSH-ready within five minutes or does not complete setup within
 the 30-minute startup budget. Before dependency installation, it rejects hosts
-whose measured download speed is below 5 MiB/s, and tries at most three distinct
+whose measured download speed is below 15 MiB/s, and tries at most three distinct
 offers. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
 `MIN_GPU_RAM_GB` override cannot be set below the 24 GB hard floor.
