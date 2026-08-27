@@ -132,8 +132,11 @@ for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
       log "Offer ${OFFER_ID} became unavailable; trying another offer."
       continue
     fi
-    INSTANCE_ID="$(printf '%s' "${CREATE_RESULT}" | "${PYTHON}" -c \
-      'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"
+    if ! INSTANCE_ID="$(printf '%s' "${CREATE_RESULT}" | "${PYTHON}" -c \
+      'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"; then
+      log "Offer ${OFFER_ID} did not return an instance ID; trying another offer."
+      continue
+    fi
     if [ -z "${INSTANCE_ID}" ]; then
       log "Offer ${OFFER_ID} became unavailable; trying another offer."
       continue
