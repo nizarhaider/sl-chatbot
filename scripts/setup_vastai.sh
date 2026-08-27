@@ -22,6 +22,8 @@ LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
 UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-1200}"
+NETWORK_TEST_URL="${NETWORK_TEST_URL:-https://speed.cloudflare.com/__down?bytes=10485760}"
+MIN_NETWORK_BYTES_PER_SECOND="${MIN_NETWORK_BYTES_PER_SECOND:-5242880}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -127,6 +129,15 @@ else
 fi
 
 $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
+
+log "Checking download speed before installing the voice runtime..."
+NETWORK_BYTES_PER_SECOND="$($SSH "curl -fsSL --connect-timeout 10 --max-time 30 -o /dev/null -w '%{speed_download}' '${NETWORK_TEST_URL}'")"
+if ! [[ "${NETWORK_BYTES_PER_SECOND}" =~ ^[0-9]+$ ]] \
+  || [ "${NETWORK_BYTES_PER_SECOND}" -lt "${MIN_NETWORK_BYTES_PER_SECOND}" ]; then
+  echo "ERROR: host download speed is below the required ${MIN_NETWORK_BYTES_PER_SECOND} bytes/second." >&2
+  exit 1
+fi
+log "Download speed passed: ${NETWORK_BYTES_PER_SECOND} bytes/second."
 
 log "Waiting for base image package setup..."
 $SSH "

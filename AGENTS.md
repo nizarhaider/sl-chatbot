@@ -168,6 +168,8 @@ exceed that limit, terminate the instance; do not leave it running for
 diagnosis or wait beyond the 30-minute total startup budget.
 Try no more than three distinct offers per deployment. Destroy failed hosts and
 move to the next offer; do not use manual one-off provisioning commands.
+Before installing dependencies, measure host download speed. Reject and destroy
+hosts below 5 MiB/s so a slow network cannot consume the startup budget.
 
 One-command rental and setup:
 
