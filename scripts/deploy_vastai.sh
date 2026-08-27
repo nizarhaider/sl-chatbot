@@ -14,6 +14,7 @@ TEMPLATE_HASH="${TEMPLATE_HASH:-247f2f26d31d533719c1fc4c9b5cbf93}"
 INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-whatsapp}"
 DRY_RUN="${DRY_RUN:-false}"
 STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-60}"
+SETUP_TIMEOUT_SECONDS="${SETUP_TIMEOUT_SECONDS:-1500}"
 MAX_INSTANCE_ATTEMPTS="${MAX_INSTANCE_ATTEMPTS:-3}"
 # Once SSH is available, let the host complete its build and model prewarm.
 
@@ -162,17 +163,33 @@ done
     continue
   fi
 
-  log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID}; it will remain running during setup..."
-  if env \
+  log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID} (max $((SETUP_TIMEOUT_SECONDS / 60)) minutes after SSH is ready)..."
+  env \
     REMOTE_BRANCH="${REMOTE_BRANCH}" SSH_KEY="${SSH_KEY}" \
-    "${ROOT_DIR}/scripts/setup_vastai.sh" "${SSH_PORT}" "${SSH_HOST}"; then
+    "${ROOT_DIR}/scripts/setup_vastai.sh" "${SSH_PORT}" "${SSH_HOST}" &
+  SETUP_PID=$!
+  SETUP_STATUS=1
+  for elapsed in $(seq 0 5 "${SETUP_TIMEOUT_SECONDS}"); do
+    if ! kill -0 "${SETUP_PID}" 2>/dev/null; then
+      wait "${SETUP_PID}" && SETUP_STATUS=0 || SETUP_STATUS=$?
+      break
+    fi
+    sleep 5
+  done
+
+  if kill -0 "${SETUP_PID}" 2>/dev/null; then
+    log "Setup exceeded the ${SETUP_TIMEOUT_SECONDS}-second startup budget."
+    kill "${SETUP_PID}" 2>/dev/null || true
+    wait "${SETUP_PID}" 2>/dev/null || true
+  elif [ "${SETUP_STATUS}" -eq 0 ]; then
     log "Deployment complete."
     log "Instance ID: ${INSTANCE_ID}"
     log "Destroy instance ${INSTANCE_ID} in Vast.ai as soon as the call is finished."
     exit 0
   fi
 
-  log "Setup failed after SSH became available; leaving instance ${INSTANCE_ID} running for diagnosis and recovery."
+  log "Setup failed or exceeded the startup budget; terminating instance ${INSTANCE_ID}."
+  destroy_instance "${INSTANCE_ID}"
   exit 1
 done
 

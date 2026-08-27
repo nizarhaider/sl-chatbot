@@ -21,6 +21,7 @@ LLM_MODEL_DIR="/workspace/models/gemma-4-12b-it-qat-q4_0"
 LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
+UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-1200}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -143,8 +144,8 @@ $SSH "
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
-log "Running locked uv sync..."
-$SSH "cd ${REMOTE_DIR} && env -u UV_NO_CACHE uv sync --frozen"
+log "Running locked uv sync (max $((UV_SYNC_TIMEOUT_SECONDS / 60)) minutes)..."
+$SSH "cd ${REMOTE_DIR} && timeout ${UV_SYNC_TIMEOUT_SECONDS}s env -u UV_NO_CACHE uv sync --frozen"
 
 log "Building CUDA llama.cpp and downloading the official Gemma QAT GGUF..."
 $SSH "cd ${REMOTE_DIR} && CMAKE_ARGS='-DGGML_CUDA=on' CMAKE_BUILD_PARALLEL_LEVEL=4 uv pip install --python .venv/bin/python --reinstall --no-binary llama-cpp-python 'llama-cpp-python[server]==0.3.35'"

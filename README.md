@@ -132,7 +132,9 @@ One-command rental and setup from this repo:
 
 The deployer selects the cheapest compatible verified, on-demand, single-GPU
 offer with at least 24 GB VRAM and rents an 80 GB disk,
-waits for SSH, then runs the setup and health checks. Preview the current choice
+waits for SSH, then runs the setup and health checks. It terminates a host that
+does not become SSH-ready within five minutes or does not complete setup within
+the 30-minute startup budget. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
 `MIN_GPU_RAM_GB` override cannot be set below the 24 GB hard floor.
 The selected host must also support CUDA 13 or newer.

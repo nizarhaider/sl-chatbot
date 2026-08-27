@@ -162,6 +162,10 @@ same source state.
 Startup timeout: allow a new instance no more than five minutes to become
 SSH-ready. If it is still loading or SSH is unavailable after five minutes,
 terminate that instance and open a replacement before continuing deployment.
+After SSH is ready, allow no more than 25 additional minutes for setup and
+service startup. If dependency or model network transfers are slow enough to
+exceed that limit, terminate the instance; do not leave it running for
+diagnosis or wait beyond the 30-minute total startup budget.
 
 One-command rental and setup:
 
