@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 DISK_GB="${DISK_GB:-80}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-24}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-32}"
 MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-13.0}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
@@ -38,18 +38,27 @@ VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
 QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=${MIN_CUDA_VERSION} direct_port_count>=1"
 
 log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM..."
-OFFER="$("${VASTAI[@]}" search offers "${QUERY}" \
-  --storage "${DISK_GB}" --order dph --limit 200 \
-  | "${PYTHON}" -c '
+ATTEMPTED_OFFER_IDS=""
+
+select_offer() {
+  "${VASTAI[@]}" search offers "${QUERY}" \
+    --storage "${DISK_GB}" --order dph --limit 200 \
+  | EXCLUDED_OFFER_IDS="${ATTEMPTED_OFFER_IDS}" "${PYTHON}" -c '
 import json
+import os
 import re
 import sys
 
 offers = json.load(sys.stdin)
 allowed = re.compile(r"^RTX (?:40|50)\d{2}(?:S| Super| Ti)?$", re.IGNORECASE)
-eligible = [offer for offer in offers if allowed.search(str(offer.get("gpu_name", "")))]
+excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
+eligible = [
+    offer for offer in offers
+    if str(offer.get("id", "")) not in excluded
+    and allowed.search(str(offer.get("gpu_name", "")))
+]
 if not eligible:
-    raise SystemExit("No eligible Vast.ai offer is currently available")
+    raise SystemExit("No untried eligible Vast.ai offer is currently available")
 offer = min(eligible, key=lambda row: float(row.get("dph_total", "inf")))
 fields = (
     offer["id"],
@@ -60,12 +69,13 @@ fields = (
     float(offer.get("reliability", 0)),
 )
 print("\t".join(map(str, fields)))
-')"
-
-IFS=$'\t' read -r OFFER_ID GPU_NAME GPU_RAM HOURLY_PRICE LOCATION RELIABILITY <<<"${OFFER}"
-log "Selected offer ${OFFER_ID}: ${GPU_NAME}, ${GPU_RAM} MiB VRAM, \$${HOURLY_PRICE}/hour including ${DISK_GB} GB storage, ${LOCATION}, reliability ${RELIABILITY}"
+'
+}
 
 if [ "${DRY_RUN}" = "true" ]; then
+  OFFER="$(select_offer)"
+  IFS=$'\t' read -r OFFER_ID GPU_NAME GPU_RAM HOURLY_PRICE LOCATION RELIABILITY <<<"${OFFER}"
+  log "Selected offer ${OFFER_ID}: ${GPU_NAME}, ${GPU_RAM} MiB VRAM, \$${HOURLY_PRICE}/hour including ${DISK_GB} GB storage, ${LOCATION}, reliability ${RELIABILITY}"
   log "Dry run complete; no instance was created."
   exit 0
 fi
@@ -109,6 +119,10 @@ for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
     IFS=$'\t' read -r INSTANCE_ID SSH_HOST SSH_PORT <<<"${EXISTING_CONNECTION}"
     log "Reusing existing running instance ${INSTANCE_ID} at ${SSH_HOST}:${SSH_PORT}."
   else
+    OFFER="$(select_offer)"
+    IFS=$'\t' read -r OFFER_ID GPU_NAME GPU_RAM HOURLY_PRICE LOCATION RELIABILITY <<<"${OFFER}"
+    ATTEMPTED_OFFER_IDS="${ATTEMPTED_OFFER_IDS:+${ATTEMPTED_OFFER_IDS},}${OFFER_ID}"
+    log "Selected offer ${OFFER_ID}: ${GPU_NAME}, ${GPU_RAM} MiB VRAM, \$${HOURLY_PRICE}/hour including ${DISK_GB} GB storage, ${LOCATION}, reliability ${RELIABILITY}"
     log "Creating Vast.ai instance (attempt ${instance_attempt}/${MAX_INSTANCE_ATTEMPTS})..."
     CREATE_RESULT="$(${VASTAI[@]} create instance "${OFFER_ID}" \
       --template_hash "${TEMPLATE_HASH}" \
@@ -190,7 +204,10 @@ done
 
   log "Setup failed or exceeded the startup budget; terminating instance ${INSTANCE_ID}."
   destroy_instance "${INSTANCE_ID}"
-  exit 1
+  if [ "${instance_attempt}" -lt "${MAX_INSTANCE_ATTEMPTS}" ]; then
+    log "Trying a different offer..."
+    continue
+  fi
 done
 
 fail "All ${MAX_INSTANCE_ATTEMPTS} instance attempts failed; no server was left running."

@@ -147,9 +147,9 @@ PHONE_NUMBER_ID=...
 
 ## Setup Commands For A New Vast.ai Box
 
-Rental policy: use an on-demand instance with a hard minimum of 24 GB VRAM and
-an 80 GB disk for the voice runtime. Select the cheapest compatible,
-verified listing that meets that memory floor. Use 48 GB VRAM and a 200 GB disk
+Rental policy: use a 32 GB VRAM on-demand instance and an 80 GB disk for the
+voice runtime. Select the cheapest compatible, verified listing that meets that
+memory floor. Use 48 GB VRAM and a 200 GB disk
 for fine-tuning, merging, and initial full-stack validation. The prebuilt
 llama.cpp CUDA 12.5 wheel is not compatible with RTX 50-series GPUs.
 Leave a deployed instance running until the user confirms the WhatsApp
@@ -166,6 +166,8 @@ After SSH is ready, allow no more than 25 additional minutes for setup and
 service startup. If dependency or model network transfers are slow enough to
 exceed that limit, terminate the instance; do not leave it running for
 diagnosis or wait beyond the 30-minute total startup budget.
+Try no more than three distinct offers per deployment. Destroy failed hosts and
+move to the next offer; do not use manual one-off provisioning commands.
 
 One-command rental and setup:
 

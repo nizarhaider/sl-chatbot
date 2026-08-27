@@ -117,7 +117,7 @@ curl -sS 'http://127.0.0.1:8000/webhook?hub.mode=subscribe&hub.verify_token=my_s
 
 ## Vast.ai Deployment
 
-The voice runtime requires at least 24 GB of GPU VRAM. The deployer selects
+The voice runtime deployer defaults to 32 GB of GPU VRAM. The deployer selects
 the cheapest compatible, verified listing that meets this floor. Use a 48 GB
 GPU for training, conversion, and the first full-stack validation.
 
@@ -131,7 +131,7 @@ One-command rental and setup from this repo:
 ```
 
 The deployer selects the cheapest compatible verified, on-demand, single-GPU
-offer with at least 24 GB VRAM and rents an 80 GB disk,
+offer with at least 32 GB VRAM and rents an 80 GB disk,
 waits for SSH, then runs the setup and health checks. It terminates a host that
 does not become SSH-ready within five minutes or does not complete setup within
 the 30-minute startup budget. Preview the current choice
