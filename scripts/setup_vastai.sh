@@ -148,7 +148,7 @@ log "Running locked uv sync (max $((UV_SYNC_TIMEOUT_SECONDS / 60)) minutes; netw
 $SSH "cd ${REMOTE_DIR} && timeout ${UV_SYNC_TIMEOUT_SECONDS}s env -u UV_NO_CACHE uv sync --frozen"
 
 log "Building CUDA llama.cpp and downloading the official Gemma QAT GGUF..."
-$SSH "cd ${REMOTE_DIR} && CMAKE_ARGS='-DGGML_CUDA=on' CMAKE_BUILD_PARALLEL_LEVEL=4 uv pip install --python .venv/bin/python --reinstall --no-binary llama-cpp-python 'llama-cpp-python[server]==0.3.35'"
+$SSH "cd ${REMOTE_DIR} && CMAKE_ARGS='-DGGML_CUDA=on' CMAKE_BUILD_PARALLEL_LEVEL=4 uv pip install --python .venv/bin/python --reinstall --no-deps --no-binary llama-cpp-python 'llama-cpp-python[server]==0.3.35'"
 $SSH "cd ${REMOTE_DIR} && hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1) && test -n \"\$hf_token\" && HF_TOKEN=\"\$hf_token\" .venv/bin/hf download ${LLM_MODEL_REPO} --local-dir ${LLM_MODEL_DIR}"
 
 log "Compile-checking Python modules..."
