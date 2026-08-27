@@ -124,14 +124,20 @@ for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
     ATTEMPTED_OFFER_IDS="${ATTEMPTED_OFFER_IDS:+${ATTEMPTED_OFFER_IDS},}${OFFER_ID}"
     log "Selected offer ${OFFER_ID}: ${GPU_NAME}, ${GPU_RAM} MiB VRAM, \$${HOURLY_PRICE}/hour including ${DISK_GB} GB storage, ${LOCATION}, reliability ${RELIABILITY}"
     log "Creating Vast.ai instance (attempt ${instance_attempt}/${MAX_INSTANCE_ATTEMPTS})..."
-    CREATE_RESULT="$(${VASTAI[@]} create instance "${OFFER_ID}" \
+    if ! CREATE_RESULT="$(${VASTAI[@]} create instance "${OFFER_ID}" \
       --template_hash "${TEMPLATE_HASH}" \
       --disk "${DISK_GB}" \
       --label "${INSTANCE_LABEL}" \
-      --ssh --direct --cancel-unavail)"
+      --ssh --direct --cancel-unavail)"; then
+      log "Offer ${OFFER_ID} became unavailable; trying another offer."
+      continue
+    fi
     INSTANCE_ID="$(printf '%s' "${CREATE_RESULT}" | "${PYTHON}" -c \
       'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"
-    test -n "${INSTANCE_ID}" || fail "Vast.ai did not return a new instance ID"
+    if [ -z "${INSTANCE_ID}" ]; then
+      log "Offer ${OFFER_ID} became unavailable; trying another offer."
+      continue
+    fi
     log "Created instance ${INSTANCE_ID}."
   fi
 
