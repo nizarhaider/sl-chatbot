@@ -18,12 +18,10 @@ LLM_MODEL="${LLM_MODEL:-google/gemma-4-12B-it-qat-q4_0-gguf}"
 LLM_MODEL_REPO="google/gemma-4-12B-it-qat-q4_0-gguf"
 LLM_MODEL_FILE="gemma-4-12b-it-qat-q4_0.gguf"
 LLM_MODEL_DIR="/workspace/models/gemma-4-12b-it-qat-q4_0"
-LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-900}"
-APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-450}"
+LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-300}"
+APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-150}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
-UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-1200}"
-NETWORK_TEST_URL="${NETWORK_TEST_URL:-https://speed.cloudflare.com/__down?bytes=10485760}"
-MIN_NETWORK_BYTES_PER_SECOND="${MIN_NETWORK_BYTES_PER_SECOND:-15728640}"
+UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-1500}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -130,15 +128,6 @@ fi
 
 $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
 
-log "Checking download speed before installing the voice runtime..."
-NETWORK_BYTES_PER_SECOND="$($SSH "curl -fsSL --connect-timeout 10 --max-time 30 -o /dev/null -w '%{speed_download}' '${NETWORK_TEST_URL}'")"
-if ! [[ "${NETWORK_BYTES_PER_SECOND}" =~ ^[0-9]+$ ]] \
-  || [ "${NETWORK_BYTES_PER_SECOND}" -lt "${MIN_NETWORK_BYTES_PER_SECOND}" ]; then
-  echo "ERROR: host download speed is below the required ${MIN_NETWORK_BYTES_PER_SECOND} bytes/second." >&2
-  exit 1
-fi
-log "Download speed passed: ${NETWORK_BYTES_PER_SECOND} bytes/second."
-
 log "Waiting for base image package setup..."
 $SSH "
   for attempt in \$(seq 1 60); do
@@ -155,7 +144,7 @@ $SSH "
 log "Installing system packages..."
 $SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
 
-log "Running locked uv sync (max $((UV_SYNC_TIMEOUT_SECONDS / 60)) minutes)..."
+log "Running locked uv sync (max $((UV_SYNC_TIMEOUT_SECONDS / 60)) minutes; network progress is allowed to vary)..."
 $SSH "cd ${REMOTE_DIR} && timeout ${UV_SYNC_TIMEOUT_SECONDS}s env -u UV_NO_CACHE uv sync --frozen"
 
 log "Building CUDA llama.cpp and downloading the official Gemma QAT GGUF..."
