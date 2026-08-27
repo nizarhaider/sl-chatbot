@@ -135,8 +135,9 @@ offer with at least 32 GB VRAM and rents an 80 GB disk,
 waits for SSH, then runs the setup and health checks. It terminates a host that
 does not become SSH-ready within five minutes, does not complete dependency
 installation within 25 minutes, or exceeds the 45-minute total startup budget.
-Network speed is assessed from real installation progress rather than a single
-synthetic speed test. The deployer tries at most three distinct offers. Preview the current choice
+The deployer prefers listings with at least 500 Mbps advertised ingress; actual
+installation progress remains the acceptance signal rather than a synthetic speed
+test. The deployer tries at most three distinct offers. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
 `MIN_GPU_RAM_GB` override cannot be set below the 24 GB hard floor.
 The selected host must also support CUDA 13 or newer.

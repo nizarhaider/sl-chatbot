@@ -168,6 +168,8 @@ host based on a single bandwidth measurement: assess real transfer progress and
 terminate only when a stage stalls or the 45-minute total startup budget expires.
 Try no more than three distinct offers per deployment. Destroy failed hosts and
 move to the next offer; do not use manual one-off provisioning commands.
+Prefer offers with at least 500 Mbps advertised ingress, while keeping actual
+dependency and model transfer progress as the acceptance signal.
 
 One-command rental and setup:
 
