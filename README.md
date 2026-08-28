@@ -101,6 +101,19 @@ Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/
 
 ## Local Development
 
+Run the local Gemma server on a Mac (Apple Silicon uses Metal automatically):
+
+```bash
+bash scripts/host_local_llm.sh
+```
+
+It installs only the prebuilt `llama.cpp` Homebrew package when needed and
+downloads the 4B GGUF from the SerendibAI S3 cache. No Python or voice-runtime
+dependencies are required. Override `MODEL_DIR`, `LLAMA_SERVER`, `LLM_HOST`, or
+`LLM_PORT` if needed.
+
+To run the complete voice application separately:
+
 ```bash
 uv sync
 bash scripts/run_local_host.sh
