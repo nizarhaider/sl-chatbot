@@ -7,6 +7,7 @@ cd "${ROOT_DIR}"
 
 DISK_GB="${DISK_GB:-50}"
 MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
+MIN_CPU_CORES="${MIN_CPU_CORES:-8}"
 MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-500}"
 MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-12.8}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
@@ -27,6 +28,7 @@ test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
 [ "${MIN_GPU_RAM_GB}" -ge 16 ] || fail "Voice runtime deployments require at least 16 GB VRAM"
+[[ "${MIN_CPU_CORES}" =~ ^[0-9]+$ ]] || fail "MIN_CPU_CORES must be numeric"
 [[ "${MIN_INTERNET_DOWN_MBIT}" =~ ^[0-9]+$ ]] || fail "MIN_INTERNET_DOWN_MBIT must be numeric"
 
 PYTHON="${ROOT_DIR}/.venv/bin/python"
@@ -37,9 +39,9 @@ VASTAI_API_KEY="$(${PYTHON} -c \
 test -n "${VASTAI_API_KEY}" || fail "VASTAI_API_KEY is missing from .env"
 
 VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
-QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=${MIN_CUDA_VERSION} direct_port_count>=1"
+QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_cores_effective>=${MIN_CPU_CORES} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=${MIN_CUDA_VERSION} direct_port_count>=1"
 
-log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM and ${MIN_INTERNET_DOWN_MBIT} Mbps advertised ingress..."
+log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM, ${MIN_CPU_CORES} effective CPU cores, and ${MIN_INTERNET_DOWN_MBIT} Mbps ingress..."
 ATTEMPTED_OFFER_IDS=""
 
 select_offer() {

@@ -134,7 +134,7 @@ The deployer selects the cheapest compatible verified, on-demand, single-GPU
 offer with at least 16 GB VRAM and rents a 50 GB disk,
 waits for SSH, then runs the setup and health checks. It terminates a host that
 does not become SSH-ready within five minutes or exceeds the 20-minute setup
-budget after SSH is ready. Python installation, the CUDA llama-server build, and
+budget after SSH is ready. Python installation, the prebuilt CUDA llama binary, and
 the 4B Gemma download run concurrently; Whisper and OmniVoice downloads then run
 concurrently before model prewarm.
 The deployer prefers listings with at least 500 Mbps advertised ingress; actual
@@ -160,7 +160,7 @@ To set up an instance that has already been rented:
 REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
 ```
 
-The setup script prepares `/workspace/sl-chatbot`, syncs `.env`, installs only the locked runtime dependencies, builds only the CUDA `llama-server` target, downloads only the text GGUF (not the multimodal projector), starts the webhook, and verifies the permanent webhook URL.
+The setup script prepares `/workspace/sl-chatbot`, syncs `.env`, installs only the locked runtime dependencies, installs llama.cpp's GPU-matched prebuilt binary, downloads only the text GGUF (not the multimodal projector), starts the supervised services, and verifies the permanent webhook URL.
 
 Manual dependency sync on the remote host:
 
@@ -169,15 +169,12 @@ cd /workspace/sl-chatbot
 uv sync
 ```
 
-Run the webhook manually:
+Restart and inspect the supervised runtime:
 
 ```bash
 cd /workspace/sl-chatbot
-tmux kill-session -t sl-webhook 2>/dev/null || true
-tmux new-session -d -s sl-webhook \
-  "cd /workspace/sl-chatbot && \
-   .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090 --env-file .env \
-   2>&1 | tee run_logs/webhook.log"
+supervisorctl restart sl-llm sl-webhook sl-cloudflared
+supervisorctl status sl-llm sl-webhook sl-cloudflared
 ```
 
 ## Verification

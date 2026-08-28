@@ -18,8 +18,7 @@ LLM_MODEL="${LLM_MODEL:-google/gemma-4-E4B-it-qat-q4_0-gguf}"
 LLM_MODEL_REPO="google/gemma-4-E4B-it-qat-q4_0-gguf"
 LLM_MODEL_FILE="gemma-4-E4B_q4_0-it.gguf"
 LLM_MODEL_DIR="/workspace/models/gemma-4-E4B-it-qat-q4_0"
-LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b10675}"
-LLAMA_CPP_DIR="/workspace/llama.cpp"
+LLAMA_VERSION="${LLAMA_VERSION:-b10612}"
 LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-300}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-150}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
@@ -174,9 +173,9 @@ $SSH "
 "
 
 log "Installing minimal system packages..."
-$SSH "apt-get update -qq && apt-get install -y --no-install-recommends build-essential cmake ninja-build portaudio19-dev curl"
+$SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl"
 
-log "Installing Python runtime, compiling llama-server, and downloading Gemma in parallel..."
+log "Installing Python runtime and prebuilt llama.cpp while downloading Gemma in parallel..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
@@ -184,12 +183,9 @@ $SSH "
   uv_pid=\$!
 
   (
-    if [ ! -x ${LLAMA_CPP_DIR}/build/bin/llama-server ]; then
-      rm -rf ${LLAMA_CPP_DIR}
-      git clone --depth 1 --branch ${LLAMA_CPP_TAG} https://github.com/ggml-org/llama.cpp.git ${LLAMA_CPP_DIR}
-      cmake -S ${LLAMA_CPP_DIR} -B ${LLAMA_CPP_DIR}/build -G Ninja \
-        -DGGML_CUDA=ON -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
-      cmake --build ${LLAMA_CPP_DIR}/build --target llama-server --parallel \"\$(nproc)\"
+    if [ ! -x /root/.local/bin/llama ]; then
+      curl --fail --location --retry 3 https://llama.app/install.sh \
+        | env LLAMA_VERSION=${LLAMA_VERSION} sh
     fi
   ) &
   llama_pid=\$!

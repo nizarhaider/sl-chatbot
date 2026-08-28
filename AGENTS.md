@@ -151,8 +151,8 @@ Rental policy: use a 16 GB VRAM on-demand instance and a 50 GB disk for the
 voice runtime. Select the cheapest compatible, verified listing that meets that
 memory floor. Use 48 GB VRAM and a 200 GB disk
 for fine-tuning, merging, and initial full-stack validation. Use RTX 30/40-series
-hosts; the deployer compiles only the `llama-server` target while downloading
-the Python runtime and Gemma concurrently.
+hosts; the deployer installs llama.cpp's GPU-matched prebuilt binary while
+downloading the Python runtime and Gemma concurrently.
 Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
 
@@ -211,18 +211,12 @@ find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile
 
 ## How To Run The Webhook Reliably
 
-Use `tmux`.
+Use the Vast base image's Supervisor services.
 
 ```bash
 cd /workspace/sl-chatbot
-tmux kill-session -t sl-webhook 2>/dev/null || true
-pkill -f 'uvicorn app.main:app' || true
-tmux new-session -d -s sl-webhook \
-  "cd /workspace/sl-chatbot && \
-   .venv/bin/dotenv -f .env run -- \
-   .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090 --env-file .env \
-   2>&1 | tee run_logs/webhook.log"
-tmux ls
+supervisorctl restart sl-llm sl-webhook sl-cloudflared
+supervisorctl status sl-llm sl-webhook sl-cloudflared
 ```
 
 Verify local health:
