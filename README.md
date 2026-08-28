@@ -99,18 +99,13 @@ remain transactional records in Neon with the call ID and caller phone number.
 
 Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/voice/config.py`](app/voice/config.py). Use `.env` only for secrets and deployment credentials.
 
-## Local Development
+## Gemma inference in Google Colab
 
-Run the local Gemma server on a Mac (Apple Silicon uses Metal automatically):
-
-```bash
-bash scripts/host_local_llm.sh
-```
-
-It installs only the prebuilt `llama.cpp` Homebrew package when needed and
-downloads the 4B GGUF directly from Hugging Face. No Python or voice-runtime
-dependencies are required. Override `MODEL_DIR`, `LLAMA_SERVER`, `LLM_HOST`, or
-`LLM_PORT` if needed.
+Use [`docs/gemma_colab_gradio.ipynb`](docs/gemma_colab_gradio.ipynb) to run the
+production Gemma GGUF on a Colab GPU and test it through a shareable Gradio chat
+dashboard. In Colab, select a GPU runtime, run the cells in order, and enter a
+Hugging Face token with access to the gated Gemma repository when prompted. The
+final cell prints the temporary Gradio URL.
 
 To run the complete voice application separately:
 

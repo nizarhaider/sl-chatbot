@@ -37,7 +37,7 @@ app/voice/tts.py
 app/voice/config.py
 app/voices/chandeera-female-sample.wav
 scripts/setup_vastai.sh
-scripts/host_local_llm.sh
+docs/gemma_colab_gradio.ipynb
 pyproject.toml
 uv.lock
 README.md
