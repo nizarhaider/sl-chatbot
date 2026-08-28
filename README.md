@@ -101,12 +101,15 @@ Keep voice model paths, prompts, TTS settings, and turn-control values in [`app/
 
 ## Gemma inference in Google Colab
 
-Use [`docs/gemma_colab_gradio.ipynb`](docs/gemma_colab_gradio.ipynb) to run the
-official Gemma 4 E4B Transformers pipeline on a Colab GPU and test it through a
-shareable Gradio chat dashboard. In Colab, select a GPU runtime, run the cells
-in order, and provide a Hugging Face token with access to the gated Gemma
+Choose one of the Colab notebooks below, select a GPU runtime, run the cells in
+order, and provide a Hugging Face token with access to the gated Gemma
 repository through Colab Secrets (recommended) or the hidden runtime prompt.
-The final cell prints the temporary Gradio URL.
+Each final cell prints a temporary Gradio URL.
+
+- [`docs/gemma_q4_colab_gradio.ipynb`](docs/gemma_q4_colab_gradio.ipynb): the
+  production Q4_0 GGUF via CUDA llama.cpp; recommended for a T4 or other 16 GB GPU.
+- [`docs/gemma_colab_gradio.ipynb`](docs/gemma_colab_gradio.ipynb): the official
+  BF16 Transformers `text-generation` pipeline; requires a larger GPU.
 
 To run the complete voice application separately:
 

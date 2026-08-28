@@ -38,6 +38,7 @@ app/voice/config.py
 app/voices/chandeera-female-sample.wav
 scripts/setup_vastai.sh
 docs/gemma_colab_gradio.ipynb
+docs/gemma_q4_colab_gradio.ipynb
 pyproject.toml
 uv.lock
 README.md
