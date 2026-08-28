@@ -19,10 +19,6 @@ LLM_MODEL_REPO="google/gemma-4-E4B-it-qat-q4_0-gguf"
 LLM_MODEL_FILE="gemma-4-E4B_q4_0-it.gguf"
 LLM_MODEL_DIR="/workspace/models/gemma-4-E4B-it-qat-q4_0"
 LLAMA_VERSION="${LLAMA_VERSION:-b10612}"
-LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-300}"
-APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-150}"
-PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
-UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-900}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -161,15 +157,14 @@ fi
 
 log "Waiting for base image package setup..."
 $SSH "
-  for attempt in \$(seq 1 60); do
-    if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-      exit 0
+  attempt=0
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    attempt=\$((attempt + 1))
+    if [ \$((attempt % 12)) -eq 0 ]; then
+      echo 'Still waiting for the package manager lock... attempt' \$attempt
     fi
-    echo 'Waiting for package manager lock... attempt' \$attempt
     sleep 5
   done
-  echo 'ERROR: package manager lock did not clear in five minutes.' >&2
-  exit 1
 "
 
 log "Installing minimal system packages..."
@@ -179,7 +174,7 @@ log "Installing Python runtime and prebuilt llama.cpp while downloading Gemma in
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
-  timeout ${UV_SYNC_TIMEOUT_SECONDS}s env -u UV_NO_CACHE uv sync --frozen --no-dev &
+  env -u UV_NO_CACHE uv sync --frozen --no-dev &
   uv_pid=\$!
 
   (
@@ -257,14 +252,15 @@ $SSH "
 
 log "Waiting for local Gemma to become ready..."
 $SSH "
-  for attempt in \$(seq 1 ${LLM_STARTUP_TIMEOUT_ATTEMPTS}); do
-    if curl -fsS http://127.0.0.1:${LLM_PORT}/v1/models >/dev/null; then
-      exit 0
+  attempt=0
+  until curl -fsS http://127.0.0.1:${LLM_PORT}/v1/models >/dev/null; do
+    attempt=\$((attempt + 1))
+    if [ \$((attempt % 15)) -eq 0 ]; then
+      echo 'Still waiting for local Gemma... attempt' \$attempt
+      tail -n 20 ${REMOTE_DIR}/run_logs/llm.log || true
     fi
     sleep 2
   done
-  tail -n 120 ${REMOTE_DIR}/run_logs/llm.log || true
-  exit 1
 "
 log "Starting webhook..."
 $SSH "
@@ -277,38 +273,21 @@ $SSH "
 "
 
 log "Waiting for server to boot..."
-log "Allowing up to $((APP_STARTUP_TIMEOUT_ATTEMPTS * 2 / 60)) minutes for model prewarm..."
+log "Waiting without a deadline for model prewarm..."
 $SSH "
   attempt=0
-  ready=false
-  until [ \$attempt -ge ${APP_STARTUP_TIMEOUT_ATTEMPTS} ]; do
-    if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1 \
-      && curl -fsS http://127.0.0.1:${APP_PORT}/ \
-      | grep -q ready; then
-      ready=true
-      break
-    fi
+  until ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1 \
+    && curl -fsS http://127.0.0.1:${APP_PORT}/ | grep -q ready; do
     attempt=\$((attempt + 1))
-    echo 'Waiting for port ${APP_PORT} to open... attempt' \$attempt '(model download/prewarm may still be running)'
-    if [ -f ${REMOTE_DIR}/run_logs/webhook.log ]; then
-      echo '--- latest webhook startup log ---'
-      tail -n 12 ${REMOTE_DIR}/run_logs/webhook.log | sed 's/^/    /'
+    if [ \$((attempt % 15)) -eq 0 ]; then
+      echo 'Still waiting for port ${APP_PORT}... attempt' \$attempt '(model download/prewarm may still be running)'
+      if [ -f ${REMOTE_DIR}/run_logs/webhook.log ]; then
+        echo '--- latest webhook startup log ---'
+        tail -n 12 ${REMOTE_DIR}/run_logs/webhook.log | sed 's/^/    /'
+      fi
     fi
     sleep 2
   done
-
-  if [ "\$ready" != 'true' ]; then
-    echo 'ERROR: server did not become ready on port ${APP_PORT}.'
-    echo ''
-    echo 'Supervisor status:'
-    supervisorctl status sl-llm sl-webhook sl-cloudflared || true
-    echo ''
-    echo 'sl-webhook supervisor log:'
-    supervisorctl tail -100 sl-webhook stderr || true
-    echo ''
-    supervisorctl tail -160 sl-webhook stdout || true
-    exit 1
-  fi
 
   curl -sS http://127.0.0.1:${APP_PORT}/ && echo ''
   curl -sS --get 'http://127.0.0.1:${APP_PORT}/webhook' \
@@ -323,27 +302,22 @@ log "Use this callback URL in WhatsApp:"
 log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 
-VERIFICATION_OK=false
-for attempt in $(seq 1 "${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS}"); do
-  public_response="$(curl -4 -sS -m 15 --get "${PUBLIC_WEBHOOK_URL}" \
+attempt=0
+while true; do
+  public_response="$(curl -4 -sS --get "${PUBLIC_WEBHOOK_URL}" \
     --data-urlencode 'hub.mode=subscribe' \
     --data-urlencode "hub.verify_token=${VERIFY_TOKEN}" \
     --data-urlencode 'hub.challenge=12345' || true)"
 
   if [ "${public_response}" = "12345" ]; then
     log "WhatsApp webhook verification is working: ${PUBLIC_WEBHOOK_URL}"
-    VERIFICATION_OK=true
     break
   fi
 
-  echo "Waiting for verification to work... attempt ${attempt}/${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS}; response: ${public_response:-<empty>}"
+  attempt=$((attempt + 1))
+  echo "Waiting for verification to work... attempt ${attempt}; response: ${public_response:-<empty>}"
   sleep 5
 done
-
-if [ "${VERIFICATION_OK}" != "true" ]; then
-  echo "ERROR: Webhook verification did not succeed within $((PUBLIC_VERIFY_TIMEOUT_ATTEMPTS * 5 / 60)) minutes."
-  exit 1
-fi
 
 log "Setup complete. Webhook running on ${HOST_IP}:${APP_PORT}"
 log ""

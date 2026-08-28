@@ -132,9 +132,9 @@ One-command rental and setup from this repo:
 
 The deployer selects the cheapest compatible verified, on-demand, single-GPU
 offer with at least 16 GB VRAM and rents a 50 GB disk,
-waits for SSH, then runs the setup and health checks. It terminates a host that
-does not become SSH-ready within five minutes or exceeds the 20-minute setup
-budget after SSH is ready. Python installation, the prebuilt CUDA llama binary, and
+waits for SSH, then runs the setup and health checks. It terminates a host only if
+it does not become SSH-ready within five minutes or an explicit setup command
+fails. After SSH is ready there is no elapsed-time limit. Python installation, the prebuilt CUDA llama binary, and
 the 4B Gemma download run concurrently; Whisper and OmniVoice downloads then run
 concurrently before model prewarm.
 The deployer prefers listings with at least 500 Mbps advertised ingress; actual

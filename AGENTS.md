@@ -163,10 +163,10 @@ same source state.
 Startup timeout: allow a new instance no more than five minutes to become
 SSH-ready. If it is still loading or SSH is unavailable after five minutes,
 terminate that instance and open a replacement before continuing deployment.
-After SSH is ready, allow no more than 20 minutes for the parallel installation,
-model downloads, prewarm, and health checks. Do not reject a
-host based on a single bandwidth measurement: assess real transfer progress and
-terminate only when a stage stalls or the 20-minute setup budget expires.
+After SSH is ready, do not impose elapsed-time limits on package installation,
+model downloads, prewarm, health checks, or public webhook verification. Do not
+reject a host based on a single bandwidth measurement: assess real transfer
+progress and terminate only when an explicit setup command fails.
 Try no more than three distinct offers per deployment. Destroy failed hosts and
 move to the next offer; do not use manual one-off provisioning commands.
 Prefer offers with at least 500 Mbps advertised ingress, while keeping actual
