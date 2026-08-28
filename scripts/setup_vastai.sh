@@ -133,7 +133,8 @@ $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
 
 if command -v aws >/dev/null 2>&1 && aws sts get-caller-identity >/dev/null 2>&1; then
   log "Creating temporary S3 model-cache links..."
-  uv run --quiet --no-project --with boto3 python - "${LLM_MODEL_FILE}" > "${S3_CACHE_FILE}" <<'PY'
+  uv run --quiet --no-project --with boto3 --with 'botocore[crt]' \
+    python - "${LLM_MODEL_FILE}" > "${S3_CACHE_FILE}" <<'PY'
 import shlex
 import sys
 
@@ -173,7 +174,7 @@ $SSH "
 "
 
 log "Installing minimal system packages..."
-$SSH "apt-get update -qq && apt-get install -y --no-install-recommends build-essential cmake ninja-build portaudio19-dev curl tmux"
+$SSH "apt-get update -qq && apt-get install -y --no-install-recommends build-essential cmake ninja-build portaudio19-dev curl"
 
 log "Installing Python runtime, compiling llama-server, and downloading Gemma in parallel..."
 $SSH "
@@ -248,19 +249,14 @@ log "Starting local Gemma and the permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
   mkdir -p run_logs
-  fuser -k ${LLM_PORT}/tcp >/dev/null 2>&1 || true
-  nohup ${LLAMA_CPP_DIR}/build/bin/llama-server \
-    --model ${LLM_MODEL_DIR}/${LLM_MODEL_FILE} --alias ${LLM_MODEL} \
-    --n-gpu-layers 99 --ctx-size 4096 --flash-attn on --jinja \
-    --host 127.0.0.1 --port ${LLM_PORT} \
-    > run_logs/llm.log 2>&1 < /dev/null &
-  echo \$! > run_logs/llm.pid
-  if ! { test -s run_logs/cloudflared.pid && kill -0 \"\$(cat run_logs/cloudflared.pid)\" 2>/dev/null; }; then
-    nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
-      TUNNEL_TOKEN=\"\$CLOUDFLARED_TUNNEL_TOKEN\" exec /opt/instance-tools/bin/cloudflared tunnel run' \
-      > run_logs/cloudflared.log 2>&1 < /dev/null &
-    echo \$! > run_logs/cloudflared.pid
-  fi
+  install -m 755 scripts/supervisor/sl-llm.sh /opt/supervisor-scripts/sl-llm.sh
+  install -m 755 scripts/supervisor/sl-cloudflared.sh /opt/supervisor-scripts/sl-cloudflared.sh
+  install -m 644 scripts/supervisor/sl-llm.conf /etc/supervisor/conf.d/sl-llm.conf
+  install -m 644 scripts/supervisor/sl-cloudflared.conf /etc/supervisor/conf.d/sl-cloudflared.conf
+  supervisorctl reread
+  supervisorctl update
+  supervisorctl restart sl-llm
+  supervisorctl restart sl-cloudflared
 "
 
 log "Waiting for local Gemma to become ready..."
@@ -277,13 +273,11 @@ $SSH "
 log "Starting webhook..."
 $SSH "
   cd ${REMOTE_DIR}
-  fuser -k ${APP_PORT}/tcp >/dev/null 2>&1 || true
-  mkdir -p ${REMOTE_DIR}/run_logs
-  nohup sh -c \
-    'cd ${REMOTE_DIR} && \
-     exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env' \
-     > run_logs/webhook.log 2>&1 < /dev/null &
-  echo \$! > run_logs/webhook.pid
+  install -m 755 scripts/supervisor/sl-webhook.sh /opt/supervisor-scripts/sl-webhook.sh
+  install -m 644 scripts/supervisor/sl-webhook.conf /etc/supervisor/conf.d/sl-webhook.conf
+  supervisorctl reread
+  supervisorctl update
+  supervisorctl restart sl-webhook
 "
 
 log "Waiting for server to boot..."
@@ -310,14 +304,13 @@ $SSH "
   if [ "\$ready" != 'true' ]; then
     echo 'ERROR: server did not become ready on port ${APP_PORT}.'
     echo ''
-    echo 'tmux sessions:'
-    tmux ls || true
+    echo 'Supervisor status:'
+    supervisorctl status sl-llm sl-webhook sl-cloudflared || true
     echo ''
-    echo 'sl-webhook pane:'
-    tmux capture-pane -t sl-webhook -p 2>/dev/null | tail -n 100 || true
+    echo 'sl-webhook supervisor log:'
+    supervisorctl tail -100 sl-webhook stderr || true
     echo ''
-    echo 'webhook.log:'
-    tail -n 160 ${REMOTE_DIR}/run_logs/webhook.log || true
+    supervisorctl tail -160 sl-webhook stdout || true
     exit 1
   fi
 
@@ -362,6 +355,6 @@ log "Webhook URL:"
 log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 log "Useful commands:"
-log "  Attach to webhook:  ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} -t 'tmux attach -t sl-webhook'"
+log "  Service status:     ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'supervisorctl status sl-llm sl-webhook sl-cloudflared'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"
