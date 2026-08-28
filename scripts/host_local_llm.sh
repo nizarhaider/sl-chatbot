@@ -27,18 +27,13 @@ fi
 
 if [ ! -s "${MODEL_PATH}" ]; then
   mkdir -p "${MODEL_DIR}"
-  if command -v aws >/dev/null 2>&1 && aws sts get-caller-identity >/dev/null 2>&1; then
-    log "Downloading Gemma 4B from the SerendibAI S3 cache..."
-    aws s3 cp "s3://serendibai-models/runtime-cache/${MODEL_FILE}" "${MODEL_PATH}" --no-progress
-  else
-    HF_TOKEN="${HF_TOKEN:-$(sed -n 's/^HF_TOKEN=//p' "${ROOT_DIR}/.env" 2>/dev/null | head -n 1)}"
-    test -n "${HF_TOKEN}" || fail "S3 access is unavailable and HF_TOKEN is not set."
-    log "Downloading Gemma 4B from Hugging Face..."
-    curl --fail --location --retry 3 --continue-at - \
-      -H "Authorization: Bearer ${HF_TOKEN}" \
-      "https://huggingface.co/${MODEL_REPO}/resolve/main/${MODEL_FILE}" \
-      --output "${MODEL_PATH}"
-  fi
+  HF_TOKEN="${HF_TOKEN:-$(sed -n 's/^HF_TOKEN=//p' "${ROOT_DIR}/.env" 2>/dev/null | head -n 1)}"
+  test -n "${HF_TOKEN}" || fail "HF_TOKEN is required to download Gemma 4B."
+  log "Downloading Gemma 4B from Hugging Face..."
+  curl --fail --location --retry 3 --continue-at - \
+    -H "Authorization: Bearer ${HF_TOKEN}" \
+    "https://huggingface.co/${MODEL_REPO}/resolve/main/${MODEL_FILE}" \
+    --output "${MODEL_PATH}"
 fi
 
 log "Serving Gemma 4B at http://${LLM_HOST}:${LLM_PORT}/v1"

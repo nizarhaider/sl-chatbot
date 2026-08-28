@@ -108,7 +108,7 @@ bash scripts/host_local_llm.sh
 ```
 
 It installs only the prebuilt `llama.cpp` Homebrew package when needed and
-downloads the 4B GGUF from the SerendibAI S3 cache. No Python or voice-runtime
+downloads the 4B GGUF directly from Hugging Face. No Python or voice-runtime
 dependencies are required. Override `MODEL_DIR`, `LLAMA_SERVER`, `LLM_HOST`, or
 `LLM_PORT` if needed.
 
