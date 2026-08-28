@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import uuid
@@ -7,8 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import psycopg
-from langchain.tools import tool
-from pydantic import BaseModel, Field
 from psycopg.errors import UniqueViolation
 
 from app.integrations.whatsapp.client import _normalize_phone_number, whatsapp_api
@@ -49,24 +46,39 @@ def _property_dict(row: tuple) -> dict:
     }
 
 
-class SearchPropertiesInput(BaseModel):
-    """A natural-language property request."""
-
-    query: str = Field(description="The complete property request inferred from the conversation")
-
-
-class BookAppointmentInput(BaseModel):
-    """Details required to book a property viewing."""
-
-    property_id: str = Field(description="Exact property_id returned by search_properties")
-    customer_name: str = Field(description="Caller name")
-    appointment_at: str = Field(description="ISO 8601 appointment date and time in Asia/Colombo")
-
-
-class SendWhatsAppMessageInput(BaseModel):
-    """The text to send to the current caller."""
-
-    message: str = Field(description="The concise WhatsApp message to send to the caller")
+LLM_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "book_appointment",
+            "description": "Book a viewing for an exact property returned by a search.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "property_id": {"type": "string"},
+                    "customer_name": {"type": "string"},
+                    "appointment_at": {
+                        "type": "string",
+                        "description": "ISO 8601 date and time in Asia/Colombo",
+                    },
+                },
+                "required": ["property_id", "customer_name", "appointment_at"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_whatsapp_message",
+            "description": "Send text to the caller only when they explicitly request it.",
+            "parameters": {
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+            },
+        },
+    },
+]
 
 
 class NeonRealEstateStore:
@@ -257,30 +269,6 @@ class RealEstateToolService:
             self._vector_store.upsert_properties,
             self._store.list_active_properties(),
         )
-
-    def langchain_tools(self, context: CallContext, announce_tool) -> list:
-        @tool(args_schema=SearchPropertiesInput)
-        async def search_properties(**arguments) -> str:
-            """Search the live Homelands Properties listings."""
-            await announce_tool("search_properties")
-            result = await self.execute("search_properties", arguments, context)
-            return json.dumps(result, ensure_ascii=False)
-
-        @tool(args_schema=BookAppointmentInput)
-        async def book_appointment(**arguments) -> str:
-            """Book a viewing for the exact property returned by search_properties."""
-            await announce_tool("book_appointment")
-            result = await self.execute("book_appointment", arguments, context)
-            return json.dumps(result, ensure_ascii=False)
-
-        @tool(args_schema=SendWhatsAppMessageInput)
-        async def send_whatsapp_message(**arguments) -> str:
-            """Send a WhatsApp message to the current caller only when they explicitly ask for one."""
-            await announce_tool("send_whatsapp_message")
-            result = await self.execute("send_whatsapp_message", arguments, context)
-            return json.dumps(result, ensure_ascii=False)
-
-        return [search_properties, book_appointment, send_whatsapp_message]
 
     async def execute(self, name: str, arguments: dict, context: CallContext) -> dict:
         try:

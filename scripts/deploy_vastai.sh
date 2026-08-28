@@ -5,17 +5,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-DISK_GB="${DISK_GB:-80}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-32}"
+DISK_GB="${DISK_GB:-50}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
 MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-500}"
-MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-13.0}"
+MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-12.8}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-247f2f26d31d533719c1fc4c9b5cbf93}"
 INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-whatsapp}"
 DRY_RUN="${DRY_RUN:-false}"
 STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-60}"
-SETUP_TIMEOUT_SECONDS="${SETUP_TIMEOUT_SECONDS:-2400}"
+SETUP_TIMEOUT_SECONDS="${SETUP_TIMEOUT_SECONDS:-1200}"
 MAX_INSTANCE_ATTEMPTS="${MAX_INSTANCE_ATTEMPTS:-3}"
 # Once SSH is available, let the host complete its build and model prewarm.
 
@@ -26,7 +26,7 @@ command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
-[ "${MIN_GPU_RAM_GB}" -ge 24 ] || fail "Voice runtime deployments require at least 24 GB VRAM"
+[ "${MIN_GPU_RAM_GB}" -ge 16 ] || fail "Voice runtime deployments require at least 16 GB VRAM"
 [[ "${MIN_INTERNET_DOWN_MBIT}" =~ ^[0-9]+$ ]] || fail "MIN_INTERNET_DOWN_MBIT must be numeric"
 
 PYTHON="${ROOT_DIR}/.venv/bin/python"
@@ -52,7 +52,7 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-allowed = re.compile(r"^RTX (?:40|50)\d{2}(?:S| Super| Ti)?$", re.IGNORECASE)
+allowed = re.compile(r"^RTX (?:30|40)\d{2}(?:S| Super| Ti)?$", re.IGNORECASE)
 excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
 minimum_down = float(os.environ["MIN_INTERNET_DOWN_MBIT"])
 eligible = [

@@ -1,54 +1,49 @@
 import asyncio
 import json
 from datetime import datetime
-from typing import Any
 from zoneinfo import ZoneInfo
 
-from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+import httpx
 
-from app.voice.config import HOMELANDS_LOCAL_SYSTEM_PROMPT, VLLM_BASE_URL, VLLM_MODEL, VLLM_TEMPERATURE
+from app.voice.config import HOMELANDS_LOCAL_SYSTEM_PROMPT, LLM_BASE_URL, LLM_MODEL, LLM_TEMPERATURE
 
 
-class VllmAgent:
-    """LangChain agent backed by the local OpenAI-compatible vLLM server."""
+class LocalLlmClient:
+    """Small OpenAI-compatible client for the local llama.cpp server."""
 
     def __init__(self) -> None:
-        self._model = ChatOpenAI(
-            base_url=VLLM_BASE_URL,
-            api_key="local-vllm",
-            model=VLLM_MODEL,
-            temperature=VLLM_TEMPERATURE,
-            max_tokens=128,
-        )
+        self._client = httpx.AsyncClient(base_url=LLM_BASE_URL, timeout=60.0)
         self._lock = asyncio.Lock()
 
     async def prewarm(self) -> None:
-        await self._model.ainvoke("Reply with OK.")
+        await self.chat([{"role": "user", "content": "Reply with OK."}])
 
-    async def invoke(self, messages: list[Any], tools: list, system_prompt: str) -> dict:
-        async with self._lock:
-            agent = create_agent(model=self._model, tools=tools, system_prompt=system_prompt)
-            return await agent.ainvoke({"messages": messages})
+    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        payload = {
+            "model": LLM_MODEL,
+            "messages": [{"role": "system", "content": agent_system_prompt()}, *messages],
+            "temperature": LLM_TEMPERATURE,
+            "max_tokens": 128,
+        }
+        if tools:
+            payload.update({"tools": tools, "tool_choice": "auto"})
 
-    async def summarize_search(
-        self, transcript_text: str, search_result: dict, system_prompt: str
-    ) -> str:
-        """Turn a completed deterministic property search into a short spoken reply."""
         async with self._lock:
-            response = await self._model.ainvoke([
-                SystemMessage(content=(
-                    f"{system_prompt}\n\nA property search has already completed. "
-                    "Answer the caller using only its result. Do not call tools or ask again "
-                    "for details that are present in the caller's request."
-                )),
-                HumanMessage(content=(
-                    f"Caller request: {transcript_text}\n"
-                    f"Search result: {json.dumps(search_result, ensure_ascii=False)}"
-                )),
-            ])
-        return message_text(response)
+            response = await self._client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+        return response.json()["choices"][0]["message"]
+
+    async def summarize_search(self, transcript_text: str, search_result: dict) -> str:
+        message = await self.chat([{
+            "role": "user",
+            "content": (
+                "A property search has already completed. Answer the caller using only its "
+                "result. Do not call tools or ask again for details already present.\n"
+                f"Caller request: {transcript_text}\n"
+                f"Search result: {json.dumps(search_result, ensure_ascii=False)}"
+            ),
+        }])
+        return message_text(message)
 
 
 def agent_system_prompt() -> str:
@@ -56,8 +51,8 @@ def agent_system_prompt() -> str:
     return f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\nCurrent Sri Lanka date and time: {local_time}."
 
 
-def message_text(message: Any) -> str:
-    content = getattr(message, "content", "")
+def message_text(message: dict) -> str:
+    content = message.get("content") or ""
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):

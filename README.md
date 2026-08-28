@@ -2,7 +2,7 @@
 
 Voice-only WhatsApp assistant powered by local models on a GPU host.
 
-Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, official Gemma 4 12B QAT GGUF through CUDA llama.cpp, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
+Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, official Gemma 4 E4B QAT GGUF through CUDA llama.cpp, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ flowchart LR
     API -->|SDP offer| RTC[aiortc peer connection]
     RTC -->|inbound audio| VAD[Local RMS VAD]
     VAD -->|completed turn PCM| ASR[Local Whisper STT]
-    ASR -->|transcript| LLM[Official Gemma 4 12B QAT int4]
+    ASR -->|transcript| LLM[Official Gemma 4 E4B QAT int4]
     LLM -->|response text| TTS[RealtimeTTS OmniVoice]
     TTS -->|48 kHz stereo PCM| RTC
     RTC -->|outbound audio| WA
@@ -117,8 +117,8 @@ curl -sS 'http://127.0.0.1:8000/webhook?hub.mode=subscribe&hub.verify_token=my_s
 
 ## Vast.ai Deployment
 
-The voice runtime deployer defaults to 32 GB of GPU VRAM. The deployer selects
-the cheapest compatible, verified listing that meets this floor. Use a 48 GB
+The voice runtime deployer defaults to 16 GB of GPU VRAM. The deployer selects
+the cheapest compatible RTX 30/40-series listing that meets this floor. Use a 48 GB
 GPU for training, conversion, and the first full-stack validation.
 
 See [`docs/hosting_cost_report.md`](docs/hosting_cost_report.md) for the
@@ -131,16 +131,18 @@ One-command rental and setup from this repo:
 ```
 
 The deployer selects the cheapest compatible verified, on-demand, single-GPU
-offer with at least 32 GB VRAM and rents an 80 GB disk,
+offer with at least 16 GB VRAM and rents a 50 GB disk,
 waits for SSH, then runs the setup and health checks. It terminates a host that
-does not become SSH-ready within five minutes, does not complete dependency
-installation within 25 minutes, or exceeds the 45-minute total startup budget.
+does not become SSH-ready within five minutes or exceeds the 20-minute setup
+budget after SSH is ready. Python installation, the CUDA llama-server build, and
+the 4B Gemma download run concurrently; Whisper and OmniVoice downloads then run
+concurrently before model prewarm.
 The deployer prefers listings with at least 500 Mbps advertised ingress; actual
 installation progress remains the acceptance signal rather than a synthetic speed
 test. The deployer tries at most three distinct offers. Preview the current choice
 without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
-`MIN_GPU_RAM_GB` override cannot be set below the 24 GB hard floor.
-The selected host must also support CUDA 13 or newer.
+`MIN_GPU_RAM_GB` override cannot be set below the 16 GB hard floor.
+The selected host must support CUDA 12.8 or newer.
 
 Reproduce the Gemma 4 26B-A4B response-only LoRA run on a 48 GB CUDA host with:
 
@@ -158,7 +160,7 @@ To set up an instance that has already been rented:
 REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
 ```
 
-The setup script prepares `/workspace/sl-chatbot`, syncs `.env` when present, builds CUDA llama.cpp, downloads the official Gemma QAT GGUF, starts the webhook, and verifies the configured permanent webhook URL.
+The setup script prepares `/workspace/sl-chatbot`, syncs `.env`, installs only the locked runtime dependencies, builds only the CUDA `llama-server` target, downloads only the text GGUF (not the multimodal projector), starts the webhook, and verifies the permanent webhook URL.
 
 Manual dependency sync on the remote host:
 

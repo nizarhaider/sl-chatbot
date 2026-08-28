@@ -7,7 +7,7 @@ from num2words import num2words
 
 from app.dashboard.state import dashboard_state
 from app.voice.audio_track import RealtimeAudioTrack
-from app.voice.turn_pipeline import VllmTurnPipeline
+from app.voice.turn_pipeline import LocalGemmaTurnPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class VoiceAgent:
     def __init__(self):
         self.active_calls: dict[str, asyncio.Task] = {}
         self.playback_generation: dict[str, int] = {}
-        self.turn_pipeline = VllmTurnPipeline(
+        self.turn_pipeline = LocalGemmaTurnPipeline(
             prepare_tts_text=self._prepare_tts_text,
             interrupt_playback=self._interrupt_playback,
         )

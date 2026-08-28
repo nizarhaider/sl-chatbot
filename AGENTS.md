@@ -8,7 +8,7 @@ The current voice path is:
 WhatsApp Cloud webhook -> FastAPI /webhook
 WhatsApp Calling SDP offer -> aiortc peer connection
 Inbound WhatsApp audio -> local VAD -> local Whisper STT
-Whisper transcript -> official Gemma 4 12B QAT Q4_0 GGUF via CUDA llama.cpp
+Whisper transcript -> official Gemma 4 E4B QAT Q4_0 GGUF via CUDA llama.cpp
 Gemma text -> RealtimeTTS OmniVoice
 OmniVoice PCM -> outbound aiortc audio track -> WhatsApp call
 ```
@@ -118,7 +118,7 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to official Gemma 4 12B QAT Q4_0 GGUF through the
+5. Sends transcript text to official Gemma 4 E4B QAT Q4_0 GGUF through the
    OpenAI-compatible CUDA llama.cpp server.
 6. Sends Gemma response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
@@ -147,11 +147,12 @@ PHONE_NUMBER_ID=...
 
 ## Setup Commands For A New Vast.ai Box
 
-Rental policy: use a 32 GB VRAM on-demand instance and an 80 GB disk for the
+Rental policy: use a 16 GB VRAM on-demand instance and a 50 GB disk for the
 voice runtime. Select the cheapest compatible, verified listing that meets that
 memory floor. Use 48 GB VRAM and a 200 GB disk
-for fine-tuning, merging, and initial full-stack validation. The prebuilt
-llama.cpp CUDA 12.5 wheel is not compatible with RTX 50-series GPUs.
+for fine-tuning, merging, and initial full-stack validation. Use RTX 30/40-series
+hosts; the deployer compiles only the `llama-server` target while downloading
+the Python runtime and Gemma concurrently.
 Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
 
@@ -162,10 +163,10 @@ same source state.
 Startup timeout: allow a new instance no more than five minutes to become
 SSH-ready. If it is still loading or SSH is unavailable after five minutes,
 terminate that instance and open a replacement before continuing deployment.
-After SSH is ready, allow 25 minutes for dependency installation and CUDA build,
-then 15 minutes for model downloads, prewarm, and health checks. Do not reject a
+After SSH is ready, allow no more than 20 minutes for the parallel installation,
+model downloads, prewarm, and health checks. Do not reject a
 host based on a single bandwidth measurement: assess real transfer progress and
-terminate only when a stage stalls or the 45-minute total startup budget expires.
+terminate only when a stage stalls or the 20-minute setup budget expires.
 Try no more than three distinct offers per deployment. Destroy failed hosts and
 move to the next offer; do not use manual one-off provisioning commands.
 Prefer offers with at least 500 Mbps advertised ingress, while keeping actual

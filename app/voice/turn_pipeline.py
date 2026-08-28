@@ -7,8 +7,6 @@ from collections.abc import Awaitable, Callable
 
 import numpy as np
 from av.audio.resampler import AudioResampler
-from langchain_core.messages import AIMessage, HumanMessage
-
 from app.dashboard.state import dashboard_state
 from app.voice.asr import LocalWhisperASR, is_noise_text
 from app.voice.config import (
@@ -23,17 +21,17 @@ from app.voice.config import (
     TURN_MIN_AUDIO_MS,
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
-    VLLM_PREWARM,
+    LLM_PREWARM,
 )
-from app.voice.llm import VllmAgent, agent_system_prompt, message_text
+from app.voice.llm import LocalLlmClient, message_text
 from app.voice.tts import RealtimeOmniVoiceTTS
-from app.voice.tools import CallContext, RealEstateToolService
+from app.voice.tools import LLM_TOOLS, CallContext, RealEstateToolService
 from app.voice.vad import VadState, pcm_rms
 
 logger = logging.getLogger(__name__)
 
 
-class VllmTurnPipeline:
+class LocalGemmaTurnPipeline:
     def __init__(
         self,
         prepare_tts_text,
@@ -44,7 +42,7 @@ class VllmTurnPipeline:
         self._interrupt_playback = interrupt_playback
         self._asr = LocalWhisperASR()
         self._tts = tts or RealtimeOmniVoiceTTS()
-        self._llm = VllmAgent()
+        self._llm = LocalLlmClient()
         self._tools = RealEstateToolService.from_env()
         self._conversation_history: dict[str, list] = {}
 
@@ -57,10 +55,10 @@ class VllmTurnPipeline:
             logger.info("Voice tool service ready")
         await asyncio.to_thread(self._asr.prewarm)
         logger.info("Whisper prewarm complete")
-        if VLLM_PREWARM:
-            logger.info("Starting vLLM prewarm")
+        if LLM_PREWARM:
+            logger.info("Starting Gemma prewarm")
             await self._llm.prewarm()
-            logger.info("vLLM prewarm complete")
+            logger.info("Gemma prewarm complete")
         if REALTIME_TTS_PREWARM:
             logger.info("Starting OmniVoice prewarm")
             await self._tts.prewarm()
@@ -337,24 +335,48 @@ class VllmTurnPipeline:
             return await self._search_properties(
                 call_id, caller_phone, search_query, announce_tool
             )
-        tools = self._tools.langchain_tools(context, announce_tool) if self._tools else []
-        result = await self._llm.invoke(
-            [*history, HumanMessage(content=transcript_text)],
-            tools,
-            agent_system_prompt(),
-        )
-        messages = result.get("messages", [])
-        new_messages = messages[len(history):]
-        self._emit_agent_events(call_id, new_messages)
-        self._conversation_history[call_id] = list(messages)
-        response = message_text(next(
-            (
-                message
-                for message in reversed(messages)
-                if isinstance(message, AIMessage) and not message.tool_calls
-            ),
-            AIMessage(content=""),
-        ))
+        messages = [*history, {"role": "user", "content": transcript_text}]
+        for _ in range(4):
+            assistant = await self._llm.chat(messages, LLM_TOOLS if self._tools else None)
+            messages.append(assistant)
+            tool_calls = assistant.get("tool_calls") or []
+            if not tool_calls:
+                break
+            for tool_call in tool_calls:
+                function = tool_call.get("function") or {}
+                name = function.get("name", "")
+                raw_arguments = function.get("arguments") or {}
+                try:
+                    arguments = (
+                        json.loads(raw_arguments)
+                        if isinstance(raw_arguments, str)
+                        else dict(raw_arguments)
+                    )
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    arguments = {}
+                dashboard_state.emit(call_id, "tool.call", {
+                    "name": name,
+                    "arguments": arguments,
+                })
+                if announce_tool is not None:
+                    await announce_tool(name)
+                result = await self._tools.execute(name, arguments, context)
+                dashboard_state.emit(call_id, "tool.result", {
+                    "name": name,
+                    "result": result,
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id", name),
+                    "name": name,
+                    "content": json.dumps(result, ensure_ascii=False),
+                })
+        else:
+            assistant = {"content": "Sorry, I couldn't complete that request. Please try again."}
+            messages.append({"role": "assistant", "content": assistant["content"]})
+
+        self._conversation_history[call_id] = messages
+        response = message_text(assistant)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
@@ -378,36 +400,16 @@ class VllmTurnPipeline:
         dashboard_state.emit(call_id, "tool.result", {
             "name": "search_properties", "result": result,
         })
-        response = await self._llm.summarize_search(
-            transcript_text, result, agent_system_prompt()
-        )
+        response = await self._llm.summarize_search(transcript_text, result)
         self._append_conversation_turn(call_id, transcript_text, response)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
-    def _emit_agent_events(self, call_id, messages) -> None:
-        for message in messages:
-            for tool_call in getattr(message, "tool_calls", []) or []:
-                dashboard_state.emit(call_id, "tool.call", {
-                    "name": tool_call.get("name", ""),
-                    "arguments": tool_call.get("args", {}),
-                })
-            if message.__class__.__name__ != "ToolMessage":
-                continue
-            try:
-                result = json.loads(message_text(message))
-            except json.JSONDecodeError:
-                result = {"ok": False, "error": message_text(message)}
-            dashboard_state.emit(call_id, "tool.result", {
-                "name": getattr(message, "name", ""),
-                "result": result,
-            })
-
     def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
         history = self._conversation_history.setdefault(call_id, [])
         history.extend([
-            HumanMessage(content=transcript_text),
-            AIMessage(content=response_text),
+            {"role": "user", "content": transcript_text},
+            {"role": "assistant", "content": response_text},
         ])
 
     async def _speak(self, call_id, text, output_track, playback_generation):
@@ -476,7 +478,7 @@ def _property_search_query(history: list, transcript_text: str) -> str | None:
     caller_turns = [
         message_text(message)
         for message in history
-        if isinstance(message, HumanMessage) and message_text(message)
+        if message.get("role") == "user" and message_text(message)
     ]
     query = " ".join([*caller_turns[-3:], transcript_text]).strip()
     normalized = query.casefold()

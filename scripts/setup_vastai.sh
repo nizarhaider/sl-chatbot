@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
-# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 12B QAT GGUF.
+# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 E4B QAT GGUF.
 # =============================================================================
 
 set -euo pipefail
@@ -14,14 +14,16 @@ REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
 LLM_PORT="${LLM_PORT:-8000}"
-LLM_MODEL="${LLM_MODEL:-google/gemma-4-12B-it-qat-q4_0-gguf}"
-LLM_MODEL_REPO="google/gemma-4-12B-it-qat-q4_0-gguf"
-LLM_MODEL_FILE="gemma-4-12b-it-qat-q4_0.gguf"
-LLM_MODEL_DIR="/workspace/models/gemma-4-12b-it-qat-q4_0"
+LLM_MODEL="${LLM_MODEL:-google/gemma-4-E4B-it-qat-q4_0-gguf}"
+LLM_MODEL_REPO="google/gemma-4-E4B-it-qat-q4_0-gguf"
+LLM_MODEL_FILE="gemma-4-E4B_q4_0-it.gguf"
+LLM_MODEL_DIR="/workspace/models/gemma-4-E4B-it-qat-q4_0"
+LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b10675}"
+LLAMA_CPP_DIR="/workspace/llama.cpp"
 LLM_STARTUP_TIMEOUT_ATTEMPTS="${LLM_STARTUP_TIMEOUT_ATTEMPTS:-300}"
 APP_STARTUP_TIMEOUT_ATTEMPTS="${APP_STARTUP_TIMEOUT_ATTEMPTS:-150}"
 PUBLIC_VERIFY_TIMEOUT_ATTEMPTS="${PUBLIC_VERIFY_TIMEOUT_ATTEMPTS:-3}"
-UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-1500}"
+UV_SYNC_TIMEOUT_SECONDS="${UV_SYNC_TIMEOUT_SECONDS:-900}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -56,7 +58,8 @@ $SSH "
 
 log ".env sync..."
 ENV_SYNC_FILE="$(mktemp)"
-cleanup_env_sync() { rm -f "${ENV_SYNC_FILE}"; }
+S3_CACHE_FILE="$(mktemp)"
+cleanup_env_sync() { rm -f "${ENV_SYNC_FILE}" "${S3_CACHE_FILE}"; }
 trap cleanup_env_sync EXIT
 
 if [ -f .env ]; then
@@ -128,6 +131,34 @@ fi
 
 $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
 
+if command -v aws >/dev/null 2>&1 && aws sts get-caller-identity >/dev/null 2>&1; then
+  log "Creating temporary S3 model-cache links..."
+  uv run --quiet --no-project --with boto3 python - "${LLM_MODEL_FILE}" > "${S3_CACHE_FILE}" <<'PY'
+import shlex
+import sys
+
+import boto3
+
+bucket = "serendibai-models"
+key = f"runtime-cache/{sys.argv[1]}"
+client = boto3.client("s3", region_name="ap-southeast-1")
+for variable, operation in (
+    ("S3_CACHE_GET_URL", "get_object"),
+    ("S3_CACHE_PUT_URL", "put_object"),
+):
+    url = client.generate_presigned_url(
+        operation,
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=21600,
+    )
+    print(f"{variable}={shlex.quote(url)}")
+PY
+  $SCP "${S3_CACHE_FILE}" "${REMOTE}:/tmp/sl-chatbot-s3-cache.env"
+else
+  : > "${S3_CACHE_FILE}"
+  log "S3 credentials unavailable; using Hugging Face directly."
+fi
+
 log "Waiting for base image package setup..."
 $SSH "
   for attempt in \$(seq 1 60); do
@@ -141,15 +172,74 @@ $SSH "
   exit 1
 "
 
-log "Installing system packages..."
-$SSH "apt-get update -qq && apt-get install -y portaudio19-dev curl gnupg tmux"
+log "Installing minimal system packages..."
+$SSH "apt-get update -qq && apt-get install -y --no-install-recommends build-essential cmake ninja-build portaudio19-dev curl tmux"
 
-log "Running locked uv sync (max $((UV_SYNC_TIMEOUT_SECONDS / 60)) minutes; network progress is allowed to vary)..."
-$SSH "cd ${REMOTE_DIR} && timeout ${UV_SYNC_TIMEOUT_SECONDS}s env -u UV_NO_CACHE uv sync --frozen"
+log "Installing Python runtime, compiling llama-server, and downloading Gemma in parallel..."
+$SSH "
+  set -euo pipefail
+  cd ${REMOTE_DIR}
+  timeout ${UV_SYNC_TIMEOUT_SECONDS}s env -u UV_NO_CACHE uv sync --frozen --no-dev &
+  uv_pid=\$!
 
-log "Building CUDA llama.cpp and downloading the official Gemma QAT GGUF..."
-$SSH "cd ${REMOTE_DIR} && CMAKE_ARGS='-DGGML_CUDA=on' CMAKE_BUILD_PARALLEL_LEVEL=4 uv pip install --python .venv/bin/python --reinstall --no-deps --no-binary llama-cpp-python 'llama-cpp-python[server]==0.3.35'"
-$SSH "cd ${REMOTE_DIR} && hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1) && test -n \"\$hf_token\" && HF_TOKEN=\"\$hf_token\" .venv/bin/hf download ${LLM_MODEL_REPO} --local-dir ${LLM_MODEL_DIR}"
+  (
+    if [ ! -x ${LLAMA_CPP_DIR}/build/bin/llama-server ]; then
+      rm -rf ${LLAMA_CPP_DIR}
+      git clone --depth 1 --branch ${LLAMA_CPP_TAG} https://github.com/ggml-org/llama.cpp.git ${LLAMA_CPP_DIR}
+      cmake -S ${LLAMA_CPP_DIR} -B ${LLAMA_CPP_DIR}/build -G Ninja \
+        -DGGML_CUDA=ON -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+      cmake --build ${LLAMA_CPP_DIR}/build --target llama-server --parallel \"\$(nproc)\"
+    fi
+  ) &
+  llama_pid=\$!
+
+  (
+    mkdir -p ${LLM_MODEL_DIR}
+    model_path=${LLM_MODEL_DIR}/${LLM_MODEL_FILE}
+    cache_hit=false
+    if [ -s /tmp/sl-chatbot-s3-cache.env ]; then
+      . /tmp/sl-chatbot-s3-cache.env
+      if curl --fail --location --retry 2 --continue-at - \
+        \"\$S3_CACHE_GET_URL\" --output \"\$model_path\"; then
+        cache_hit=true
+      fi
+    fi
+    if [ \"\$cache_hit\" != true ]; then
+      hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
+      test -n \"\$hf_token\"
+      curl --fail --location --retry 3 --continue-at - \
+        -H \"Authorization: Bearer \$hf_token\" \
+        https://huggingface.co/${LLM_MODEL_REPO}/resolve/main/${LLM_MODEL_FILE} \
+        --output \"\$model_path\"
+      if [ -n \"\${S3_CACHE_PUT_URL:-}\" ]; then
+        curl --fail --silent --show-error --request PUT \
+          --upload-file \"\$model_path\" \"\$S3_CACHE_PUT_URL\" \
+          && echo 'Seeded the S3 Gemma cache.' \
+          || echo 'WARNING: Could not seed the S3 Gemma cache.'
+      fi
+    fi
+    rm -f /tmp/sl-chatbot-s3-cache.env
+  ) &
+  model_pid=\$!
+
+  wait \$uv_pid
+  wait \$llama_pid
+  wait \$model_pid
+"
+
+log "Pre-downloading Whisper and OmniVoice concurrently into the shared Hugging Face cache..."
+$SSH "
+  set -euo pipefail
+  cd ${REMOTE_DIR}
+  hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
+  test -n \"\$hf_token\"
+  HF_TOKEN=\"\$hf_token\" .venv/bin/hf download SPEAK-ASR/whisper-medium-si-merged &
+  asr_pid=\$!
+  HF_TOKEN=\"\$hf_token\" .venv/bin/hf download 2broke2code/serendib-omnivoice-finetuned-v2 &
+  tts_pid=\$!
+  wait \$asr_pid
+  wait \$tts_pid
+"
 
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
@@ -158,14 +248,13 @@ log "Starting local Gemma and the permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
   mkdir -p run_logs
-  if ! { test -s run_logs/llm.pid && kill -0 \"\$(cat run_logs/llm.pid)\" 2>/dev/null; }; then
-    nohup .venv/bin/python -m llama_cpp.server \
-      --model ${LLM_MODEL_DIR}/${LLM_MODEL_FILE} --model_alias ${LLM_MODEL} \
-      --n_gpu_layers -1 --n_ctx 4096 --flash_attn true \
-      --host 127.0.0.1 --port ${LLM_PORT} --verbose false \
-      > run_logs/llm.log 2>&1 < /dev/null &
-    echo \$! > run_logs/llm.pid
-  fi
+  fuser -k ${LLM_PORT}/tcp >/dev/null 2>&1 || true
+  nohup ${LLAMA_CPP_DIR}/build/bin/llama-server \
+    --model ${LLM_MODEL_DIR}/${LLM_MODEL_FILE} --alias ${LLM_MODEL} \
+    --n-gpu-layers 99 --ctx-size 4096 --flash-attn on --jinja \
+    --host 127.0.0.1 --port ${LLM_PORT} \
+    > run_logs/llm.log 2>&1 < /dev/null &
+  echo \$! > run_logs/llm.pid
   if ! { test -s run_logs/cloudflared.pid && kill -0 \"\$(cat run_logs/cloudflared.pid)\" 2>/dev/null; }; then
     nohup sh -c 'cd ${REMOTE_DIR} && set -a && . ./.env && set +a && \
       TUNNEL_TOKEN=\"\$CLOUDFLARED_TUNNEL_TOKEN\" exec /opt/instance-tools/bin/cloudflared tunnel run' \
@@ -188,18 +277,13 @@ $SSH "
 log "Starting webhook..."
 $SSH "
   cd ${REMOTE_DIR}
-  if ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1; then
-    echo 'Webhook is already listening; keeping the existing process.'
-  elif test -s ${REMOTE_DIR}/run_logs/webhook.pid && kill -0 \"\$(cat ${REMOTE_DIR}/run_logs/webhook.pid)\" 2>/dev/null; then
-    echo 'Webhook startup is already in progress; keeping the existing process.'
-  else
-    mkdir -p ${REMOTE_DIR}/run_logs
-    nohup sh -c \
-      'cd ${REMOTE_DIR} && \
-       exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env' \
-       > run_logs/webhook.log 2>&1 < /dev/null &
-    echo \$! > run_logs/webhook.pid
-  fi
+  fuser -k ${APP_PORT}/tcp >/dev/null 2>&1 || true
+  mkdir -p ${REMOTE_DIR}/run_logs
+  nohup sh -c \
+    'cd ${REMOTE_DIR} && \
+     exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT} --env-file .env' \
+     > run_logs/webhook.log 2>&1 < /dev/null &
+  echo \$! > run_logs/webhook.pid
 "
 
 log "Waiting for server to boot..."
