@@ -1,4 +1,226 @@
 #!/usr/bin/env bash
+# Rent and configure the lean Vast.ai voice runtime. With SSH_PORT and HOST_IP
+# arguments it configures that existing host; without arguments it rents one.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+if [ "$#" -eq 0 ]; then
+DISK_GB="${DISK_GB:-50}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
+MIN_CPU_CORES="${MIN_CPU_CORES:-8}"
+MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-500}"
+MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-12.8}"
+REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
+TEMPLATE_HASH="${TEMPLATE_HASH:-247f2f26d31d533719c1fc4c9b5cbf93}"
+INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-whatsapp}"
+DRY_RUN="${DRY_RUN:-false}"
+STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-60}"
+MAX_INSTANCE_ATTEMPTS="${MAX_INSTANCE_ATTEMPTS:-3}"
+
+log() { printf '▶ %s\n' "$*"; }
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/uv/"
+test -f .env || fail "${ROOT_DIR}/.env is required"
+test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
+[[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
+[ "${MIN_GPU_RAM_GB}" -ge 16 ] || fail "Voice runtime deployments require at least 16 GB VRAM"
+[[ "${MIN_CPU_CORES}" =~ ^[0-9]+$ ]] || fail "MIN_CPU_CORES must be numeric"
+[[ "${MIN_INTERNET_DOWN_MBIT}" =~ ^[0-9]+$ ]] || fail "MIN_INTERNET_DOWN_MBIT must be numeric"
+
+PYTHON="${ROOT_DIR}/.venv/bin/python"
+test -x "${PYTHON}" || fail "Run 'uv sync' locally once before deploying"
+
+VASTAI_API_KEY="$(${PYTHON} -c \
+  'from dotenv import dotenv_values; print(dotenv_values(".env").get("VASTAI_API_KEY", ""))')"
+test -n "${VASTAI_API_KEY}" || fail "VASTAI_API_KEY is missing from .env"
+
+VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
+QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_cores_effective>=${MIN_CPU_CORES} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=${MIN_CUDA_VERSION} direct_port_count>=1"
+
+log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM, ${MIN_CPU_CORES} effective CPU cores, and ${MIN_INTERNET_DOWN_MBIT} Mbps ingress..."
+ATTEMPTED_OFFER_IDS=""
+
+select_offer() {
+  "${VASTAI[@]}" search offers "${QUERY}" \
+    --storage "${DISK_GB}" --order dph --limit 200 \
+  | EXCLUDED_OFFER_IDS="${ATTEMPTED_OFFER_IDS}" MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT}" "${PYTHON}" -c '
+import json
+import os
+import re
+import sys
+
+offers = json.load(sys.stdin)
+allowed = re.compile(r"^RTX (?:30|40)\d{2}(?:S| Super| Ti)?$", re.IGNORECASE)
+excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
+minimum_down = float(os.environ["MIN_INTERNET_DOWN_MBIT"])
+eligible = [
+    offer for offer in offers
+    if str(offer.get("id", "")) not in excluded
+    and allowed.search(str(offer.get("gpu_name", "")))
+    and float(offer.get("inet_down") or 0) >= minimum_down
+]
+if not eligible:
+    raise SystemExit("No untried eligible Vast.ai offer is currently available")
+offer = min(eligible, key=lambda row: float(row.get("dph_total", "inf")))
+fields = (
+    offer["id"],
+    offer["gpu_name"],
+    int(offer["gpu_ram"]),
+    float(offer["dph_total"]),
+    offer.get("geolocation", "unknown"),
+    float(offer.get("reliability", 0)),
+)
+print("\t".join(map(str, fields)))
+'
+}
+
+if [ "${DRY_RUN}" = "true" ]; then
+  OFFER="$(select_offer)"
+  IFS=$'\t' read -r OFFER_ID GPU_NAME GPU_RAM HOURLY_PRICE LOCATION RELIABILITY <<<"${OFFER}"
+  log "Selected offer ${OFFER_ID}: ${GPU_NAME}, ${GPU_RAM} MiB VRAM, \$${HOURLY_PRICE}/hour including ${DISK_GB} GB storage, ${LOCATION}, reliability ${RELIABILITY}"
+  log "Dry run complete; no instance was created."
+  exit 0
+fi
+
+EXISTING_CONNECTION="$(${VASTAI[@]} show instances | "${PYTHON}" -c '
+import json
+import sys
+
+rows = json.load(sys.stdin)
+if isinstance(rows, dict):
+    rows = rows.get("instances", [])
+rows = [
+    row for row in rows
+    if row.get("label") == "'"${INSTANCE_LABEL}"'"
+    and row.get("actual_status") == "running"
+    and float(row.get("gpu_ram") or 0) >= '"${MIN_GPU_RAM_GB}"' * 1024
+]
+rows.sort(key=lambda row: float(row.get("start_date") or 0), reverse=True)
+for row in rows:
+    mappings = (row.get("ports") or {}).get("22/tcp") or []
+    if mappings and row.get("public_ipaddr"):
+        print("\t".join(str(value or "") for value in (
+            row.get("id"), row.get("public_ipaddr"), mappings[0].get("HostPort", ""))))
+        break
+')"
+
+destroy_instance() {
+  local id="$1"
+  if [ -n "${id:-}" ]; then
+    log "Destroying failed instance ${id}..."
+    "${VASTAI[@]}" destroy instance "${id}" --yes >/dev/null 2>&1 || true
+  fi
+}
+
+for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
+  INSTANCE_ID=""
+  SSH_HOST=""
+  SSH_PORT=""
+
+  if [ "${instance_attempt}" -eq 1 ] && [ -n "${EXISTING_CONNECTION}" ]; then
+    IFS=$'\t' read -r INSTANCE_ID SSH_HOST SSH_PORT <<<"${EXISTING_CONNECTION}"
+    log "Reusing existing running instance ${INSTANCE_ID} at ${SSH_HOST}:${SSH_PORT}."
+  else
+    OFFER="$(select_offer)"
+    IFS=$'\t' read -r OFFER_ID GPU_NAME GPU_RAM HOURLY_PRICE LOCATION RELIABILITY <<<"${OFFER}"
+    ATTEMPTED_OFFER_IDS="${ATTEMPTED_OFFER_IDS:+${ATTEMPTED_OFFER_IDS},}${OFFER_ID}"
+    log "Selected offer ${OFFER_ID}: ${GPU_NAME}, ${GPU_RAM} MiB VRAM, \$${HOURLY_PRICE}/hour including ${DISK_GB} GB storage, ${LOCATION}, reliability ${RELIABILITY}"
+    log "Creating Vast.ai instance (attempt ${instance_attempt}/${MAX_INSTANCE_ATTEMPTS})..."
+    if ! CREATE_RESULT="$(${VASTAI[@]} create instance "${OFFER_ID}" \
+      --template_hash "${TEMPLATE_HASH}" \
+      --disk "${DISK_GB}" \
+      --label "${INSTANCE_LABEL}" \
+      --ssh --direct --cancel-unavail 2>&1)"; then
+      if [[ "${CREATE_RESULT}" == *"lacks credit"* ]]; then
+        fail "Vast.ai account lacks credit; top up the account before deploying."
+      fi
+      log "Offer ${OFFER_ID} became unavailable; trying another offer."
+      continue
+    fi
+    if [[ "${CREATE_RESULT}" == *"lacks credit"* ]]; then
+      fail "Vast.ai account lacks credit; top up the account before deploying."
+    fi
+    if ! INSTANCE_ID="$(printf '%s' "${CREATE_RESULT}" | "${PYTHON}" -c \
+      'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"; then
+      log "Offer ${OFFER_ID} did not return an instance ID; trying another offer."
+      continue
+    fi
+    if [ -z "${INSTANCE_ID}" ]; then
+      log "Offer ${OFFER_ID} became unavailable; trying another offer."
+      continue
+    fi
+    log "Created instance ${INSTANCE_ID}."
+  fi
+
+  log "Waiting for instance ${INSTANCE_ID} and SSH endpoint (max five minutes)..."
+  SSH_READY=false
+  for attempt in $(seq 1 "${STARTUP_TIMEOUT_ATTEMPTS}"); do
+  INSTANCE="$("${VASTAI[@]}" show instance "${INSTANCE_ID}")"
+  CONNECTION="$(printf '%s' "${INSTANCE}" | "${PYTHON}" -c '
+import json
+import sys
+
+instance = json.load(sys.stdin)
+if isinstance(instance, list):
+    instance = instance[0] if instance else {}
+ssh_mappings = (instance.get("ports") or {}).get("22/tcp") or []
+ssh_port = ssh_mappings[0].get("HostPort", "") if ssh_mappings else ""
+print("\t".join(str(value or "") for value in (
+    instance.get("actual_status"),
+    instance.get("public_ipaddr"),
+    ssh_port,
+)))
+')"
+  IFS=$'\t' read -r INSTANCE_STATUS SSH_HOST SSH_PORT <<<"${CONNECTION}"
+  if [ "${INSTANCE_STATUS}" = "running" ] && [ -n "${SSH_HOST}" ] && [ -n "${SSH_PORT}" ]; then
+    if ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
+      -i "${SSH_KEY}" -p "${SSH_PORT}" "root@${SSH_HOST}" true 2>/dev/null; then
+      SSH_READY=true
+      break
+    fi
+  fi
+  if [ "${attempt}" -eq "${STARTUP_TIMEOUT_ATTEMPTS}" ]; then
+    log "Instance ${INSTANCE_ID} did not become SSH-ready within five minutes."
+    break
+  fi
+  if [ $((attempt % 12)) -eq 0 ]; then
+    log "Still waiting for instance ${INSTANCE_ID} SSH (attempt ${attempt}/${STARTUP_TIMEOUT_ATTEMPTS}); the next retry is bounded."
+  fi
+  sleep 5
+done
+
+  if [ "${SSH_READY}" != "true" ]; then
+    destroy_instance "${INSTANCE_ID}"
+    continue
+  fi
+
+  log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID} without a post-SSH deadline..."
+  if env \
+    REMOTE_BRANCH="${REMOTE_BRANCH}" SSH_KEY="${SSH_KEY}" \
+    "${ROOT_DIR}/scripts/setup_vastai.sh" "${SSH_PORT}" "${SSH_HOST}"; then
+    log "Deployment complete."
+    log "Instance ID: ${INSTANCE_ID}"
+    log "Destroy instance ${INSTANCE_ID} in Vast.ai as soon as the call is finished."
+    exit 0
+  fi
+
+  log "Setup failed; terminating instance ${INSTANCE_ID}."
+  destroy_instance "${INSTANCE_ID}"
+  if [ "${instance_attempt}" -lt "${MAX_INSTANCE_ATTEMPTS}" ]; then
+    log "Trying a different offer..."
+    continue
+  fi
+done
+
+fail "All ${MAX_INSTANCE_ATTEMPTS} instance attempts failed; no server was left running."
+fi
+
+#!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
 # SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 E4B QAT GGUF.
@@ -240,10 +462,45 @@ log "Starting local Gemma and the permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
   mkdir -p run_logs
-  install -m 755 scripts/supervisor/sl-llm.sh /opt/supervisor-scripts/sl-llm.sh
-  install -m 755 scripts/supervisor/sl-cloudflared.sh /opt/supervisor-scripts/sl-cloudflared.sh
-  install -m 644 scripts/supervisor/sl-llm.conf /etc/supervisor/conf.d/sl-llm.conf
-  install -m 644 scripts/supervisor/sl-cloudflared.conf /etc/supervisor/conf.d/sl-cloudflared.conf
+  install -d -m 755 /opt/supervisor-scripts
+  printf '%s\\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'cd /workspace/sl-chatbot' \
+    'mkdir -p run_logs' \
+    'exec >>run_logs/llm.log 2>&1' \
+    'exec /root/.local/bin/llama serve --model /workspace/models/gemma-4-E4B-it-qat-q4_0/gemma-4-E4B_q4_0-it.gguf --alias google/gemma-4-E4B-it-qat-q4_0-gguf --n-gpu-layers 99 --ctx-size 4096 --flash-attn on --jinja --host 127.0.0.1 --port 8000' \
+    > /opt/supervisor-scripts/sl-llm.sh
+  printf '%s\\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'cd /workspace/sl-chatbot' \
+    'mkdir -p run_logs' \
+    'exec >>run_logs/cloudflared.log 2>&1' \
+    'set -a; . ./.env; set +a' \
+    'exec /opt/instance-tools/bin/cloudflared tunnel run' \
+    > /opt/supervisor-scripts/sl-cloudflared.sh
+  chmod 755 /opt/supervisor-scripts/sl-llm.sh /opt/supervisor-scripts/sl-cloudflared.sh
+  printf '%s\\n' \
+    '[program:sl-llm]' \
+    'command=/opt/supervisor-scripts/sl-llm.sh' \
+    'autostart=true' \
+    'autorestart=unexpected' \
+    'startsecs=2' \
+    'stdout_logfile=/dev/stdout' \
+    'stdout_logfile_maxbytes=0' \
+    'redirect_stderr=true' \
+    > /etc/supervisor/conf.d/sl-llm.conf
+  printf '%s\\n' \
+    '[program:sl-cloudflared]' \
+    'command=/opt/supervisor-scripts/sl-cloudflared.sh' \
+    'autostart=true' \
+    'autorestart=unexpected' \
+    'startsecs=2' \
+    'stdout_logfile=/dev/stdout' \
+    'stdout_logfile_maxbytes=0' \
+    'redirect_stderr=true' \
+    > /etc/supervisor/conf.d/sl-cloudflared.conf
   supervisorctl reread
   supervisorctl update
   supervisorctl restart sl-llm
@@ -265,8 +522,25 @@ $SSH "
 log "Starting webhook..."
 $SSH "
   cd ${REMOTE_DIR}
-  install -m 755 scripts/supervisor/sl-webhook.sh /opt/supervisor-scripts/sl-webhook.sh
-  install -m 644 scripts/supervisor/sl-webhook.conf /etc/supervisor/conf.d/sl-webhook.conf
+  printf '%s\\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'cd /workspace/sl-chatbot' \
+    'mkdir -p run_logs' \
+    'exec >>run_logs/webhook.log 2>&1' \
+    'exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8081 --env-file .env' \
+    > /opt/supervisor-scripts/sl-webhook.sh
+  chmod 755 /opt/supervisor-scripts/sl-webhook.sh
+  printf '%s\\n' \
+    '[program:sl-webhook]' \
+    'command=/opt/supervisor-scripts/sl-webhook.sh' \
+    'autostart=true' \
+    'autorestart=unexpected' \
+    'startsecs=2' \
+    'stdout_logfile=/dev/stdout' \
+    'stdout_logfile_maxbytes=0' \
+    'redirect_stderr=true' \
+    > /etc/supervisor/conf.d/sl-webhook.conf
   supervisorctl reread
   supervisorctl update
   supervisorctl restart sl-webhook

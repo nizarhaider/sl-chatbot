@@ -36,8 +36,8 @@ app/voice/llm.py
 app/voice/tts.py
 app/voice/config.py
 app/voices/chandeera-female-sample.wav
-scripts/run_local_host.sh
 scripts/setup_vastai.sh
+scripts/host_local_llm.sh
 pyproject.toml
 uv.lock
 README.md
@@ -175,7 +175,7 @@ dependency and model transfer progress as the acceptance signal.
 One-command rental and setup:
 
 ```bash
-./scripts/deploy_vastai.sh
+./scripts/setup_vastai.sh
 ```
 
 Basic machine check:
@@ -223,9 +223,9 @@ Verify local health:
 
 ```bash
 cd /workspace/sl-chatbot
-ss -ltnp | egrep '(8090|8081)' || true
-curl -sS http://127.0.0.1:8090/
-curl -sS 'http://127.0.0.1:8090/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
+ss -ltnp | egrep '(8000|8081)' || true
+curl -sS http://127.0.0.1:8081/
+curl -sS 'http://127.0.0.1:8081/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
 tail -n 80 run_logs/webhook.log
 tail -n 80 run_logs/important.log
 ```

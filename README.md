@@ -116,16 +116,17 @@ To run the complete voice application separately:
 
 ```bash
 uv sync
-bash scripts/run_local_host.sh
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8081 --env-file .env
 ```
 
-The local server listens on `http://localhost:8000`.
+The Gemma server listens on `http://localhost:8000`; the voice application
+listens on `http://localhost:8081`.
 
 Useful checks:
 
 ```bash
-curl -sS http://127.0.0.1:8000/
-curl -sS 'http://127.0.0.1:8000/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
+curl -sS http://127.0.0.1:8081/
+curl -sS 'http://127.0.0.1:8081/webhook?hub.mode=subscribe&hub.verify_token=my_secure_verify_token_123&hub.challenge=12345'
 ```
 
 ## Vast.ai Deployment
@@ -140,7 +141,7 @@ measured memory, latency, disk usage, and current provider comparison.
 One-command rental and setup from this repo:
 
 ```bash
-./scripts/deploy_vastai.sh
+./scripts/setup_vastai.sh
 ```
 
 The deployer selects the cheapest compatible verified, on-demand, single-GPU
@@ -153,19 +154,9 @@ concurrently before model prewarm.
 The deployer prefers listings with at least 500 Mbps advertised ingress; actual
 installation progress remains the acceptance signal rather than a synthetic speed
 test. The deployer tries at most three distinct offers. Preview the current choice
-without renting anything with `DRY_RUN=true ./scripts/deploy_vastai.sh`. The
+without renting anything with `DRY_RUN=true ./scripts/setup_vastai.sh`. The
 `MIN_GPU_RAM_GB` override cannot be set below the 16 GB hard floor.
 The selected host must support CUDA 12.8 or newer.
-
-Reproduce the Gemma 4 26B-A4B response-only LoRA run on a 48 GB CUDA host with:
-
-```bash
-uv run scripts/finetune_gemma26b.py
-```
-
-The script validates the pinned private dataset, reports training wall-clock
-time separately, saves local checkpoints, pushes the final adapter to Hugging
-Face, and exports the merged `Q4_K_M` GGUF used by llama.cpp.
 
 To set up an instance that has already been rented:
 
