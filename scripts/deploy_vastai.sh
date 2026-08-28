@@ -134,9 +134,15 @@ for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
       --template_hash "${TEMPLATE_HASH}" \
       --disk "${DISK_GB}" \
       --label "${INSTANCE_LABEL}" \
-      --ssh --direct --cancel-unavail)"; then
+      --ssh --direct --cancel-unavail 2>&1)"; then
+      if [[ "${CREATE_RESULT}" == *"lacks credit"* ]]; then
+        fail "Vast.ai account lacks credit; top up the account before deploying."
+      fi
       log "Offer ${OFFER_ID} became unavailable; trying another offer."
       continue
+    fi
+    if [[ "${CREATE_RESULT}" == *"lacks credit"* ]]; then
+      fail "Vast.ai account lacks credit; top up the account before deploying."
     fi
     if ! INSTANCE_ID="$(printf '%s' "${CREATE_RESULT}" | "${PYTHON}" -c \
       'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"; then
