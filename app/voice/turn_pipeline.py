@@ -207,6 +207,13 @@ class LocalGemmaTurnPipeline:
             if turn_task is not None and turn_task.done():
                 await asyncio.gather(turn_task, return_exceptions=True)
                 turn_task = None
+            # Whisper is GPU-bound and must not be queued concurrently. A
+            # relaxed VAD can otherwise create several echo/noise turns while
+            # the first transcription is still running, making real speech
+            # appear to be ignored.
+            if turn_task is not None:
+                logger.info("Dropping overlapping turn while ASR is busy")
+                continue
             turn_task = asyncio.create_task(self._handle_turn(
                 call_id=call_id,
                 caller_phone=caller_phone,
