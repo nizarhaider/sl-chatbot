@@ -409,12 +409,6 @@ class LocalGemmaTurnPipeline:
             )}, *history, {"role": "user", "content": transcript_text}]
         else:
             messages = [*history]
-        search_query = _property_search_query(history[:-1], transcript_text)
-        if not selecting_language and self._tools is not None and search_query:
-            return await self._search_properties(
-                call_id, caller_phone, search_query, announce_tool,
-                language=language or self._call_languages.get(call_id),
-            )
         for _ in range(4):
             assistant = await self._llm.chat(messages, LLM_TOOLS if self._tools else None, language=language or self._call_languages.get(call_id))
             messages.append(assistant)
@@ -456,32 +450,6 @@ class LocalGemmaTurnPipeline:
 
         self._conversation_history[call_id] = messages
         response = message_text(assistant)
-        dashboard_state.emit(call_id, "model.output", {"text": response})
-        return response
-
-    async def _search_properties(
-        self,
-        call_id: str,
-        caller_phone: str,
-        transcript_text: str,
-        announce_tool: Callable[[object], Awaitable[None]] | None,
-        language: str | None = None,
-    ) -> str:
-        assert self._tools is not None
-        arguments = {"query": transcript_text}
-        dashboard_state.emit(call_id, "tool.call", {
-            "name": "search_properties", "arguments": arguments,
-        })
-        if announce_tool is not None:
-            await announce_tool("search_properties")
-        result = await self._tools.execute(
-            "search_properties", arguments, CallContext(call_id=call_id, caller_phone=caller_phone)
-        )
-        dashboard_state.emit(call_id, "tool.result", {
-            "name": "search_properties", "result": result,
-        })
-        response = await self._llm.summarize_search(transcript_text, result, language=language)
-        self._append_assistant_turn(call_id, response)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
@@ -566,47 +534,6 @@ def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
     if tool_name == "book_appointment":
         return "Okay, I’ll confirm that appointment now. Please hold for a moment."
     return "Okay, I’ll check those details now. Please hold for a moment."
-
-
-def _property_search_query(history: list, transcript_text: str) -> str | None:
-    """Return a usable property query without relying on the model to choose a tool."""
-    caller_turns = [
-        message_text(message)
-        for message in history
-        if message.get("role") == "user" and message_text(message)
-    ]
-    # ASR often produces a location only after the caller has stated the
-    # property type and budget on earlier turns. Retain enough recent context
-    # to combine those details into one usable search request.
-    query = " ".join([*caller_turns[-6:], transcript_text]).strip()
-    normalized = query.casefold()
-    latest = transcript_text.casefold()
-    property_type_pattern = (
-        r"\b(?:apartment|apartments|house|villa|land|property)\b|"
-        r"(?:අපාර්ට්මන්ට්|අපාර්මන්ට්|අපාර්මන්ට|ගෙයක්|නිවසක්|විලා|ඉඩමක්|දේපලක්)"
-    )
-    location_pattern = (
-        r"\b(?:colombo|malabe|battaramulla|kottawa|dehiwala|piliyandala|"
-        r"kurunegala|nugegoda|rajagiriya|maharagama)\b|"
-        r"(?:කොළඹ|කළුඹ|කලුඹ|කළඹ|කොළොව|මාලබේ|බත්තරමුල්ල|කොට්ටාව|දෙහිවල|පිළියන්දල|"
-        r"කුරුණෑගල|නුගේ\s*ගොඩ|නොගේ\s*ගොඩ|රාජගිරිය|මහරගම)"
-    )
-    bedroom_pattern = (
-        r"\b(?:one|two|three|four|five|[1-9])\s*(?:bed|bedroom|bedrooms)\b|"
-        r"(?:නිදන\s*කාමර|කාමර\s*(?:එකක්|දෙකක්|තුනක්|හතරක්|පහක්))"
-    )
-    property_type = re.search(property_type_pattern, normalized)
-    location = re.search(location_pattern, normalized)
-    bedrooms = re.search(bedroom_pattern, normalized)
-    latest_detail = re.search(
-        f"{property_type_pattern}|{location_pattern}|{bedroom_pattern}", latest
-    )
-    has_usable_request = (
-        property_type and (location or bedrooms)
-    ) or (location and bedrooms)
-    if has_usable_request and latest_detail:
-        return query
-    return None
 
 
 def _is_wait_request(text: str) -> bool:

@@ -50,6 +50,26 @@ LLM_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_properties",
+            "description": (
+                "Search available properties after the caller has supplied enough useful "
+                "requirements, such as a property type plus a location or bedroom count."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The caller's confirmed property requirements.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "book_appointment",
             "description": "Book a viewing for an exact property returned by a search.",
             "parameters": {
