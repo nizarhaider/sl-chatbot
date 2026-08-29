@@ -122,6 +122,7 @@ class ReplayOutputTrack:
 
     def __init__(self) -> None:
         self._pending_seconds = 0.0
+        self._last_audio_at = 0.0
         self._changed = asyncio.Event()
         self._closed = False
         self.audio_events: list[dict[str, float | int]] = []
@@ -136,7 +137,8 @@ class ReplayOutputTrack:
             return
         duration = len(pcm) / 2 / sample_rate
         self._pending_seconds += duration
-        self.audio_events.append({"at": time.perf_counter(), "bytes": len(pcm), "sample_rate": sample_rate})
+        self._last_audio_at = time.perf_counter()
+        self.audio_events.append({"at": self._last_audio_at, "bytes": len(pcm), "sample_rate": sample_rate})
         self._changed.set()
 
     def clear_buffer(self) -> None:
@@ -164,7 +166,10 @@ class ReplayOutputTrack:
 
     async def wait_until_idle(self, timeout: float = 30.0) -> None:
         async def wait() -> None:
-            while self.pending_audio_seconds > 0.01:
+            while (
+                self.pending_audio_seconds > 0.01
+                or time.perf_counter() - self._last_audio_at < 0.5
+            ):
                 await self._changed.wait()
                 self._changed.clear()
         await asyncio.wait_for(wait(), timeout)
