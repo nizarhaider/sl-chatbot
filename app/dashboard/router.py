@@ -427,6 +427,43 @@ DASHBOARD_HTML = """
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .toolLog {
+      border-top: 1px solid var(--border);
+      margin-top: 16px;
+      padding-top: 16px;
+    }
+    .toolEvents {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+      max-height: 280px;
+      overflow: auto;
+    }
+    .toolEvent {
+      background: #f4f8fb;
+      border: 1px solid #dce8ef;
+      border-radius: 6px;
+      padding: 8px;
+    }
+    .toolEventKind {
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 760;
+    }
+    .toolEventTime {
+      color: var(--text-soft);
+      float: right;
+      font-size: 10px;
+    }
+    .toolEvent pre {
+      color: #465761;
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      margin: 5px 0 0;
+      max-height: 120px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .empty {
       color: var(--text-soft);
       padding: 48px 16px;
@@ -665,6 +702,18 @@ DASHBOARD_HTML = """
                 <div class="sideItem">
                   <div class="sideLabel">Latest Text</div>
                   <div class="sideValue" title="${escapeHtml(latestEvent ? latestEvent.text : "")}">${escapeHtml(latestEvent ? latestEvent.text : "No transcript yet")}</div>
+                </div>
+              </div>
+              <div class="toolLog">
+                <div class="sideLabel">Tool Calls</div>
+                <div class="toolEvents">
+                  ${(call.events || []).filter(event => ["tool.call", "tool.result", "tool.announced"].includes(event.kind)).slice().reverse().map(event => `
+                    <div class="toolEvent">
+                      <span class="toolEventKind">${escapeHtml(event.kind)}</span>
+                      <span class="toolEventTime">${formatTime(event.timestamp)}</span>
+                      <pre>${escapeHtml(JSON.stringify(event.data || {}, null, 2))}</pre>
+                    </div>
+                  `).join("") || '<div class="sideValue">No tool calls yet</div>'}
                 </div>
               </div>
             </aside>

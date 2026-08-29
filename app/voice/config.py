@@ -31,9 +31,7 @@ TURN_GREETING_DELAY_SECONDS = 0.5
 TURN_PLAYBACK_ECHO_TAIL_SECONDS = 0.5
 
 LOCAL_TURN_GREETING = (
-    "To speak in English, please say English. "
-    "සිංහලෙන් කතා කිරීමට, කරුණාකර “සිංහල” යැයි කියන්න. "
-    "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
+    "Hi, I'm from Homelands Properties. I can help you find properties and book appointments."
 )
 
 HOMELANDS_LOCAL_SYSTEM_PROMPT = VOICE_AGENT_PROMPT
