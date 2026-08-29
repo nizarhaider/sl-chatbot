@@ -3,7 +3,12 @@ import re
 
 import numpy as np
 
-from app.voice.config import WHISPER_DEVICE, WHISPER_MODEL
+from app.voice.config import (
+    WHISPER_DEVICE,
+    WHISPER_LANGUAGE,
+    WHISPER_MODEL,
+    WHISPER_TASK,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,8 @@ class LocalWhisperASR:
             generated_ids = model.generate(
                 input_features,
                 attention_mask=attention_mask,
+                language=WHISPER_LANGUAGE,
+                task=WHISPER_TASK,
             )
         return processor.batch_decode(
             generated_ids,

@@ -12,6 +12,8 @@ LLM_PREWARM = True
 
 WHISPER_MODEL = "openai/whisper-large-v3-turbo"
 WHISPER_DEVICE = "cuda:0"
+WHISPER_LANGUAGE = "sinhala"
+WHISPER_TASK = "transcribe"
 
 TURN_INPUT_CHUNK_MS = 40
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
