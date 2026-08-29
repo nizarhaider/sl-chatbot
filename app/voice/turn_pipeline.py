@@ -186,11 +186,6 @@ class LocalGemmaTurnPipeline:
                         vad.speech_chunks * TURN_INPUT_CHUNK_MS,
                     )
                     self._interrupt_playback(call_id, output_track)
-                    # The caller is already speaking. Do not apply the normal
-                    # post-playback echo tail after an intentional interruption,
-                    # or we discard the rest of their sentence.
-                    playback_echo_state["was_playing"] = False
-                    playback_echo_state["until"] = 0.0
                     if turn_task is not None:
                         if not turn_task.done():
                             turn_task.cancel()
