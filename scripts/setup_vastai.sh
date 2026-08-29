@@ -18,7 +18,7 @@ SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-247f2f26d31d533719c1fc4c9b5cbf93}"
 INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-whatsapp}"
 DRY_RUN="${DRY_RUN:-false}"
-STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-60}"
+STARTUP_TIMEOUT_ATTEMPTS="${STARTUP_TIMEOUT_ATTEMPTS:-24}"
 MAX_INSTANCE_ATTEMPTS="${MAX_INSTANCE_ATTEMPTS:-3}"
 
 log() { printf '▶ %s\n' "$*"; }
@@ -106,6 +106,12 @@ if active:
     print(row.get("id", ""))
 ')"
 
+destroy_unready_instance() {
+  local id="$1"
+  log "Destroying instance ${id}: it did not become SSH-ready within two minutes."
+  "${VASTAI[@]}" destroy instance "${id}" --yes >/dev/null
+}
+
 for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
   INSTANCE_ID=""
   SSH_HOST=""
@@ -146,7 +152,7 @@ for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
     log "Created instance ${INSTANCE_ID}."
   fi
 
-  log "Waiting for instance ${INSTANCE_ID} and SSH endpoint (max five minutes)..."
+  log "Waiting for instance ${INSTANCE_ID} and SSH endpoint (max two minutes)..."
   SSH_READY=false
   for attempt in $(seq 1 "${STARTUP_TIMEOUT_ATTEMPTS}"); do
   INSTANCE="$("${VASTAI[@]}" show instance "${INSTANCE_ID}")"
@@ -174,7 +180,7 @@ print("\t".join(str(value or "") for value in (
     fi
   fi
   if [ "${attempt}" -eq "${STARTUP_TIMEOUT_ATTEMPTS}" ]; then
-    log "Instance ${INSTANCE_ID} did not become SSH-ready within five minutes."
+    log "Instance ${INSTANCE_ID} did not become SSH-ready within two minutes."
     break
   fi
   if [ $((attempt % 12)) -eq 0 ]; then
@@ -184,7 +190,8 @@ print("\t".join(str(value or "") for value in (
 done
 
   if [ "${SSH_READY}" != "true" ]; then
-    fail "Instance ${INSTANCE_ID} was not SSH-ready; it was left running for inspection."
+    destroy_unready_instance "${INSTANCE_ID}"
+    fail "Instance ${INSTANCE_ID} was not SSH-ready within two minutes and was destroyed."
   fi
 
   log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID} without a post-SSH deadline..."

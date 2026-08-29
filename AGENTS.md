@@ -160,12 +160,11 @@ Before deploying a change, commit and push it to `main`. The remote setup must
 check out that `main` commit so a later task can reliably continue from the
 same source state.
 
-Startup timeout: allow a new instance no more than five minutes to become
-SSH-ready. If it is still loading or SSH is unavailable after five minutes,
-report the condition and leave the instance running for inspection. After SSH is
-ready, do not impose elapsed-time limits on package installation, model downloads,
-prewarm, health checks, or public webhook verification. Do not reject a host based
-on a single bandwidth measurement. Never destroy a host automatically.
+Startup timeout: allow a new instance no more than two minutes to become
+SSH-ready. If it is still loading or SSH is unavailable after two minutes,
+destroy it. This is the only automatic instance-destruction condition. After SSH
+is ready, do not impose elapsed-time limits on package installation, model
+downloads, prewarm, health checks, or public webhook verification.
 Prefer offers with at least 500 Mbps advertised ingress, while keeping actual
 dependency and model transfer progress as the acceptance signal.
 
