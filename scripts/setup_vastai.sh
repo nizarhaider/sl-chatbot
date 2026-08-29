@@ -444,6 +444,19 @@ $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/pyt
 log "Starting the local Q4 Gemma server and permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
+  # Expose the in-memory live-call monitor through an allocated normal port.
+  # Caddy keeps its standard token authentication in front of the dashboard.
+  if ! grep -q '^  Voice Dashboard:' /etc/portal.yaml; then
+    cat >> /etc/portal.yaml <<'YAML'
+  Voice Dashboard:
+    hostname: localhost
+    external_port: 10100
+    internal_port: 8081
+    open_path: /dashboard
+    name: Voice Dashboard
+YAML
+    supervisorctl restart caddy >/dev/null
+  fi
   mkdir -p run_logs
   install -d -m 755 /opt/supervisor-scripts
   printf '%s\\n' \
