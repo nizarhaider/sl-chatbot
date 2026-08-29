@@ -164,6 +164,16 @@ class ReplayOutputTrack:
             return self.audio_events[sequence]
         return await asyncio.wait_for(wait(), timeout)
 
+    async def wait_for_audio_after_time(self, after: float, timeout: float = 30.0) -> dict:
+        async def wait() -> dict:
+            while True:
+                for event in self.audio_events:
+                    if float(event["at"]) >= after:
+                        return event
+                await self._changed.wait()
+                self._changed.clear()
+        return await asyncio.wait_for(wait(), timeout)
+
     async def wait_until_idle(self, timeout: float = 30.0) -> None:
         async def wait() -> None:
             while (
@@ -265,7 +275,7 @@ async def run_case(
         language_end = await input_track.feed(clips[0][1], pace)
         if expected_interruptions is not None:
             await wait_for_interruptions(output_track, expected_interruptions)
-        language_first = await output_track.wait_for_audio_after(language_audio_index, timeout=45.0)
+        language_first = await output_track.wait_for_audio_after_time(language_end, timeout=45.0)
         language_utterance = _utterance(clips[0][0], language_end, language_first)
         utterances.append(language_utterance)
         if language_utterance["first_audio_latency_ms"] > 5000:
@@ -310,7 +320,7 @@ async def run_case(
             speech_end = await input_track.feed(pcm, pace)
             if expected_interruptions is not None:
                 await wait_for_interruptions(output_track, expected_interruptions)
-            audible = await output_track.wait_for_audio_after(first_audio_index, timeout=45.0)
+            audible = await output_track.wait_for_audio_after_time(speech_end, timeout=45.0)
             item = _utterance(clip_path, speech_end, audible)
             utterances.append(item)
             if item["first_audio_latency_ms"] > 5000:
