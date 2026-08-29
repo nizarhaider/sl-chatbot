@@ -9,7 +9,7 @@ cd "${ROOT_DIR}"
 
 if [ "$#" -eq 0 ]; then
 DISK_GB="${DISK_GB:-50}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-16}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-24}"
 MIN_CPU_CORES="${MIN_CPU_CORES:-8}"
 MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-500}"
 MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-12.8}"
@@ -28,7 +28,7 @@ command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
-[ "${MIN_GPU_RAM_GB}" -ge 16 ] || fail "Voice runtime deployments require at least 16 GB VRAM"
+[ "${MIN_GPU_RAM_GB}" -ge 24 ] || fail "Gemma Q4 voice runtime deployments require at least 24 GB VRAM"
 [[ "${MIN_CPU_CORES}" =~ ^[0-9]+$ ]] || fail "MIN_CPU_CORES must be numeric"
 [[ "${MIN_INTERNET_DOWN_MBIT}" =~ ^[0-9]+$ ]] || fail "MIN_INTERNET_DOWN_MBIT must be numeric"
 
@@ -399,7 +399,7 @@ $SSH "
     'cd /workspace/sl-chatbot' \
     'mkdir -p run_logs' \
     'exec >>run_logs/llm.log 2>&1' \
-    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 4096 --flash-attn on --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
+    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 4096 --parallel 1 --batch-size 256 --ubatch-size 256 --flash-attn on --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
     > /opt/supervisor-scripts/sl-llm.sh
   printf '%s\\n' \
     '#!/usr/bin/env bash' \
