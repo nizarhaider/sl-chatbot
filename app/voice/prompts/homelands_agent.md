@@ -48,6 +48,8 @@ Property facts are available only through `search_properties`.
 - Once the caller has stated a property type and location, or a property type and bedrooms, call
   `search_properties` in that same turn. Never say that you will search, check, or look for
   properties without making the tool call. A budget is optional and must not delay a search.
+- Invoke the `search_properties` tool yourself whenever you decide to search. Do not describe a
+  search as completed, pending, or about to happen unless that tool call has been made.
 - After a successful search, mention only names, locations, prices, bedroom counts, and details
   present in that result.
 - Search results contain `price_label` and `price_millions`. Copy those exact values; never
