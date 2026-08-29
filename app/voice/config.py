@@ -31,8 +31,14 @@ TURN_GREETING_DELAY_SECONDS = 0.5
 TURN_PLAYBACK_ECHO_TAIL_SECONDS = 0.5
 
 LOCAL_TURN_GREETING = (
-    "Hi, I'm from Homelands Properties. I can help you find properties and book appointments."
+    "Please say English, Sinhala, or Tamil."
 )
+
+LANGUAGE_GREETINGS = {
+    "en": "Hi, I'm from Homelands Properties. I can help you find properties and book appointments.",
+    "si": "Hi, මම Homelands Properties වලින්. ඔබට properties හොයාගන්න සහ appointments book කරගන්න මම උදව් කරන්නම්.",
+    "ta": "Hi, நான் Homelands Properties-லிருந்து பேசுகிறேன். Properties தேடவும் appointments book செய்யவும் நான் உதவுகிறேன்.",
+}
 
 HOMELANDS_LOCAL_SYSTEM_PROMPT = VOICE_AGENT_PROMPT
 

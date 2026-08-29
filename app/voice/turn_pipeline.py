@@ -24,6 +24,7 @@ from app.voice.config import (
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
     LLM_PREWARM,
+    LANGUAGE_GREETINGS,
 )
 from app.voice.llm import LocalLlmClient, message_text
 from app.voice.tts import RealtimeOmniVoiceTTS
@@ -265,12 +266,14 @@ class LocalGemmaTurnPipeline:
             self._call_languages[call_id] = language
             self._language_selection_pending.discard(call_id)
             dashboard_state.emit(call_id, "language.selected", {"language": language})
-            response_text, llm_ms = await self._timed_response(
-                call_id, caller_phone, transcript_text, None, language=language, selecting_language=True
-            )
-            if response_text:
-                dashboard_state.add_transcript(call_id, "assistant", response_text)
-                await self._timed_speak(call_id, response_text, output_track, playback_generation)
+            response_text = LANGUAGE_GREETINGS[language]
+            dashboard_state.emit(call_id, "pipeline.response_ready", {
+                "text": response_text,
+                "duration_ms": 0,
+                "language": language,
+            })
+            dashboard_state.add_transcript(call_id, "assistant", response_text)
+            await self._timed_speak(call_id, response_text, output_track, playback_generation)
             return
 
         if _is_wait_request(transcript_text):
