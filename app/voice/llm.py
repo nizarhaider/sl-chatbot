@@ -38,6 +38,34 @@ class LocalLlmClient:
             response.raise_for_status()
         return response.json()["choices"][0]["message"]
 
+    async def classify_language(self, transcript_text: str) -> str | None:
+        """Classify a caller's language-selection utterance without keyword matching."""
+        payload = {
+            "model": LLM_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a language picker for a phone call. Decide whether the caller's "
+                        "utterance is confidently Sinhala, Tamil, or English. Return exactly one "
+                        "token: si, ta, en, or unclear. Do not explain."
+                    ),
+                },
+                {"role": "user", "content": transcript_text},
+            ],
+            "temperature": 0.0,
+            "max_tokens": 4,
+        }
+        async with self._lock:
+            response = await self._client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+        result = response.json()["choices"][0]["message"].get("content") or ""
+        normalized = result.strip().casefold()
+        for language in ("si", "ta", "en"):
+            if normalized == language or normalized.startswith(language + " "):
+                return language
+        return None
+
     async def summarize_search(
         self,
         transcript_text: str,
