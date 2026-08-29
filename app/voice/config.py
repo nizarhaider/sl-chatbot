@@ -10,7 +10,7 @@ LLM_MODEL = "unsloth/gemma-4-E4B-it-GGUF"
 LLM_TEMPERATURE = 1.0
 LLM_PREWARM = True
 
-WHISPER_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
+WHISPER_MODEL = "openai/whisper-large-v3-turbo"
 WHISPER_DEVICE = "cuda:0"
 
 TURN_INPUT_CHUNK_MS = 40
