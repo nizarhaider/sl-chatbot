@@ -236,10 +236,8 @@ class LocalGemmaTurnPipeline:
         if call_id in self._language_selection_pending:
             language = _detect_language_selection(transcript_text)
             if language is None:
-                response_text = LOCAL_TURN_GREETING
                 dashboard_state.emit(call_id, "language.selection_retry", {"transcript": transcript_text})
-                dashboard_state.add_transcript(call_id, "assistant", response_text)
-                await self._timed_speak(call_id, response_text, output_track, playback_generation)
+                logger.info("Language selection not recognized for %s; remaining silent", call_id)
                 return
             self._call_languages[call_id] = language
             self._language_selection_pending.discard(call_id)
