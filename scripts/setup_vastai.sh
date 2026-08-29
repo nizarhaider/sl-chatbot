@@ -223,7 +223,7 @@ fi
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
-# SPEAK-ASR/whisper-medium-si-merged ASR model and local Gemma 4 E4B QAT GGUF.
+# SPEAK-ASR/whisper-medium-si-merged ASR model and local 4-bit Gemma 4 E4B.
 # =============================================================================
 
 set -euo pipefail
@@ -235,12 +235,7 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
-LLM_PORT="${LLM_PORT:-8000}"
-LLM_MODEL="${LLM_MODEL:-google/gemma-4-E4B-it-qat-q4_0-gguf}"
-LLM_MODEL_REPO="google/gemma-4-E4B-it-qat-q4_0-gguf"
-LLM_MODEL_FILE="gemma-4-E4B_q4_0-it.gguf"
-LLM_MODEL_DIR="/workspace/models/gemma-4-E4B-it-qat-q4_0"
-LLAMA_VERSION="${LLAMA_VERSION:-b10612}"
+LLM_MODEL="google/gemma-4-E4B-it"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -275,8 +270,7 @@ $SSH "
 
 log ".env sync..."
 ENV_SYNC_FILE="$(mktemp)"
-S3_CACHE_FILE="$(mktemp)"
-cleanup_env_sync() { rm -f "${ENV_SYNC_FILE}" "${S3_CACHE_FILE}"; }
+cleanup_env_sync() { rm -f "${ENV_SYNC_FILE}"; }
 trap cleanup_env_sync EXIT
 
 if [ -f .env ]; then
@@ -348,35 +342,6 @@ fi
 
 $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
 
-if command -v aws >/dev/null 2>&1 && aws sts get-caller-identity >/dev/null 2>&1; then
-  log "Creating temporary S3 model-cache links..."
-  uv run --quiet --no-project --with boto3 --with 'botocore[crt]' \
-    python - "${LLM_MODEL_FILE}" > "${S3_CACHE_FILE}" <<'PY'
-import shlex
-import sys
-
-import boto3
-
-bucket = "serendibai-models"
-key = f"runtime-cache/{sys.argv[1]}"
-client = boto3.client("s3", region_name="ap-southeast-1")
-for variable, operation in (
-    ("S3_CACHE_GET_URL", "get_object"),
-    ("S3_CACHE_PUT_URL", "put_object"),
-):
-    url = client.generate_presigned_url(
-        operation,
-        Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=21600,
-    )
-    print(f"{variable}={shlex.quote(url)}")
-PY
-  $SCP "${S3_CACHE_FILE}" "${REMOTE}:/tmp/sl-chatbot-s3-cache.env"
-else
-  : > "${S3_CACHE_FILE}"
-  log "S3 credentials unavailable; using Hugging Face directly."
-fi
-
 log "Waiting for base image package setup..."
 $SSH "
   attempt=0
@@ -392,65 +357,26 @@ $SSH "
 log "Installing minimal system packages..."
 $SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl"
 
-log "Installing Python runtime and prebuilt llama.cpp while downloading Gemma in parallel..."
+log "Installing the minimal Python runtime..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
-  env -u UV_NO_CACHE uv sync --frozen --no-dev &
-  uv_pid=\$!
-
-  (
-    if [ ! -x /root/.local/bin/llama ]; then
-      curl --fail --location --retry 3 https://llama.app/install.sh \
-        | env LLAMA_VERSION=${LLAMA_VERSION} sh
-    fi
-  ) &
-  llama_pid=\$!
-
-  (
-    mkdir -p ${LLM_MODEL_DIR}
-    model_path=${LLM_MODEL_DIR}/${LLM_MODEL_FILE}
-    cache_hit=false
-    if [ -s /tmp/sl-chatbot-s3-cache.env ]; then
-      . /tmp/sl-chatbot-s3-cache.env
-      if curl --fail --location --retry 2 --continue-at - \
-        \"\$S3_CACHE_GET_URL\" --output \"\$model_path\"; then
-        cache_hit=true
-      fi
-    fi
-    if [ \"\$cache_hit\" != true ]; then
-      hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
-      test -n \"\$hf_token\"
-      curl --fail --location --retry 3 --continue-at - \
-        -H \"Authorization: Bearer \$hf_token\" \
-        https://huggingface.co/${LLM_MODEL_REPO}/resolve/main/${LLM_MODEL_FILE} \
-        --output \"\$model_path\"
-      if [ -n \"\${S3_CACHE_PUT_URL:-}\" ]; then
-        curl --fail --silent --show-error --request PUT \
-          --upload-file \"\$model_path\" \"\$S3_CACHE_PUT_URL\" \
-          && echo 'Seeded the S3 Gemma cache.' \
-          || echo 'WARNING: Could not seed the S3 Gemma cache.'
-      fi
-    fi
-    rm -f /tmp/sl-chatbot-s3-cache.env
-  ) &
-  model_pid=\$!
-
-  wait \$uv_pid
-  wait \$llama_pid
-  wait \$model_pid
+  env -u UV_NO_CACHE uv sync --frozen --no-dev
 "
 
-log "Pre-downloading Whisper and OmniVoice concurrently into the shared Hugging Face cache..."
+log "Pre-downloading Gemma, Whisper, and OmniVoice concurrently into the shared Hugging Face cache..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
   hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
   test -n \"\$hf_token\"
+  HF_TOKEN=\"\$hf_token\" .venv/bin/hf download ${LLM_MODEL} &
+  llm_pid=\$!
   HF_TOKEN=\"\$hf_token\" .venv/bin/hf download SPEAK-ASR/whisper-medium-si-merged &
   asr_pid=\$!
   HF_TOKEN=\"\$hf_token\" .venv/bin/hf download 2broke2code/serendib-omnivoice-finetuned-v2 &
   tts_pid=\$!
+  wait \$llm_pid
   wait \$asr_pid
   wait \$tts_pid
 "
@@ -458,7 +384,7 @@ $SSH "
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
 
-log "Starting local Gemma and the permanent Cloudflare tunnel..."
+log "Starting the permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
   mkdir -p run_logs
@@ -468,29 +394,12 @@ $SSH "
     'set -euo pipefail' \
     'cd /workspace/sl-chatbot' \
     'mkdir -p run_logs' \
-    'exec >>run_logs/llm.log 2>&1' \
-    'exec /root/.local/bin/llama serve --model /workspace/models/gemma-4-E4B-it-qat-q4_0/gemma-4-E4B_q4_0-it.gguf --alias google/gemma-4-E4B-it-qat-q4_0-gguf --n-gpu-layers 99 --ctx-size 4096 --flash-attn on --jinja --host 127.0.0.1 --port 8000' \
-    > /opt/supervisor-scripts/sl-llm.sh
-  printf '%s\\n' \
-    '#!/usr/bin/env bash' \
-    'set -euo pipefail' \
-    'cd /workspace/sl-chatbot' \
-    'mkdir -p run_logs' \
     'exec >>run_logs/cloudflared.log 2>&1' \
     'set -a; . ./.env; set +a' \
     'exec /opt/instance-tools/bin/cloudflared tunnel run' \
     > /opt/supervisor-scripts/sl-cloudflared.sh
-  chmod 755 /opt/supervisor-scripts/sl-llm.sh /opt/supervisor-scripts/sl-cloudflared.sh
-  printf '%s\\n' \
-    '[program:sl-llm]' \
-    'command=/opt/supervisor-scripts/sl-llm.sh' \
-    'autostart=true' \
-    'autorestart=unexpected' \
-    'startsecs=2' \
-    'stdout_logfile=/dev/stdout' \
-    'stdout_logfile_maxbytes=0' \
-    'redirect_stderr=true' \
-    > /etc/supervisor/conf.d/sl-llm.conf
+  rm -f /opt/supervisor-scripts/sl-llm.sh /etc/supervisor/conf.d/sl-llm.conf
+  chmod 755 /opt/supervisor-scripts/sl-cloudflared.sh
   printf '%s\\n' \
     '[program:sl-cloudflared]' \
     'command=/opt/supervisor-scripts/sl-cloudflared.sh' \
@@ -503,21 +412,7 @@ $SSH "
     > /etc/supervisor/conf.d/sl-cloudflared.conf
   supervisorctl reread
   supervisorctl update
-  supervisorctl restart sl-llm
   supervisorctl restart sl-cloudflared
-"
-
-log "Waiting for local Gemma to become ready..."
-$SSH "
-  attempt=0
-  until curl -fsS http://127.0.0.1:${LLM_PORT}/v1/models >/dev/null; do
-    attempt=\$((attempt + 1))
-    if [ \$((attempt % 15)) -eq 0 ]; then
-      echo 'Still waiting for local Gemma... attempt' \$attempt
-      tail -n 20 ${REMOTE_DIR}/run_logs/llm.log || true
-    fi
-    sleep 2
-  done
 "
 log "Starting webhook..."
 $SSH "
@@ -599,6 +494,6 @@ log "Webhook URL:"
 log "  ${PUBLIC_WEBHOOK_URL}"
 log ""
 log "Useful commands:"
-log "  Service status:     ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'supervisorctl status sl-llm sl-webhook sl-cloudflared'"
+log "  Service status:     ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'supervisorctl status sl-webhook sl-cloudflared'"
 log "  Watch logs:         ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/webhook.log'"
 log "  Watch important:    ssh -i ${SSH_KEY} -p ${SSH_PORT} ${REMOTE} 'tail -f ${REMOTE_DIR}/run_logs/important.log'"

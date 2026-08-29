@@ -2,7 +2,7 @@
 
 Voice-only WhatsApp assistant powered by local models on a GPU host.
 
-Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, official Gemma 4 E4B QAT GGUF through CUDA llama.cpp, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
+Incoming WhatsApp text messages are intentionally ignored. The live call path uses local Whisper, official Gemma 4 E4B through 4-bit Transformers inference, and the SerendibAI OmniVoice V2 fine-tune through RealtimeTTS. Do not add hosted LLM calls to the voice path.
 
 ## Architecture
 
@@ -147,9 +147,9 @@ The deployer selects the cheapest compatible verified, on-demand, single-GPU
 offer with at least 16 GB VRAM and rents a 50 GB disk,
 waits for SSH, then runs the setup and health checks. It terminates a host only if
 it does not become SSH-ready within five minutes or an explicit setup command
-fails. After SSH is ready there is no elapsed-time limit. Python installation, the prebuilt CUDA llama binary, and
-the 4B Gemma download run concurrently; Whisper and OmniVoice downloads then run
-concurrently before model prewarm.
+fails. After SSH is ready there is no elapsed-time limit. The locked Python
+runtime installs first, then Gemma, Whisper, and OmniVoice download concurrently
+before model prewarm.
 The deployer prefers listings with at least 500 Mbps advertised ingress; actual
 installation progress remains the acceptance signal rather than a synthetic speed
 test. The deployer tries at most three distinct offers. Preview the current choice
@@ -163,7 +163,7 @@ To set up an instance that has already been rented:
 REMOTE_BRANCH=<branch-name> ./scripts/setup_vastai.sh <SSH_PORT> <HOST_IP>
 ```
 
-The setup script prepares `/workspace/sl-chatbot`, syncs `.env`, installs only the locked runtime dependencies, installs llama.cpp's GPU-matched prebuilt binary, downloads only the text GGUF (not the multimodal projector), starts the supervised services, and verifies the permanent webhook URL.
+The setup script prepares `/workspace/sl-chatbot`, syncs `.env`, installs only the locked runtime dependencies, pre-downloads the native Gemma checkpoint with Whisper and OmniVoice, starts the supervised services, and verifies the permanent webhook URL.
 
 Manual dependency sync on the remote host:
 
@@ -176,8 +176,8 @@ Restart and inspect the supervised runtime:
 
 ```bash
 cd /workspace/sl-chatbot
-supervisorctl restart sl-llm sl-webhook sl-cloudflared
-supervisorctl status sl-llm sl-webhook sl-cloudflared
+supervisorctl restart sl-webhook sl-cloudflared
+supervisorctl status sl-webhook sl-cloudflared
 ```
 
 ## Verification

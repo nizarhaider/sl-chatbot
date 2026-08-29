@@ -4,8 +4,7 @@ from pathlib import Path
 VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent.md"
 VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
-LLM_BASE_URL = "http://127.0.0.1:8000/v1"
-LLM_MODEL = "google/gemma-4-E4B-it-qat-q4_0-gguf"
+LLM_MODEL = "google/gemma-4-E4B-it"
 LLM_TEMPERATURE = 0.2
 LLM_PREWARM = True
 

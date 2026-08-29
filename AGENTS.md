@@ -8,7 +8,7 @@ The current voice path is:
 WhatsApp Cloud webhook -> FastAPI /webhook
 WhatsApp Calling SDP offer -> aiortc peer connection
 Inbound WhatsApp audio -> local VAD -> local Whisper STT
-Whisper transcript -> official Gemma 4 E4B QAT Q4_0 GGUF via CUDA llama.cpp
+Whisper transcript -> official Gemma 4 E4B via local 4-bit Transformers
 Gemma text -> RealtimeTTS OmniVoice
 OmniVoice PCM -> outbound aiortc audio track -> WhatsApp call
 ```
@@ -119,8 +119,8 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to official Gemma 4 E4B QAT Q4_0 GGUF through the
-   OpenAI-compatible CUDA llama.cpp server.
+5. Sends transcript text to official Gemma 4 E4B loaded in-process with
+   Transformers and bitsandbytes NF4 quantization.
 6. Sends Gemma response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
 
@@ -130,9 +130,8 @@ Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, 
 Use `SPEAK-ASR/whisper-medium-si-merged` for Sinhala call audio. The general multilingual Whisper
 model did not meet live-call quality requirements for this runtime.
 
-The llama.cpp server loads all Gemma layers on the GPU with `--n_gpu_layers -1`.
-Property searches remain deterministic in the turn pipeline; do not depend on
-server-side tool-call parsing for the Q4_0 GGUF runtime.
+Gemma loads with Transformers' `device_map="auto"` and 4-bit NF4 quantization.
+Property searches remain deterministic in the turn pipeline.
 
 ## Environment Variables That Matter
 
@@ -152,8 +151,8 @@ Rental policy: use a 16 GB VRAM on-demand instance and a 50 GB disk for the
 voice runtime. Select the cheapest compatible, verified listing that meets that
 memory floor. Use 48 GB VRAM and a 200 GB disk
 for fine-tuning, merging, and initial full-stack validation. Use RTX 30/40-series
-hosts; the deployer installs llama.cpp's GPU-matched prebuilt binary while
-downloading the Python runtime and Gemma concurrently.
+hosts; the deployer installs the minimal locked Python runtime and downloads
+Gemma, Whisper, and OmniVoice concurrently.
 Leave a deployed instance running until the user confirms the WhatsApp
 call is finished, then destroy it promptly.
 
@@ -216,8 +215,8 @@ Use the Vast base image's Supervisor services.
 
 ```bash
 cd /workspace/sl-chatbot
-supervisorctl restart sl-llm sl-webhook sl-cloudflared
-supervisorctl status sl-llm sl-webhook sl-cloudflared
+supervisorctl restart sl-webhook sl-cloudflared
+supervisorctl status sl-webhook sl-cloudflared
 ```
 
 Verify local health:
