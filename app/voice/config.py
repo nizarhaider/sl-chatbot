@@ -6,7 +6,8 @@ VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 LLM_BASE_URL = "http://127.0.0.1:8000/v1"
 LLM_MODEL = "unsloth/gemma-4-E4B-it-GGUF"
-LLM_TEMPERATURE = 0.2
+# Gemma 4's recommended sampling defaults; reasoning is disabled server-side.
+LLM_TEMPERATURE = 1.0
 LLM_PREWARM = True
 
 WHISPER_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
