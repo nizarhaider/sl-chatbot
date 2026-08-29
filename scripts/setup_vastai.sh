@@ -408,7 +408,7 @@ $SSH "
     'mkdir -p run_logs' \
     'exec >>run_logs/cloudflared.log 2>&1' \
     'set -a; . ./.env; set +a' \
-    'exec /opt/instance-tools/bin/cloudflared tunnel run' \
+    'exec /opt/instance-tools/bin/cloudflared tunnel run --token "\$CLOUDFLARED_TUNNEL_TOKEN"' \
     > /opt/supervisor-scripts/sl-cloudflared.sh
   chmod 755 /opt/supervisor-scripts/sl-llm.sh /opt/supervisor-scripts/sl-cloudflared.sh
   printf '%s\\n' \
