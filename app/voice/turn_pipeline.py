@@ -459,38 +459,6 @@ class LocalGemmaTurnPipeline:
             {"role": "assistant", "content": response_text},
         ])
 
-    async def _speak(self, call_id, text, output_track, playback_generation):
-        prepared = self._prepare_tts_text(text)
-        if not prepared:
-            return 0.0
-
-        generation_id = playback_generation.get(call_id, 0)
-        loop = asyncio.get_running_loop()
-
-        def on_audio_chunk(chunk: bytes, sample_rate: int) -> None:
-            if playback_generation.get(call_id, 0) == generation_id:
-                loop.call_soon_threadsafe(output_track.add_pcm_audio, chunk, sample_rate)
-
-        audio_seconds = await self._tts.speak(
-            prepared, on_audio_chunk, language=self._call_languages.get(call_id)
-        )
-        await asyncio.sleep(0)
-        if playback_generation.get(call_id, 0) != generation_id:
-            logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
-            return 0.0
-        return audio_seconds
-
-
-def _detect_language_selection(text: str) -> str | None:
-    normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
-    if re.search(r"(?:\bsinhala(?:\s+language)?\b|සිංහල(?:ෙන්| භාෂාව)?|සෙංහල|සින්හල)", normalized):
-        return "si"
-    if re.search(r"(?:\btamil(?:\s+language)?\b|தமிழ்(?:இல்|ல்| மொழி)?)", normalized):
-        return "ta"
-    if re.search(r"(?:\benglish(?:\s+language)?\b|ඉංග්‍රීසි(?:යෙන්| භාෂාව)?|ஆங்கிலம்(?:ல்| மொழி)?)", normalized):
-        return "en"
-    return None
-
     def _log_turn_timings(
         self,
         call_id,
@@ -517,6 +485,38 @@ def _detect_language_selection(text: str) -> str | None:
             after_vad_ms,
             total_turn_ms,
         )
+
+    async def _speak(self, call_id, text, output_track, playback_generation):
+        prepared = self._prepare_tts_text(text)
+        if not prepared:
+            return 0.0
+
+        generation_id = playback_generation.get(call_id, 0)
+        loop = asyncio.get_running_loop()
+
+        def on_audio_chunk(chunk: bytes, sample_rate: int) -> None:
+            if playback_generation.get(call_id, 0) == generation_id:
+                loop.call_soon_threadsafe(output_track.add_pcm_audio, chunk, sample_rate)
+
+        audio_seconds = await self._tts.speak(
+            prepared, on_audio_chunk, language=self._call_languages.get(call_id)
+        )
+        await asyncio.sleep(0)
+        if playback_generation.get(call_id, 0) != generation_id:
+            logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
+            return 0.0
+        return audio_seconds
+
+
+def _detect_language_selection(text: str) -> str | None:
+    normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
+    if re.search(r"(?:\bsinhala(?:\s+language)?\b|සිංහල(?:ෙන්| භාෂාව)?|සිංහලා|සෙංහල|සින්හල)", normalized):
+        return "si"
+    if re.search(r"(?:\btamil(?:\s+language)?\b|தமிழ்(?:இல்|ல்| மொழி)?)", normalized):
+        return "ta"
+    if re.search(r"(?:\benglish(?:\s+language)?\b|ඉංග්‍රීසි(?:යෙන්| භාෂාව)?|ஆங்கிலம்(?:ல்| மொழி)?)", normalized):
+        return "en"
+    return None
 
 
 def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
