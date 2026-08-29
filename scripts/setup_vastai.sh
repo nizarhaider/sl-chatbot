@@ -469,7 +469,7 @@ log "Waiting without a deadline for model prewarm..."
 $SSH "
   attempt=0
   until ss -ltnp | grep ${APP_PORT} >/dev/null 2>&1 \
-    && curl -fsS http://127.0.0.1:${APP_PORT}/ | grep -q ready; do
+    && curl -fsS http://127.0.0.1:${APP_PORT}/ | grep -q 'WhatsApp Webhook Server is running'; do
     attempt=\$((attempt + 1))
     if [ \$((attempt % 15)) -eq 0 ]; then
       echo 'Still waiting for port ${APP_PORT}... attempt' \$attempt '(model download/prewarm may still be running)'
