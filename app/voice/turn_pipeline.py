@@ -24,7 +24,6 @@ from app.voice.config import (
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
     LLM_PREWARM,
-    LANGUAGE_GREETINGS,
 )
 from app.voice.llm import LocalLlmClient, message_text
 from app.voice.tts import RealtimeOmniVoiceTTS
@@ -251,29 +250,20 @@ class LocalGemmaTurnPipeline:
         dashboard_state.emit(call_id, "pipeline.asr_complete", {"text": transcript_text, "duration_ms": transcript_ms})
 
         if call_id in self._language_selection_pending:
-            language = await self._llm.classify_language(transcript_text)
-            dashboard_state.emit(call_id, "language.picker_result", {
-                "transcript": transcript_text,
-                "language": language,
-                "confident": language is not None,
-            })
+            language = _detect_language_selection(transcript_text)
             if language is None:
                 dashboard_state.emit(call_id, "language.selection_retry", {"transcript": transcript_text})
-                clarification = "Please say English, Sinhala, or Tamil."
-                dashboard_state.add_transcript(call_id, "assistant", clarification)
-                await self._timed_speak(call_id, clarification, output_track, playback_generation)
+                logger.info("Language selection not recognized for %s; remaining silent", call_id)
                 return
             self._call_languages[call_id] = language
             self._language_selection_pending.discard(call_id)
             dashboard_state.emit(call_id, "language.selected", {"language": language})
-            response_text = LANGUAGE_GREETINGS[language]
-            dashboard_state.emit(call_id, "pipeline.response_ready", {
-                "text": response_text,
-                "duration_ms": 0,
-                "language": language,
-            })
-            dashboard_state.add_transcript(call_id, "assistant", response_text)
-            await self._timed_speak(call_id, response_text, output_track, playback_generation)
+            response_text, llm_ms = await self._timed_response(
+                call_id, caller_phone, transcript_text, None, language=language, selecting_language=True
+            )
+            if response_text:
+                dashboard_state.add_transcript(call_id, "assistant", response_text)
+                await self._timed_speak(call_id, response_text, output_track, playback_generation)
             return
 
         if _is_wait_request(transcript_text):
@@ -523,6 +513,17 @@ class LocalGemmaTurnPipeline:
             logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
             return 0.0
         return audio_seconds
+
+
+def _detect_language_selection(text: str) -> str | None:
+    normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
+    if re.search(r"(?:\bsinhala(?:\s+language)?\b|සිංහල(?:ෙන්| භාෂාව)?|සිංහලා|සෙංහල|සින්හල)", normalized):
+        return "si"
+    if re.search(r"(?:\btamil(?:\s+language)?\b|தமிழ்(?:இல்|ல்| மொழி)?)", normalized):
+        return "ta"
+    if re.search(r"(?:\benglish(?:\s+language)?\b|ඉංග්‍රීසි(?:යෙන්| භාෂාව)?|ஆங்கிலம்(?:ல்| மொழி)?)", normalized):
+        return "en"
+    return None
 
 
 def _tool_wait_message(transcript_text: str, tool_name: str) -> str:

@@ -7,7 +7,6 @@ import httpx
 
 from app.voice.config import (
     HOMELANDS_LOCAL_SYSTEM_PROMPT,
-    LANGUAGE_PICKER_PROMPT,
     LLM_BASE_URL,
     LLM_MODEL,
     LLM_TEMPERATURE,
@@ -43,30 +42,6 @@ class LocalLlmClient:
             response = await self._client.post("/chat/completions", json=payload)
             response.raise_for_status()
         return response.json()["choices"][0]["message"]
-
-    async def classify_language(self, transcript_text: str) -> str | None:
-        """Classify a caller's language-selection utterance without keyword matching."""
-        payload = {
-            "model": LLM_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": LANGUAGE_PICKER_PROMPT,
-                },
-                {"role": "user", "content": transcript_text},
-            ],
-            "temperature": 0.0,
-            "max_tokens": 4,
-        }
-        async with self._lock:
-            response = await self._client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-        result = response.json()["choices"][0]["message"].get("content") or ""
-        normalized = result.strip().casefold()
-        for language in ("si", "ta", "en"):
-            if normalized == language or normalized.startswith(language + " "):
-                return language
-        return None
 
     async def summarize_search(
         self,

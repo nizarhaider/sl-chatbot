@@ -3,8 +3,6 @@ from pathlib import Path
 
 VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent.md"
 VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
-LANGUAGE_PICKER_PROMPT_PATH = Path(__file__).with_name("prompts") / "language_picker.md"
-LANGUAGE_PICKER_PROMPT = LANGUAGE_PICKER_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 LLM_BASE_URL = "http://127.0.0.1:8000/v1"
 LLM_MODEL = "unsloth/gemma-4-E4B-it-GGUF"
@@ -12,7 +10,7 @@ LLM_MODEL = "unsloth/gemma-4-E4B-it-GGUF"
 LLM_TEMPERATURE = 1.0
 LLM_PREWARM = True
 
-WHISPER_MODEL = "Lingalingeswaran/whisper-small-sinhala"
+WHISPER_MODEL = "SPEAK-ASR/whisper-medium-si-merged"
 WHISPER_DEVICE = "cuda:0"
 WHISPER_LANGUAGE = "sinhala"
 WHISPER_TASK = "transcribe"
@@ -31,14 +29,10 @@ TURN_GREETING_DELAY_SECONDS = 0.5
 TURN_PLAYBACK_ECHO_TAIL_SECONDS = 0.5
 
 LOCAL_TURN_GREETING = (
-    "Please say English, Sinhala, or Tamil."
+    "To speak in English, please say English. "
+    "සිංහලෙන් කතා කිරීමට, කරුණාකර “සිංහල” යැයි කියන්න. "
+    "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
 )
-
-LANGUAGE_GREETINGS = {
-    "en": "Hi, I'm from Homelands Properties. I can help you find properties and book appointments.",
-    "si": "Hi, මම Homelands Properties වලින්. ඔබට properties හොයාගන්න සහ appointments book කරගන්න මම උදව් කරන්නම්.",
-    "ta": "Hi, நான் Homelands Properties-லிருந்து பேசுகிறேன். Properties தேடவும் appointments book செய்யவும் நான் உதவுகிறேன்.",
-}
 
 HOMELANDS_LOCAL_SYSTEM_PROMPT = VOICE_AGENT_PROMPT
 
