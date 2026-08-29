@@ -10,6 +10,7 @@ class VadState:
         self.silence_chunks = 0
         self.speech_chunks = 0
         self._utterance_buffer = bytearray()
+        self._candidate_chunks: list[bytes] = []
 
     def start(self) -> None:
         self.is_speaking = True
@@ -17,6 +18,24 @@ class VadState:
         self.silence_chunks = 0
         self.speech_chunks = 0
         self._utterance_buffer.clear()
+        self._candidate_chunks.clear()
+
+    def add_candidate(self, chunk: bytes) -> None:
+        self._candidate_chunks.append(chunk)
+
+    @property
+    def candidate_count(self) -> int:
+        return len(self._candidate_chunks)
+
+    def promote_candidate(self) -> None:
+        candidates = self._candidate_chunks
+        self._candidate_chunks = []
+        self.start()
+        for chunk in candidates:
+            self.add_speech(chunk)
+
+    def clear_candidate(self) -> None:
+        self._candidate_chunks.clear()
 
     def add_speech(self, chunk: bytes) -> None:
         self._utterance_buffer.extend(chunk)
@@ -34,6 +53,7 @@ class VadState:
         self.silence_chunks = 0
         self.speech_chunks = 0
         self._utterance_buffer.clear()
+        self._candidate_chunks.clear()
         return turn
 
     def discard(self) -> None:
@@ -43,6 +63,7 @@ class VadState:
         self.silence_chunks = 0
         self.speech_chunks = 0
         self._utterance_buffer.clear()
+        self._candidate_chunks.clear()
 
 
 class TurnAudio:

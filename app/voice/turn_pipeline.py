@@ -19,6 +19,8 @@ from app.voice.config import (
     TURN_INPUT_CHUNK_MS,
     TURN_INPUT_CHUNK_SIZE,
     TURN_MIN_AUDIO_MS,
+    TURN_SPEECH_START_CHUNKS,
+    TURN_SPEECH_START_THRESHOLD,
     TURN_PLAYBACK_ECHO_TAIL_SECONDS,
     TURN_SILENCE_THRESHOLD,
     LLM_PREWARM,
@@ -162,11 +164,17 @@ class LocalGemmaTurnPipeline:
                 vad.discard()
                 continue
 
-            if pcm_rms(chunk) > TURN_SILENCE_THRESHOLD:
+            chunk_rms = pcm_rms(chunk)
+            if not vad.is_speaking and chunk_rms > TURN_SPEECH_START_THRESHOLD:
                 if not vad.is_speaking:
-                    logger.info("Turn VAD: Speech started")
+                    vad.add_candidate(chunk)
+                    if vad.candidate_count < TURN_SPEECH_START_CHUNKS:
+                        continue
+                    logger.info("Turn VAD: Speech started after sustained energy")
                     dashboard_state.emit(call_id, "pipeline.speech_started", {})
-                    vad.start()
+                    vad.promote_candidate()
+                    continue
+            if vad.is_speaking and chunk_rms > TURN_SILENCE_THRESHOLD:
                 vad.add_speech(chunk)
                 if (
                     vad.speech_chunks == TURN_BARGE_IN_MIN_SPEECH_CHUNKS
@@ -186,6 +194,7 @@ class LocalGemmaTurnPipeline:
                 continue
 
             if not vad.is_speaking:
+                vad.clear_candidate()
                 continue
 
             vad.add_silence(chunk)
