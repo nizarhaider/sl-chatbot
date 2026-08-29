@@ -394,10 +394,15 @@ class LocalGemmaTurnPipeline:
             messages.append({"role": "assistant", "content": assistant["content"]})
 
         self._conversation_history[call_id] = messages
-        if selecting_language:
+        response = message_text(assistant)
+        # Keep the picker active when Gemma indicates that the language was
+        # unclear and asks a clarification question. This is model-driven and
+        # avoids hard-coded language-word branches.
+        if selecting_language and "?" not in response:
             self._language_selection_pending.discard(call_id)
             dashboard_state.emit(call_id, "language.selection_complete", {})
-        response = message_text(assistant)
+        elif selecting_language:
+            dashboard_state.emit(call_id, "language.selection_retry", {})
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
