@@ -354,7 +354,7 @@ $SSH "
 log "Installing minimal system packages..."
 $SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl"
 
-log "Installing the minimal Python runtime, prebuilt llama.cpp, and the Q4 model in parallel..."
+log "Installing the minimal Python runtime and prebuilt llama.cpp in parallel..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
@@ -366,31 +366,26 @@ $SSH "
     fi
   ) &
   llama_pid=\$!
-  (
-    mkdir -p /workspace/models
-    hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
-    test -n \"\$hf_token\"
-    curl --fail --location --retry 3 --continue-at - \\
-      -H \"Authorization: Bearer \$hf_token\" \\
-      https://huggingface.co/${LLM_MODEL}/resolve/main/${LLM_MODEL_FILE} \\
-      --output ${LLM_MODEL_PATH}
-  ) &
-  model_pid=\$!
   wait \$uv_pid
   wait \$llama_pid
-  wait \$model_pid
 "
 
-log "Pre-downloading Whisper and OmniVoice concurrently into the shared Hugging Face cache..."
+log "Pre-downloading Q4 Gemma, Whisper, and OmniVoice with Hugging Face Xet..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
   hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
   test -n \"\$hf_token\"
-  HF_TOKEN=\"\$hf_token\" .venv/bin/hf download SPEAK-ASR/whisper-medium-si-merged &
+  HF_TOKEN=\"\$hf_token\" HF_XET_HIGH_PERFORMANCE=1 \\
+    .venv/bin/hf download ${LLM_MODEL} --include ${LLM_MODEL_FILE} --local-dir /workspace/models &
+  llm_pid=\$!
+  HF_TOKEN=\"\$hf_token\" HF_XET_HIGH_PERFORMANCE=1 \\
+    .venv/bin/hf download SPEAK-ASR/whisper-medium-si-merged &
   asr_pid=\$!
-  HF_TOKEN=\"\$hf_token\" .venv/bin/hf download 2broke2code/serendib-omnivoice-finetuned-v2 &
+  HF_TOKEN=\"\$hf_token\" HF_XET_HIGH_PERFORMANCE=1 \\
+    .venv/bin/hf download 2broke2code/serendib-omnivoice-finetuned-v2 &
   tts_pid=\$!
+  wait \$llm_pid
   wait \$asr_pid
   wait \$tts_pid
 "
