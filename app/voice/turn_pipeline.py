@@ -358,7 +358,15 @@ class LocalGemmaTurnPipeline:
     async def _transcribe_pcm16(self, pcm: bytes) -> str:
         pcm_array = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(None, lambda: self._asr.transcribe(pcm_array))
+        # A stalled GPU decode must not block every later caller turn.
+        try:
+            text = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: self._asr.transcribe(pcm_array)),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Whisper transcription timed out after 15 seconds")
+            return ""
         if not text:
             logger.warning("Whisper returned empty transcription")
         return text
