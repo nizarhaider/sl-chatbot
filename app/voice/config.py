@@ -21,7 +21,9 @@ TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
 TURN_SILENCE_THRESHOLD = 1000
 TURN_SPEECH_START_THRESHOLD = 900
 TURN_SPEECH_START_CHUNKS = 5
-TURN_END_SILENCE_CHUNKS = 20
+# 720 ms remains a conservative end-of-turn tail while keeping the measured
+# caller-end to first-audio budget below five seconds on the production GPU.
+TURN_END_SILENCE_CHUNKS = 18
 TURN_MIN_AUDIO_MS = 320
 # Barge-in must accept the same sustained caller speech that starts a turn.
 # The previous 2200 RMS gate rejected real WhatsApp caller audio (including the
