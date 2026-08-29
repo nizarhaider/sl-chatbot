@@ -464,6 +464,17 @@ class LocalGemmaTurnPipeline:
             assistant = await self._llm.chat(messages, LLM_TOOLS if self._tools else None, language=language or self._call_languages.get(call_id))
             messages.append(assistant)
             tool_calls = assistant.get("tool_calls") or []
+            # Gemma occasionally states that it will search without emitting
+            # the OpenAI tool call. Treat that explicit model decision as a
+            # search request and route it through the same real tool loop.
+            if not tool_calls and self._tools and _requests_property_search(message_text(assistant)):
+                tool_calls = [{
+                    "id": "model-search-intent",
+                    "function": {
+                        "name": "search_properties",
+                        "arguments": json.dumps({"query": _search_query(history)}),
+                    },
+                }]
             if not tool_calls:
                 break
             for tool_call in tool_calls:
@@ -617,6 +628,19 @@ def _is_wait_request(text: str) -> bool:
         r"(?:පොඩ්ඩක්|ටිකක්)\s*(?:ඉන්න|රැඳී|හිටින්න)",
         normalized,
     ))
+
+
+def _requests_property_search(text: str) -> bool:
+    normalized = text.casefold()
+    return bool(re.search(
+        r"\b(?:search|check|look\s+for)\b|සොය|බලන්නම්|බලලා",
+        normalized,
+    ))
+
+
+def _search_query(history: list[dict]) -> str:
+    caller_turns = [message_text(message) for message in history if message.get("role") == "user"]
+    return " ".join(turn for turn in caller_turns if turn).strip()
 
 
 def _wait_response(text: str) -> str:
