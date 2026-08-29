@@ -214,6 +214,42 @@ Run tests:
 uv run pytest -q
 ```
 
+### End-to-end voice regression
+
+On the production GPU host, with the local llama.cpp server already listening
+on port 8000, replay the supplied caller recordings through the complete local
+pipeline with one command:
+
+```bash
+uv run python scripts/voice_regression.py
+```
+
+The runner loads the production `.env`, decodes the recordings directly from
+their Voice Memos locations, and uses the production RMS VAD, Sinhala Whisper,
+Gemma server, Pinecone/Neon property tools, and OmniVoice settings. It runs both
+normal and genuine barge-in flows. The only test doubles are the inbound and
+outbound media transports; no caller recording is replaced by synthesized text.
+
+For a stable fixture location (recommended, and kept outside Git), pass clips in
+turn order: language selection first, followed by property requests.
+
+```bash
+uv run python scripts/voice_regression.py \
+  --fixture /secure/voice-fixtures/Pragathi-Mawatha-1.m4a \
+  --fixture /secure/voice-fixtures/Pragathi-Mawatha-2.m4a \
+  --fixture /secure/voice-fixtures/Pragathi-Mawatha-3.m4a
+```
+
+Each run writes `normal.json`, `barge_in.json`, and `summary.json` beneath
+`run_logs/voice_regressions/<UTC timestamp>/`. They include VAD segments, ASR
+transcripts, selected language, complete model messages, tool calls/results,
+first-audible-audio latency, and final model output. The command exits non-zero
+and writes `failure.json` if the language is wrong, a property search is absent,
+agent audio is transcribed as caller speech, history is lost, a required
+barge-in does not occur, or first audible generated audio takes more than five
+seconds after caller speech ends. Fixture audio and model weights are never
+written to the repository.
+
 Healthy call logs should show:
 
 ```text

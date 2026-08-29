@@ -1,124 +1,81 @@
 import asyncio
 
-from app.voice.tools import (
-    CallContext,
-    RealEstateToolService,
-    ToolCall,
-    _appointment_time,
-    parse_tool_call,
-    tool_call_message,
-)
+from app.voice.tools import CallContext, LLM_TOOLS, RealEstateToolService
 from app.voice.turn_pipeline import LocalGemmaTurnPipeline
 
 
-class FakeStore:
-    def __init__(self) -> None:
-        self.booking = None
-
-    def search_properties(self, arguments: dict) -> list[dict]:
-        return [{"property_id": "property-1", "location": arguments.get("location")}]
-
-    def book_appointment(self, arguments: dict, context: CallContext) -> dict:
-        self.booking = (arguments, context)
-        return {"status": "booked", "property_id": arguments["property_id"]}
+class FakeVectorStore:
+    def search_properties(self, query: str) -> list[dict]:
+        return [{"property_id": "property-1", "query": query}]
 
 
-class FakeLLM:
-    def __init__(self, responses: list[str]) -> None:
+class FakeLlm:
+    def __init__(self, responses: list[dict]) -> None:
         self.responses = iter(responses)
-        self.continuations = []
+        self.requests: list[list[dict]] = []
 
-    async def generate(self, transcript, history, continuation):
-        self.continuations.append(list(continuation))
+    async def chat(self, messages, tools=None, language=None) -> dict:
+        self.requests.append(list(messages))
         return next(self.responses)
 
 
 class FakeTools:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def execute(self, call, context):
-        self.calls.append((call, context))
-        if call.name == "search_properties":
-            return {"ok": True, "properties": [{"property_id": "property-1"}]}
-        return {"ok": True, "appointment": {"status": "booked"}}
+    async def execute(self, name: str, arguments: dict, context: CallContext) -> dict:
+        assert name == "search_properties"
+        assert arguments == {"query": "an apartment in Malabe"}
+        assert context.caller_phone == "94770000000"
+        return {"ok": True, "properties": [{"property_id": "property-1"}]}
 
 
-def test_tool_call_round_trip() -> None:
-    call = parse_tool_call(
-        '<tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>'
-    )
+def test_production_tool_contract_exposes_property_search() -> None:
+    names = {item["function"]["name"] for item in LLM_TOOLS}
 
-    assert call == ToolCall(name="search_properties", arguments={"location": "Malabe"})
-    assert parse_tool_call(tool_call_message(call)) == call
-    assert parse_tool_call("Here are the properties.") is None
-    assert parse_tool_call("<tool_call>not-json</tool_call>") is None
+    assert {"search_properties", "book_appointment", "send_whatsapp_message"} <= names
 
 
-def test_tool_service_passes_call_context_to_booking() -> None:
-    store = FakeStore()
-    service = RealEstateToolService(store)
-    context = CallContext(call_id="call-1", caller_phone="94770000000")
-    call = ToolCall(
-        name="book_appointment",
-        arguments={
-            "property_id": "property-1",
-            "customer_name": "Nimal",
-            "appointment_at": "2099-01-01T10:00:00+05:30",
-        },
-    )
+def test_tool_service_uses_the_vector_store_for_property_search() -> None:
+    service = RealEstateToolService(store=object(), vector_store=FakeVectorStore())
 
-    result = asyncio.run(service.execute(call, context))
-
-    assert result["ok"] is True
-    assert store.booking == (call.arguments, context)
-
-
-def test_tool_service_rejects_unknown_tool() -> None:
     result = asyncio.run(
-        RealEstateToolService(FakeStore()).execute(
-            ToolCall(name="delete_everything", arguments={}),
-            CallContext(call_id="call-1", caller_phone=""),
+        service.execute(
+            "search_properties",
+            {"query": "an apartment in Malabe"},
+            CallContext(call_id="call-1", caller_phone="94770000000"),
         )
     )
 
-    assert result == {"ok": False, "error": "Unknown tool: delete_everything"}
+    assert result == {
+        "ok": True,
+        "properties": [{"property_id": "property-1", "query": "an apartment in Malabe"}],
+        "count": 1,
+    }
 
 
-def test_naive_appointment_time_uses_sri_lanka_timezone() -> None:
-    parsed = _appointment_time("2099-01-01T10:00:00")
-
-    assert parsed.isoformat() == "2099-01-01T10:00:00+05:30"
-
-
-def test_turn_pipeline_can_search_then_book_before_answering() -> None:
+def test_turn_pipeline_executes_openai_style_tool_call_before_answering() -> None:
     pipeline = LocalGemmaTurnPipeline.__new__(LocalGemmaTurnPipeline)
     pipeline._conversation_history = {}
-    pipeline._llm = FakeLLM(
-        [
-            '<tool_call>{"name":"search_properties","arguments":{"location":"Malabe"}}</tool_call>',
-            '<tool_call>{"name":"book_appointment","arguments":{"property_id":"property-1","customer_name":"Nimal","appointment_at":"2099-01-01T10:00:00+05:30"}}</tool_call>',
-            "Your viewing is booked.",
-        ]
-    )
+    pipeline._call_languages = {}
+    pipeline._trace_event = None
+    pipeline._llm = FakeLlm([
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "search-1",
+                "function": {
+                    "name": "search_properties",
+                    "arguments": '{"query":"an apartment in Malabe"}',
+                },
+            }],
+        },
+        {"role": "assistant", "content": "I found an apartment in Malabe."},
+    ])
     pipeline._tools = FakeTools()
 
     response = asyncio.run(
-        pipeline._generate_response("call-1", "94770000000", "Book a Malabe viewing for Nimal")
+        pipeline._generate_response("call-1", "94770000000", "Find an apartment in Malabe")
     )
 
-    assert response == "Your viewing is booked."
-    assert [call.name for call, _ in pipeline._tools.calls] == ["search_properties", "book_appointment"]
-    assert pipeline._tools.calls[-1][1].caller_phone == "94770000000"
-    assert "<tool_result>" in pipeline._llm.continuations[-1][-1]["content"]
-
-
-def test_turn_pipeline_never_speaks_a_malformed_tool_call() -> None:
-    pipeline = LocalGemmaTurnPipeline.__new__(LocalGemmaTurnPipeline)
-    pipeline._conversation_history = {}
-    pipeline._llm = FakeLLM(["<tool_call>not-json</tool_call>"])
-    pipeline._tools = FakeTools()
-
-    response = asyncio.run(pipeline._generate_response("call-1", "", "Find me a house"))
-
-    assert response == "Sorry, I couldn't complete that request. Please try again."
+    assert response == "I found an apartment in Malabe."
+    assert pipeline._llm.requests[1][-1]["role"] == "tool"
+    assert "property-1" in pipeline._llm.requests[1][-1]["content"]

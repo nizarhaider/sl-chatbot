@@ -10,3 +10,4 @@ debug_*.wav
 official_*.wav
 realtimetts_*_smoke.wav
 *.pid
+run_logs/voice_regressions/

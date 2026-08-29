@@ -39,6 +39,7 @@ class LocalGemmaTurnPipeline:
         prepare_tts_text,
         interrupt_playback,
         tts: RealtimeOmniVoiceTTS | None = None,
+        trace_event: Callable[[str, dict], None] | None = None,
     ):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
@@ -50,6 +51,13 @@ class LocalGemmaTurnPipeline:
         self._language_selection_pending: set[str] = set()
         self._call_languages: dict[str, str] = {}
         self._greeting_playback_calls: set[str] = set()
+        # The local regression runner supplies this optional sink to capture
+        # the exact production-path decisions without replacing any component.
+        self._trace_event = trace_event
+
+    def _trace(self, kind: str, data: dict) -> None:
+        if self._trace_event is not None:
+            self._trace_event(kind, data)
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -160,6 +168,31 @@ class LocalGemmaTurnPipeline:
             now = time.monotonic()
             if call_id in self._greeting_playback_calls:
                 if output_track.pending_audio_seconds > 0:
+                    # Greeting audio can bleed into an inbound call track. Do
+                    # not treat ordinary playback/echo as caller speech, but
+                    # allow a sustained, loud caller interruption to select a
+                    # language before the greeting has finished.
+                    if pcm_rms(chunk) > TURN_BARGE_IN_RMS_THRESHOLD:
+                        vad.add_candidate(chunk)
+                        if vad.candidate_count >= TURN_BARGE_IN_MIN_SPEECH_CHUNKS:
+                            logger.info(
+                                "Turn VAD: confirmed greeting barge-in after %.0f ms",
+                                vad.candidate_count * TURN_INPUT_CHUNK_MS,
+                            )
+                            dashboard_state.emit(call_id, "pipeline.playback_interrupted", {
+                                "reason": "greeting_barge_in",
+                            })
+                            self._trace("vad.barge_in", {
+                                "phase": "greeting",
+                                "speech_chunks": vad.candidate_count,
+                            })
+                            self._interrupt_playback(call_id, output_track)
+                            self._greeting_playback_calls.discard(call_id)
+                            playback_echo_state["was_playing"] = False
+                            playback_echo_state["until"] = 0.0
+                            vad.promote_candidate()
+                        continue
+                    vad.clear_candidate()
                     playback_echo_state["was_playing"] = True
                     vad.discard()
                     continue
@@ -219,6 +252,11 @@ class LocalGemmaTurnPipeline:
             logger.info("Turn VAD: Speech ended")
             dashboard_state.emit(call_id, "pipeline.speech_ended", {})
             turn = vad.finish()
+            self._trace("vad.segment", {
+                "started_at": turn.started_at,
+                "ended_at": time.perf_counter(),
+                "audio_ms": (len(turn.pcm) / 2) / 16000 * 1000.0,
+            })
             if turn_task is not None and turn_task.done():
                 await asyncio.gather(turn_task, return_exceptions=True)
                 turn_task = None
@@ -263,6 +301,10 @@ class LocalGemmaTurnPipeline:
             return
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
         dashboard_state.emit(call_id, "pipeline.asr_complete", {"text": transcript_text, "duration_ms": transcript_ms})
+        self._trace("asr.transcript", {
+            "text": transcript_text,
+            "duration_ms": transcript_ms,
+        })
 
         if call_id in self._language_selection_pending:
             language = _detect_language_selection(transcript_text)
@@ -273,6 +315,7 @@ class LocalGemmaTurnPipeline:
             self._call_languages[call_id] = language
             self._language_selection_pending.discard(call_id)
             dashboard_state.emit(call_id, "language.selected", {"language": language})
+            self._trace("language.selected", {"language": language})
             response_text, llm_ms = await self._timed_response(
                 call_id, caller_phone, transcript_text, None, language=language, selecting_language=True
             )
@@ -431,6 +474,7 @@ class LocalGemmaTurnPipeline:
                     "name": name,
                     "arguments": arguments,
                 })
+                self._trace("tool.call", {"name": name, "arguments": arguments})
                 if announce_tool is not None:
                     await announce_tool(name)
                 result = await self._tools.execute(name, arguments, context)
@@ -438,6 +482,7 @@ class LocalGemmaTurnPipeline:
                     "name": name,
                     "result": result,
                 })
+                self._trace("tool.result", {"name": name, "result": result})
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.get("id", name),
@@ -450,6 +495,8 @@ class LocalGemmaTurnPipeline:
 
         self._conversation_history[call_id] = messages
         response = message_text(assistant)
+        self._trace("model.messages", {"messages": messages})
+        self._trace("model.output", {"text": response})
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
