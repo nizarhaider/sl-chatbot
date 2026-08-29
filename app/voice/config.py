@@ -23,8 +23,11 @@ TURN_SPEECH_START_THRESHOLD = 900
 TURN_SPEECH_START_CHUNKS = 5
 TURN_END_SILENCE_CHUNKS = 20
 TURN_MIN_AUDIO_MS = 320
-TURN_BARGE_IN_RMS_THRESHOLD = 2200
-TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 12
+# Barge-in must accept the same sustained caller speech that starts a turn.
+# The previous 2200 RMS gate rejected real WhatsApp caller audio (including the
+# Pragathi regression clips, which peak below that level).
+TURN_BARGE_IN_RMS_THRESHOLD = TURN_SPEECH_START_THRESHOLD
+TURN_BARGE_IN_MIN_SPEECH_CHUNKS = TURN_SPEECH_START_CHUNKS
 TURN_GREETING_DELAY_SECONDS = 0.5
 TURN_PLAYBACK_ECHO_TAIL_SECONDS = 1.5
 

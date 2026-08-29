@@ -545,8 +545,14 @@ class LocalGemmaTurnPipeline:
         loop = asyncio.get_running_loop()
 
         def on_audio_chunk(chunk: bytes, sample_rate: int) -> None:
-            if playback_generation.get(call_id, 0) == generation_id:
-                loop.call_soon_threadsafe(output_track.add_pcm_audio, chunk, sample_rate)
+            def enqueue_if_current() -> None:
+                # The TTS thread may have queued chunks just before an
+                # interruption. Check again on the event loop so stale agent
+                # audio cannot resume after a caller barge-in.
+                if playback_generation.get(call_id, 0) == generation_id:
+                    output_track.add_pcm_audio(chunk, sample_rate)
+
+            loop.call_soon_threadsafe(enqueue_if_current)
 
         audio_seconds = await self._tts.speak(
             prepared, on_audio_chunk, language=self._call_languages.get(call_id)

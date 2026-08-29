@@ -192,6 +192,20 @@ async def wait_for_count(values: list[Any], expected: int, timeout: float = 45.0
         await asyncio.sleep(0.05)
 
 
+async def wait_for_interruptions(
+    output_track: ReplayOutputTrack,
+    expected: int,
+    timeout: float = 15.0,
+) -> None:
+    started = time.perf_counter()
+    while output_track.interruptions < expected:
+        if time.perf_counter() - started >= timeout:
+            raise RegressionFailure(
+                f"Timed out waiting for barge-in {expected}; received {output_track.interruptions}"
+            )
+        await asyncio.sleep(0.05)
+
+
 async def run_case(
     name: str,
     clips: list[tuple[Path, bytes]],
@@ -223,8 +237,14 @@ async def run_case(
     utterances: list[dict] = []
     try:
         await output_track.wait_for_audio_after(0, timeout=90.0)  # Greeting became audible.
+        if not barge_in:
+            await output_track.wait_until_idle()
+            await asyncio.sleep(TURN_PLAYBACK_ECHO_TAIL_SECONDS + 0.05)
         language_audio_index = len(output_track.audio_events)
+        expected_interruptions = output_track.interruptions + 1 if barge_in else None
         language_end = await input_track.feed(clips[0][1], pace)
+        if expected_interruptions is not None:
+            await wait_for_interruptions(output_track, expected_interruptions)
         language_first = await output_track.wait_for_audio_after(language_audio_index, timeout=45.0)
         language_utterance = _utterance(clips[0][0], language_end, language_first)
         utterances.append(language_utterance)
@@ -250,7 +270,10 @@ async def run_case(
                 await asyncio.sleep(TURN_PLAYBACK_ECHO_TAIL_SECONDS + 0.05)
 
             first_audio_index = len(output_track.audio_events)
+            expected_interruptions = output_track.interruptions + 1 if barge_in else None
             speech_end = await input_track.feed(pcm, pace)
+            if expected_interruptions is not None:
+                await wait_for_interruptions(output_track, expected_interruptions)
             audible = await output_track.wait_for_audio_after(first_audio_index, timeout=45.0)
             item = _utterance(clip_path, speech_end, audible)
             utterances.append(item)
