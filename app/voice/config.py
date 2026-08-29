@@ -17,8 +17,8 @@ WHISPER_TASK = "transcribe"
 
 TURN_INPUT_CHUNK_MS = 40
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
-TURN_SILENCE_THRESHOLD = 1400
-TURN_SPEECH_START_THRESHOLD = 1800
+TURN_SILENCE_THRESHOLD = 1000
+TURN_SPEECH_START_THRESHOLD = 1400
 TURN_SPEECH_START_CHUNKS = 5  # 200 ms of sustained voice before opening a turn
 # A 1.6-second boundary lets callers pause briefly to add location, bedroom,
 # or budget details without receiving a reply after each fragment.
