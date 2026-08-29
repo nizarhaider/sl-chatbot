@@ -3,7 +3,13 @@ import re
 
 import numpy as np
 
-from app.voice.config import WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_MODEL, WHISPER_TASK
+from app.voice.config import (
+    WHISPER_DEVICE,
+    WHISPER_LANGUAGE,
+    WHISPER_MAX_NEW_TOKENS,
+    WHISPER_MODEL,
+    WHISPER_TASK,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +61,7 @@ class LocalWhisperASR:
             "no_speech_threshold": 0.6,
             "logprob_threshold": -1.0,
             "compression_ratio_threshold": 2.4,
+            "max_new_tokens": WHISPER_MAX_NEW_TOKENS,
             "prompt_ids": processor.get_prompt_ids(
                 PROPERTY_VOCABULARY, return_tensors="pt"
             ).to(device),
