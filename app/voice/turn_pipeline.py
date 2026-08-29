@@ -551,6 +551,7 @@ class LocalGemmaTurnPipeline:
 
         generation_id = playback_generation.get(call_id, 0)
         loop = asyncio.get_running_loop()
+        self._trace("tts.started", {"text": prepared})
 
         def on_audio_chunk(chunk: bytes, sample_rate: int) -> None:
             def enqueue_if_current() -> None:
@@ -562,9 +563,12 @@ class LocalGemmaTurnPipeline:
 
             loop.call_soon_threadsafe(enqueue_if_current)
 
-        audio_seconds = await self._tts.speak(
-            prepared, on_audio_chunk, language=self._call_languages.get(call_id)
-        )
+        try:
+            audio_seconds = await self._tts.speak(
+                prepared, on_audio_chunk, language=self._call_languages.get(call_id)
+            )
+        finally:
+            self._trace("tts.completed", {"text": prepared})
         await asyncio.sleep(0)
         if playback_generation.get(call_id, 0) != generation_id:
             logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)

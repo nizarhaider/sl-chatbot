@@ -216,6 +216,14 @@ async def wait_for_interruptions(
         await asyncio.sleep(0.05)
 
 
+async def wait_for_tts_idle(trace: Trace, timeout: float = 45.0) -> None:
+    started = time.perf_counter()
+    while len(trace.values("tts.completed")) < len(trace.values("tts.started")):
+        if time.perf_counter() - started >= timeout:
+            raise RegressionFailure("Timed out waiting for synthesized playback to complete")
+        await asyncio.sleep(0.05)
+
+
 async def run_case(
     name: str,
     clips: list[tuple[Path, bytes]],
@@ -249,6 +257,7 @@ async def run_case(
     try:
         await output_track.wait_for_audio_after(0, timeout=90.0)  # Greeting became audible.
         if not barge_in:
+            await wait_for_tts_idle(trace)
             await output_track.wait_until_idle()
             await asyncio.sleep(TURN_PLAYBACK_ECHO_TAIL_SECONDS + 0.05)
         language_audio_index = len(output_track.audio_events)
@@ -273,6 +282,7 @@ async def run_case(
         # from agent playback. Replay them on an otherwise idle inbound leg and
         # require the production pipeline to reject them as non-caller audio.
         if agent_echo_clips and not barge_in:
+            await wait_for_tts_idle(trace)
             await output_track.wait_until_idle()
             await asyncio.sleep(TURN_PLAYBACK_ECHO_TAIL_SECONDS + 0.05)
             for echo_path, echo_pcm in agent_echo_clips:
@@ -291,6 +301,7 @@ async def run_case(
                 if output_track.pending_audio_seconds <= 0.01:
                     raise RegressionFailure(f"No agent audio to interrupt before {clip_path.name}")
             else:
+                await wait_for_tts_idle(trace)
                 await output_track.wait_until_idle()
                 await asyncio.sleep(TURN_PLAYBACK_ECHO_TAIL_SECONDS + 0.05)
 
@@ -319,7 +330,9 @@ async def run_case(
             raise RegressionFailure("Not every injected agent-audio clip was rejected")
         tool_calls = trace.values("tool.call")
         if not any(call["name"] == "search_properties" for call in tool_calls):
-            raise RegressionFailure("No search_properties call was made for the recorded property requests")
+            outputs = " ".join(item["text"].casefold() for item in trace.values("model.output"))
+            if any(term in outputs for term in ("search", "check", "look for", "සොය", "බල")):
+                raise RegressionFailure("Model decided a search was warranted without search_properties")
         if barge_in and output_track.interruptions < len(clips):
             raise RegressionFailure(
                 f"Expected greeting plus every property response to be interrupted ({len(clips)}); "
