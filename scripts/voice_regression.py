@@ -329,6 +329,27 @@ async def run_case(
             "output_interruptions": output_track.interruptions,
             "status": "passed",
         }
+    except Exception as exc:
+        # Preserve the raw production trace even when a strict assertion
+        # fails; failures are the most useful regression artifacts.
+        setattr(exc, "case_artifact", {
+            "case": name,
+            "fixtures": [str(path) for path, _ in clips],
+            "vad_segments": trace.values("vad.segment"),
+            "asr_transcripts": trace.values("asr.transcript"),
+            "language_selected": (trace.values("language.selected")[-1]
+                                  if trace.values("language.selected") else None),
+            "model_messages": trace.values("model.messages"),
+            "tool_calls": trace.values("tool.call"),
+            "tool_results": trace.values("tool.result"),
+            "model_outputs": trace.values("model.output"),
+            "first_audio_latency": utterances,
+            "barge_ins": trace.values("vad.barge_in"),
+            "output_interruptions": output_track.interruptions,
+            "status": "failed",
+            "error": str(exc),
+        })
+        raise
     finally:
         await input_track.close()
         await asyncio.gather(pipeline_task, return_exceptions=True)
@@ -380,7 +401,14 @@ async def main_async(args: argparse.Namespace) -> int:
     run = {"started_at": datetime.now(UTC).isoformat(), "production_settings": True, "cases": []}
     try:
         for name, barge_in in (("normal", False), ("barge_in", True)):
-            case = await run_case(name, clips, args.expected_language, barge_in, not args.no_pace)
+            try:
+                case = await run_case(name, clips, args.expected_language, barge_in, not args.no_pace)
+            except Exception as exc:
+                case = getattr(exc, "case_artifact", None)
+                if case is not None:
+                    run["cases"].append(case)
+                    write_artifact(run_dir, name, case)
+                raise
             run["cases"].append(case)
             write_artifact(run_dir, name, case)
     except Exception as exc:
