@@ -25,14 +25,12 @@ TURN_END_SILENCE_CHUNKS = 20
 TURN_MIN_AUDIO_MS = 320
 TURN_BARGE_IN_RMS_THRESHOLD = 2200
 TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 12
-TURN_GREETING_DELAY_SECONDS = 0.5
+TURN_GREETING_DELAY_SECONDS = 0
 TURN_PLAYBACK_ECHO_TAIL_SECONDS = 1.5
 
-LOCAL_TURN_GREETING = (
-    "To speak in English, please say English. "
-    "සිංහලෙන් කතා කිරීමට කරුණාකර සිංහල කියන්න. "
-    "தமிழில் பேச தயவுசெய்து தமிழ் என்று சொல்லுங்கள்."
-)
+# Language selection starts in listen-only mode. This avoids feeding the
+# selection prompt back through WhatsApp as false caller audio.
+LOCAL_TURN_GREETING = ""
 
 HOMELANDS_LOCAL_SYSTEM_PROMPT = VOICE_AGENT_PROMPT
 
