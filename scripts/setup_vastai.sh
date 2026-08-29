@@ -349,11 +349,19 @@ $SSH "
 log "Installing minimal system packages..."
 $SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl"
 
-log "Installing the minimal Python runtime and prebuilt llama.cpp in parallel..."
+log "Reusing the image Python/Torch runtime and installing app packages in parallel..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
-  env -u UV_NO_CACHE uv sync --frozen --no-dev &
+  # The vastai/pytorch image already provides Torch and Torchaudio in /venv/main.
+  # Keep the project launcher paths compatible without creating a duplicate CUDA venv.
+  if [ -e .venv ] && [ ! -L .venv ]; then rm -rf .venv; fi
+  if [ ! -e .venv ]; then ln -s /venv/main .venv; fi
+  uv pip install --python /venv/main/bin/python \
+    'fastapi>=0.129.0' 'uvicorn>=0.41.0' 'aiortc>=1.9.0' 'httpx>=0.27.0' \
+    'numpy>=1.26.0' 'realtimetts[omnivoice]>=0.7.1' 'python-dotenv>=1.2.1' \
+    'psycopg[binary]>=3.2' 'transformers>=5.3.0,<6' 'pinecone>=9.1.0' \
+    'num2words>=0.5.14' &
   uv_pid=\$!
   (
     if [ ! -x /root/.local/bin/llama ]; then
