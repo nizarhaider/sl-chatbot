@@ -405,13 +405,18 @@ $SSH "
     'num2words>=0.5.14' &
   uv_pid=\$!
   (
-    # Always refresh llama.cpp: the image may contain an older cached build.
-    # The installer publishes the current CUDA-matched nightly (currently b10621).
-    LLAMA_VERSION=\"\${LLAMA_VERSION:-\$(curl --fail --location --retry 3 \
-      https://huggingface.co/buckets/ggml-org/install.sh/resolve/latest)}\"
-    export LLAMA_VERSION
-    curl --fail --location --retry 3 https://llama.app/install.sh | sh
-    /root/.local/bin/llama version
+    # Build current llama.cpp with CUDA support; the image's cached binary may
+    # predate Gemma 4 fixes. The model weights are downloaded separately below.
+    if [ ! -x /workspace/llama.cpp/build/bin/llama-server ]; then
+      rm -rf /workspace/llama.cpp
+      git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /workspace/llama.cpp
+      cmake -S /workspace/llama.cpp -B /workspace/llama.cpp/build \
+        -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DGGML_CUDA_FA=ON \
+        -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
+        -DLLAMA_CURL=OFF
+      cmake --build /workspace/llama.cpp/build --config Release --target llama-server -j 8
+    fi
+    /workspace/llama.cpp/build/bin/llama-server --version
   ) &
   llama_pid=\$!
   wait \$uv_pid
@@ -465,7 +470,8 @@ YAML
     'cd /workspace/sl-chatbot' \
     'mkdir -p run_logs' \
     'exec >>run_logs/llm.log 2>&1' \
-    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 4096 --parallel 1 --batch-size 32 --ubatch-size 32 --flash-attn off --chat-template-kwargs {\"enable_thinking\":false} --temperature 1.0 --top-p 0.95 --top-k 64 --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
+    'export LLAMA_ARG_CHAT_TEMPLATE_KWARGS=\"{\\\"enable_thinking\\\":false}\"' \
+    'exec /workspace/llama.cpp/build/bin/llama-server --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 4096 --parallel 1 --batch-size 32 --ubatch-size 32 --flash-attn off --temperature 1.0 --top-p 0.95 --top-k 64 --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
     > /opt/supervisor-scripts/sl-llm.sh
   printf '%s\\n' \
     '#!/usr/bin/env bash' \
