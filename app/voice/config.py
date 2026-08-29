@@ -26,10 +26,12 @@ TURN_END_SILENCE_CHUNKS = 40
 TURN_MIN_AUDIO_MS = 800
 # Interrupting spoken output is deliberately stricter than normal turn
 # detection so speaker noise and incidental sounds do not cut the bot off.
-TURN_BARGE_IN_RMS_THRESHOLD = 1600
+TURN_BARGE_IN_RMS_THRESHOLD = 2200
 TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 12
 TURN_GREETING_DELAY_SECONDS = 1.2
-TURN_PLAYBACK_ECHO_TAIL_SECONDS = 0.35
+# WhatsApp/WebRTC can deliver the far-end playback echo after the outbound
+# queue drains. Keep VAD closed long enough for that echo to disappear.
+TURN_PLAYBACK_ECHO_TAIL_SECONDS = 1.5
 
 LOCAL_TURN_GREETING = (
     "To speak in English, please say English. "

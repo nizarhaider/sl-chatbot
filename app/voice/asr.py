@@ -49,6 +49,12 @@ class LocalWhisperASR:
 
         generate_kwargs = {
             "task": WHISPER_TASK,
+            # Prevent Whisper from carrying silence/audio echoes into a
+            # plausible-looking Sinhala phrase.
+            "condition_on_prev_tokens": False,
+            "no_speech_threshold": 0.6,
+            "logprob_threshold": -1.0,
+            "compression_ratio_threshold": 2.4,
             "prompt_ids": processor.get_prompt_ids(
                 PROPERTY_VOCABULARY, return_tensors="pt"
             ).to(device),
