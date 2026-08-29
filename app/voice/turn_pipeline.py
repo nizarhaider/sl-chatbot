@@ -575,18 +575,21 @@ def _property_search_query(history: list, transcript_text: str) -> str | None:
         for message in history
         if message.get("role") == "user" and message_text(message)
     ]
-    query = " ".join([*caller_turns[-3:], transcript_text]).strip()
+    # ASR often produces a location only after the caller has stated the
+    # property type and budget on earlier turns. Retain enough recent context
+    # to combine those details into one usable search request.
+    query = " ".join([*caller_turns[-6:], transcript_text]).strip()
     normalized = query.casefold()
     latest = transcript_text.casefold()
     property_type_pattern = (
         r"\b(?:apartment|apartments|house|villa|land|property)\b|"
-        r"(?:අපාර්ට්මන්ට්|ගෙයක්|නිවසක්|විලා|ඉඩමක්|දේපලක්)"
+        r"(?:අපාර්ට්මන්ට්|අපාර්මන්ට්|අපාර්මන්ට|ගෙයක්|නිවසක්|විලා|ඉඩමක්|දේපලක්)"
     )
     location_pattern = (
         r"\b(?:colombo|malabe|battaramulla|kottawa|dehiwala|piliyandala|"
         r"kurunegala|nugegoda|rajagiriya|maharagama)\b|"
-        r"(?:කොළඹ|මාලබේ|බත්තරමුල්ල|කොට්ටාව|දෙහිවල|පිළියන්දල|"
-        r"කුරුණෑගල|නුගේගොඩ|රාජගිරිය|මහරගම)"
+        r"(?:කොළඹ|කළුඹ|කලුඹ|කළඹ|කොළොව|මාලබේ|බත්තරමුල්ල|කොට්ටාව|දෙහිවල|පිළියන්දල|"
+        r"කුරුණෑගල|නුගේ\s*ගොඩ|නොගේ\s*ගොඩ|රාජගිරිය|මහරගම)"
     )
     bedroom_pattern = (
         r"\b(?:one|two|three|four|five|[1-9])\s*(?:bed|bedroom|bedrooms)\b|"
