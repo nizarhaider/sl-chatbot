@@ -11,7 +11,7 @@ if [ "$#" -eq 0 ]; then
 DISK_GB="${DISK_GB:-50}"
 MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-24}"
 MIN_CPU_CORES="${MIN_CPU_CORES:-8}"
-MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-500}"
+MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-700}"
 MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-12.8}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
@@ -55,7 +55,7 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-allowed = re.compile(r"^RTX (?:30|40)\d{2}(?:S| Super| Ti)?$", re.IGNORECASE)
+allowed = re.compile(r"^(?:RTX|A\d|L\d|Tesla|Quadro)", re.IGNORECASE)
 excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
 minimum_down = float(os.environ["MIN_INTERNET_DOWN_MBIT"])
 eligible = [
