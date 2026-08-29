@@ -236,9 +236,7 @@ class LocalGemmaTurnPipeline:
         if call_id in self._language_selection_pending:
             language = _detect_language_selection(transcript_text)
             if language is None:
-                response_text = (
-                    "Please choose English, Sinhala, or Tamil so I can continue in your language."
-                )
+                response_text = LOCAL_TURN_GREETING
                 dashboard_state.emit(call_id, "language.selection_retry", {"transcript": transcript_text})
                 dashboard_state.add_transcript(call_id, "assistant", response_text)
                 await self._timed_speak(call_id, response_text, output_track, playback_generation)
@@ -478,11 +476,11 @@ class LocalGemmaTurnPipeline:
 
 def _detect_language_selection(text: str) -> str | None:
     normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
-    if re.search(r"(?:\bsinhala\b|සිංහල)", normalized):
+    if re.search(r"(?:\bsinhala(?:\s+language)?\b|සිංහල(?:ෙන්| භාෂාව)?)", normalized):
         return "si"
-    if re.search(r"(?:\btamil\b|தமிழ்)", normalized):
+    if re.search(r"(?:\btamil(?:\s+language)?\b|தமிழ்(?:இல்|ல்| மொழி)?)", normalized):
         return "ta"
-    if re.search(r"(?:\benglish\b|ඉංග්‍රීසි|ஆங்கிலம்)", normalized):
+    if re.search(r"(?:\benglish(?:\s+language)?\b|ඉංග්‍රීසි(?:යෙන්| භාෂාව)?|ஆங்கிலம்(?:ல்| மொழி)?)", normalized):
         return "en"
     return None
 
