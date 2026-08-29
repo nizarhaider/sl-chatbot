@@ -45,6 +45,7 @@ class LocalGemmaTurnPipeline:
         self._llm = LocalLlmClient()
         self._tools = RealEstateToolService.from_env()
         self._conversation_history: dict[str, list] = {}
+        self._language_selection_pending: set[str] = set()
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -65,6 +66,8 @@ class LocalGemmaTurnPipeline:
             logger.info("OmniVoice prewarm complete")
 
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
+        self._language_selection_pending.add(call_id)
+        dashboard_state.emit(call_id, "language.selection_pending", {})
         greeting_task = asyncio.create_task(
             self._play_greeting(call_id, output_track, playback_generation),
             name=f"greeting-{call_id}",
@@ -75,6 +78,7 @@ class LocalGemmaTurnPipeline:
             greeting_task.cancel()
             await asyncio.gather(greeting_task, return_exceptions=True)
             self._conversation_history.pop(call_id, None)
+            self._language_selection_pending.discard(call_id)
 
     async def _play_greeting(self, call_id, output_track, playback_generation) -> None:
         if TURN_GREETING_DELAY_SECONDS:
@@ -330,12 +334,26 @@ class LocalGemmaTurnPipeline:
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         history = list(self._conversation_history.get(call_id, []))
         dashboard_state.emit(call_id, "model.request", {"transcript": transcript_text})
+        selecting_language = call_id in self._language_selection_pending
+        if selecting_language:
+            messages = [{
+                "role": "user",
+                "content": (
+                    "The caller is answering the language-selection greeting. Infer the language "
+                    "they want from the meaning of this message, without relying on a hard-coded "
+                    "word list. If the selection is clear, acknowledge it naturally in that "
+                    "language and ask what property they are looking for. If it is unclear, ask "
+                    "them to choose a language again. Do not search for properties or continue "
+                    "the property conversation during this turn."
+                ),
+            }, *history, {"role": "user", "content": transcript_text}]
+        else:
+            messages = [*history, {"role": "user", "content": transcript_text}]
         search_query = _property_search_query(history, transcript_text)
-        if self._tools is not None and search_query:
+        if not selecting_language and self._tools is not None and search_query:
             return await self._search_properties(
                 call_id, caller_phone, search_query, announce_tool
             )
-        messages = [*history, {"role": "user", "content": transcript_text}]
         for _ in range(4):
             assistant = await self._llm.chat(messages, LLM_TOOLS if self._tools else None)
             messages.append(assistant)
@@ -376,6 +394,9 @@ class LocalGemmaTurnPipeline:
             messages.append({"role": "assistant", "content": assistant["content"]})
 
         self._conversation_history[call_id] = messages
+        if selecting_language:
+            self._language_selection_pending.discard(call_id)
+            dashboard_state.emit(call_id, "language.selection_complete", {})
         response = message_text(assistant)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
