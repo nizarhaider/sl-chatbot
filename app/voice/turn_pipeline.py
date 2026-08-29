@@ -186,6 +186,11 @@ class LocalGemmaTurnPipeline:
                         vad.speech_chunks * TURN_INPUT_CHUNK_MS,
                     )
                     self._interrupt_playback(call_id, output_track)
+                    # The caller is already speaking. Do not apply the normal
+                    # post-playback echo tail after an intentional interruption,
+                    # or we discard the rest of their sentence.
+                    playback_echo_state["was_playing"] = False
+                    playback_echo_state["until"] = 0.0
                     if turn_task is not None:
                         if not turn_task.done():
                             turn_task.cancel()
@@ -266,11 +271,15 @@ class LocalGemmaTurnPipeline:
                 await self._timed_speak(call_id, response_text, output_track, playback_generation)
             return
 
+        # Persist the caller's turn before inference. If they interrupt a reply,
+        # cancellation cannot erase this context from the next response.
+        self._append_caller_turn(call_id, transcript_text)
+
         if _is_wait_request(transcript_text):
             response_text = _wait_response(transcript_text)
             dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": 0})
             dashboard_state.add_transcript(call_id, "assistant", response_text)
-            self._append_conversation_turn(call_id, transcript_text, response_text)
+            self._append_assistant_turn(call_id, response_text)
             await self._timed_speak(call_id, response_text, output_track, playback_generation)
             return
 
@@ -374,6 +383,13 @@ class LocalGemmaTurnPipeline:
     ) -> str:
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         history = list(self._conversation_history.get(call_id, []))
+        if not selecting_language and (
+            not history
+            or history[-1].get("role") != "user"
+            or message_text(history[-1]) != transcript_text
+        ):
+            history.append({"role": "user", "content": transcript_text})
+            self._conversation_history[call_id] = history
         dashboard_state.emit(call_id, "model.request", {"transcript": transcript_text})
         if selecting_language:
             messages = [{"role": "user", "content": (
@@ -382,8 +398,8 @@ class LocalGemmaTurnPipeline:
                 "ask about properties or process the caller's request during this turn."
             )}, *history, {"role": "user", "content": transcript_text}]
         else:
-            messages = [*history, {"role": "user", "content": transcript_text}]
-        search_query = _property_search_query(history, transcript_text)
+            messages = [*history]
+        search_query = _property_search_query(history[:-1], transcript_text)
         if not selecting_language and self._tools is not None and search_query:
             return await self._search_properties(
                 call_id, caller_phone, search_query, announce_tool,
@@ -455,16 +471,18 @@ class LocalGemmaTurnPipeline:
             "name": "search_properties", "result": result,
         })
         response = await self._llm.summarize_search(transcript_text, result, language=language)
-        self._append_conversation_turn(call_id, transcript_text, response)
+        self._append_assistant_turn(call_id, response)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
-    def _append_conversation_turn(self, call_id, transcript_text: str, response_text: str) -> None:
+    def _append_caller_turn(self, call_id, transcript_text: str) -> None:
         history = self._conversation_history.setdefault(call_id, [])
-        history.extend([
-            {"role": "user", "content": transcript_text},
-            {"role": "assistant", "content": response_text},
-        ])
+        history.append({"role": "user", "content": transcript_text})
+
+    def _append_assistant_turn(self, call_id, response_text: str) -> None:
+        self._conversation_history.setdefault(call_id, []).append(
+            {"role": "assistant", "content": response_text}
+        )
 
     def _log_turn_timings(
         self,
