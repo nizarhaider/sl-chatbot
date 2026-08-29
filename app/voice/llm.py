@@ -5,7 +5,13 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app.voice.config import HOMELANDS_LOCAL_SYSTEM_PROMPT, LLM_BASE_URL, LLM_MODEL, LLM_TEMPERATURE
+from app.voice.config import (
+    HOMELANDS_LOCAL_SYSTEM_PROMPT,
+    LANGUAGE_PICKER_PROMPT,
+    LLM_BASE_URL,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+)
 
 
 class LocalLlmClient:
@@ -45,11 +51,7 @@ class LocalLlmClient:
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "You are a language picker for a phone call. Decide whether the caller's "
-                        "utterance is confidently Sinhala, Tamil, or English. Return exactly one "
-                        "token: si, ta, en, or unclear. Do not explain."
-                    ),
+                    "content": LANGUAGE_PICKER_PROMPT,
                 },
                 {"role": "user", "content": transcript_text},
             ],

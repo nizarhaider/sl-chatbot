@@ -3,6 +3,8 @@ from pathlib import Path
 
 VOICE_AGENT_PROMPT_PATH = Path(__file__).with_name("prompts") / "homelands_agent.md"
 VOICE_AGENT_PROMPT = VOICE_AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
+LANGUAGE_PICKER_PROMPT_PATH = Path(__file__).with_name("prompts") / "language_picker.md"
+LANGUAGE_PICKER_PROMPT = LANGUAGE_PICKER_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 LLM_BASE_URL = "http://127.0.0.1:8000/v1"
 LLM_MODEL = "unsloth/gemma-4-E4B-it-GGUF"
