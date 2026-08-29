@@ -465,7 +465,7 @@ YAML
     'cd /workspace/sl-chatbot' \
     'mkdir -p run_logs' \
     'exec >>run_logs/llm.log 2>&1' \
-    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 2048 --parallel 1 --batch-size 32 --ubatch-size 32 --flash-attn on --cpu-moe --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
+    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 4096 --parallel 1 --batch-size 32 --ubatch-size 32 --flash-attn off --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
     > /opt/supervisor-scripts/sl-llm.sh
   printf '%s\\n' \
     '#!/usr/bin/env bash' \
