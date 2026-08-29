@@ -145,9 +145,9 @@ One-command rental and setup from this repo:
 
 The deployer selects the cheapest compatible verified, on-demand, single-GPU
 offer with at least 16 GB VRAM and rents a 50 GB disk,
-waits for SSH, then runs the setup and health checks. It terminates a host only if
-it does not become SSH-ready within five minutes or an explicit setup command
-fails. After SSH is ready there is no elapsed-time limit. The locked Python
+waits for SSH, then runs the setup and health checks. It never destroys a host
+automatically; an SSH or setup failure leaves the instance available for manual
+inspection. After SSH is ready there is no elapsed-time limit. The locked Python
 runtime, prebuilt llama.cpp, and the Q4 Gemma download concurrently; Whisper and
 OmniVoice then warm the shared Hugging Face cache
 before model prewarm.

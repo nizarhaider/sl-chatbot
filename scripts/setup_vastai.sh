@@ -106,14 +106,6 @@ if active:
     print(row.get("id", ""))
 ')"
 
-destroy_instance() {
-  local id="$1"
-  if [ -n "${id:-}" ]; then
-    log "Destroying failed instance ${id}..."
-    "${VASTAI[@]}" destroy instance "${id}" --yes >/dev/null 2>&1 || true
-  fi
-}
-
 for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
   INSTANCE_ID=""
   SSH_HOST=""
@@ -192,8 +184,7 @@ print("\t".join(str(value or "") for value in (
 done
 
   if [ "${SSH_READY}" != "true" ]; then
-    destroy_instance "${INSTANCE_ID}"
-    fail "Instance ${INSTANCE_ID} was not SSH-ready and was destroyed; no replacement was launched."
+    fail "Instance ${INSTANCE_ID} was not SSH-ready; it was left running for inspection."
   fi
 
   log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID} without a post-SSH deadline..."
@@ -202,16 +193,13 @@ done
     "${ROOT_DIR}/scripts/setup_vastai.sh" "${SSH_PORT}" "${SSH_HOST}"; then
     log "Deployment complete."
     log "Instance ID: ${INSTANCE_ID}"
-    log "Destroy instance ${INSTANCE_ID} in Vast.ai as soon as the call is finished."
     exit 0
   fi
 
-  log "Setup failed; terminating instance ${INSTANCE_ID}."
-  destroy_instance "${INSTANCE_ID}"
-  fail "Setup failed; the instance was destroyed and no replacement was launched."
+  fail "Setup failed on instance ${INSTANCE_ID}; it was left running for inspection."
 done
 
-fail "All ${MAX_INSTANCE_ATTEMPTS} instance attempts failed; no server was left running."
+fail "All ${MAX_INSTANCE_ATTEMPTS} instance attempts failed."
 fi
 
 #!/usr/bin/env bash
