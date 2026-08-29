@@ -203,6 +203,12 @@ done
     exit 0
   fi
 
+  setup_status="$?"
+  if [ "${setup_status}" -eq 42 ]; then
+    destroy_unready_instance "${INSTANCE_ID}"
+    fail "Instance ${INSTANCE_ID} failed the early Cloudflare tunnel check and was destroyed."
+  fi
+
   fail "Setup failed on instance ${INSTANCE_ID}; it was left running for inspection."
 done
 
@@ -333,6 +339,41 @@ else
 fi
 
 $SCP "${ENV_SYNC_FILE}" "${REMOTE}:${REMOTE_DIR}/.env"
+
+log "Checking Cloudflare tunnel connectivity before installing dependencies..."
+if ! $SSH "
+  set -euo pipefail
+  cd ${REMOTE_DIR}
+  set -a
+  . ./.env
+  set +a
+  tunnel_log=\$(mktemp)
+  /opt/instance-tools/bin/cloudflared tunnel --protocol http2 --edge-ip-version 4 run \
+    --token \"\$CLOUDFLARED_TUNNEL_TOKEN\" >\"\$tunnel_log\" 2>&1 &
+  tunnel_pid=\$!
+  for attempt in \$(seq 1 12); do
+    if grep -q 'Registered tunnel connection' \"\$tunnel_log\"; then
+      kill \"\$tunnel_pid\" 2>/dev/null || true
+      wait \"\$tunnel_pid\" 2>/dev/null || true
+      rm -f \"\$tunnel_log\"
+      exit 0
+    fi
+    if ! kill -0 \"\$tunnel_pid\" 2>/dev/null; then
+      cat \"\$tunnel_log\" >&2
+      rm -f \"\$tunnel_log\"
+      exit 1
+    fi
+    sleep 5
+  done
+  cat \"\$tunnel_log\" >&2
+  kill \"\$tunnel_pid\" 2>/dev/null || true
+  wait \"\$tunnel_pid\" 2>/dev/null || true
+  rm -f \"\$tunnel_log\"
+  exit 1
+"; then
+  echo "ERROR: Cloudflare tunnel could not register on this host; refusing to install dependencies."
+  exit 42
+fi
 
 log "Waiting for base image package setup..."
 $SSH "
