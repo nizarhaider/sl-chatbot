@@ -341,10 +341,10 @@ class LocalGemmaTurnPipeline:
                 "content": (
                     "The caller is answering the language-selection greeting. Infer the language "
                     "they want from the meaning of this message, without relying on a hard-coded "
-                    "word list. If the selection is clear, acknowledge it naturally in that "
-                    "language and ask what property they are looking for. If it is unclear, ask "
-                    "them to choose a language again. Do not search for properties or continue "
-                    "the property conversation during this turn."
+                    "word list. If the selection is clear, acknowledge it briefly and naturally "
+                    "in that language, then say you are ready to listen. Do not ask what property "
+                    "they want yet. If it is unclear, ask them to choose a language again. Do not "
+                    "search for properties or use any property details during this turn."
                 ),
             }, *history, {"role": "user", "content": transcript_text}]
         else:
