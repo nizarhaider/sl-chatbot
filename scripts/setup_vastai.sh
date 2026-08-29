@@ -87,7 +87,7 @@ if [ "${DRY_RUN}" = "true" ]; then
   exit 0
 fi
 
-EXISTING_CONNECTION="$(${VASTAI[@]} show instances | "${PYTHON}" -c '
+EXISTING_INSTANCE_ID="$(${VASTAI[@]} show instances | "${PYTHON}" -c '
 import json
 import sys
 
@@ -102,11 +102,8 @@ rows = [
 ]
 rows.sort(key=lambda row: float(row.get("start_date") or 0), reverse=True)
 for row in rows:
-    mappings = (row.get("ports") or {}).get("22/tcp") or []
-    if mappings and row.get("public_ipaddr"):
-        print("\t".join(str(value or "") for value in (
-            row.get("id"), row.get("public_ipaddr"), mappings[0].get("HostPort", ""))))
-        break
+    print(row.get("id", ""))
+    break
 ')"
 
 destroy_instance() {
@@ -122,9 +119,9 @@ for instance_attempt in $(seq 1 "${MAX_INSTANCE_ATTEMPTS}"); do
   SSH_HOST=""
   SSH_PORT=""
 
-  if [ "${instance_attempt}" -eq 1 ] && [ -n "${EXISTING_CONNECTION}" ]; then
-    IFS=$'\t' read -r INSTANCE_ID SSH_HOST SSH_PORT <<<"${EXISTING_CONNECTION}"
-    log "Reusing existing running instance ${INSTANCE_ID} at ${SSH_HOST}:${SSH_PORT}."
+  if [ "${instance_attempt}" -eq 1 ] && [ -n "${EXISTING_INSTANCE_ID}" ]; then
+    INSTANCE_ID="${EXISTING_INSTANCE_ID}"
+    log "Reusing existing running instance ${INSTANCE_ID}; waiting for its SSH endpoint."
   else
     OFFER="$(select_offer)"
     IFS=$'\t' read -r OFFER_ID GPU_NAME GPU_RAM HOURLY_PRICE LOCATION RELIABILITY <<<"${OFFER}"
