@@ -73,8 +73,8 @@ class VoiceAgent:
     def _prepare_tts_text(self, text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
         spoken = re.sub(
-            r"\b\d[\d,]*(?:\.\d+)?(?=(?:am|pm)\b)",
-            lambda match: f"{_number_to_words(match)} ",
+            r"\b(?P<hour>\d{1,2})(?:[:.](?P<minute>[0-5]\d))?\s*(?P<period>a\.?m\.?|p\.?m\.?)\b",
+            _time_to_words,
             cleaned,
             flags=re.IGNORECASE,
         )
@@ -111,3 +111,16 @@ voice_agent = VoiceAgent()
 def _number_to_words(match: re.Match[str]) -> str:
     value = match.group().replace(",", "")
     return num2words(float(value) if "." in value else int(value), lang="en")
+
+
+def _time_to_words(match: re.Match[str]) -> str:
+    hour = num2words(int(match.group("hour")), lang="en")
+    minute = match.group("minute")
+    period = match.group("period").replace(".", "").lower()
+    if not minute or minute == "00":
+        return f"{hour} {period}"
+    if minute.startswith("0"):
+        minute_words = f"oh {num2words(int(minute), lang='en')}"
+    else:
+        minute_words = num2words(int(minute), lang="en")
+    return f"{hour} {minute_words} {period}"
