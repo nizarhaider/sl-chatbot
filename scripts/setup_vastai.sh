@@ -405,9 +405,13 @@ $SSH "
     'num2words>=0.5.14' &
   uv_pid=\$!
   (
-    if [ ! -x /root/.local/bin/llama ]; then
-      curl --fail --location --retry 3 https://llama.app/install.sh | sh
-    fi
+    # Always refresh llama.cpp: the image may contain an older cached build.
+    # The installer publishes the current CUDA-matched nightly (currently b10621).
+    LLAMA_VERSION=\"\${LLAMA_VERSION:-\$(curl --fail --location --retry 3 \
+      https://huggingface.co/buckets/ggml-org/install.sh/resolve/latest)}\"
+    export LLAMA_VERSION
+    curl --fail --location --retry 3 https://llama.app/install.sh | sh
+    /root/.local/bin/llama version
   ) &
   llama_pid=\$!
   wait \$uv_pid
@@ -448,7 +452,7 @@ $SSH "
     'cd /workspace/sl-chatbot' \
     'mkdir -p run_logs' \
     'exec >>run_logs/llm.log 2>&1' \
-    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 2048 --parallel 1 --batch-size 32 --ubatch-size 32 --flash-attn off --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
+    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 2048 --parallel 1 --batch-size 32 --ubatch-size 32 --flash-attn on --cpu-moe --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
     > /opt/supervisor-scripts/sl-llm.sh
   printf '%s\\n' \
     '#!/usr/bin/env bash' \
