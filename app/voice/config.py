@@ -17,17 +17,17 @@ WHISPER_TASK = "transcribe"
 
 TURN_INPUT_CHUNK_MS = 40
 TURN_INPUT_CHUNK_SIZE = (16000 * 2 * TURN_INPUT_CHUNK_MS) // 1000
-TURN_SILENCE_THRESHOLD = 1200
-TURN_SPEECH_START_THRESHOLD = 1120
-TURN_SPEECH_START_CHUNKS = 4  # 160 ms of sustained voice before opening a turn
+TURN_SILENCE_THRESHOLD = 1000
+TURN_SPEECH_START_THRESHOLD = 1400
+TURN_SPEECH_START_CHUNKS = 5  # 200 ms of sustained voice before opening a turn
 # A 1.6-second boundary lets callers pause briefly to add location, bedroom,
 # or budget details without receiving a reply after each fragment.
-TURN_END_SILENCE_CHUNKS = 32
-TURN_MIN_AUDIO_MS = 640
+TURN_END_SILENCE_CHUNKS = 40
+TURN_MIN_AUDIO_MS = 800
 # Interrupting spoken output is deliberately stricter than normal turn
 # detection so speaker noise and incidental sounds do not cut the bot off.
-TURN_BARGE_IN_RMS_THRESHOLD = 1760
-TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 10
+TURN_BARGE_IN_RMS_THRESHOLD = 2200
+TURN_BARGE_IN_MIN_SPEECH_CHUNKS = 12
 TURN_GREETING_DELAY_SECONDS = 0.5
 # WhatsApp/WebRTC can deliver the far-end playback echo after the outbound
 # queue drains. Keep VAD closed long enough for that echo to disappear.
