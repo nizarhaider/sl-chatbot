@@ -3,25 +3,9 @@ import re
 
 import numpy as np
 
-from app.voice.config import (
-    WHISPER_DEVICE,
-    WHISPER_LANGUAGE,
-    WHISPER_MAX_NEW_TOKENS,
-    WHISPER_MODEL,
-    WHISPER_TASK,
-)
+from app.voice.config import WHISPER_DEVICE, WHISPER_MODEL
 
 logger = logging.getLogger(__name__)
-
-# Whisper's documented prompt_ids vocabulary bias keeps property locations from
-# being treated as unfamiliar Sinhala words.
-PROPERTY_VOCABULARY = (
-    "Homelands Properties. Colombo, Malabe, Battaramulla, Kottawa, Dehiwala, "
-    "Piliyandala, Kurunegala, Nugegoda, Rajagiriya, Maharagama. "
-    "එක, දෙක, තුන, හතර, පහ, හය, හත, අට, නවය, දහය, විස්ස, තිහ, "
-    "පනහ, සියය, දහස, ලක්ෂ, මිලියන, රුපියල්, නිදන කාමර."
-)
-
 
 class LocalWhisperASR:
     def __init__(self) -> None:
@@ -33,11 +17,7 @@ class LocalWhisperASR:
         self._get_model()
 
     def transcribe(self, pcm_array: np.ndarray) -> str:
-        text = self._transcribe(pcm_array)
-        if is_noise_text(text):
-            logger.info("Dropping noise-only transcript: %r", text)
-            return ""
-        return text
+        return self._transcribe(pcm_array)
 
     def _transcribe(self, pcm_array: np.ndarray) -> str:
         processor, model, device = self._get_model()
@@ -53,29 +33,12 @@ class LocalWhisperASR:
         if attention_mask is not None:
             attention_mask = attention_mask.to(device)
 
-        generate_kwargs = {
-            "task": WHISPER_TASK,
-            # Prevent Whisper from carrying silence/audio echoes into a
-            # plausible-looking Sinhala phrase.
-            "condition_on_prev_tokens": False,
-            "no_speech_threshold": 0.6,
-            "logprob_threshold": -1.0,
-            "compression_ratio_threshold": 2.4,
-            "max_new_tokens": WHISPER_MAX_NEW_TOKENS,
-            "prompt_ids": processor.get_prompt_ids(
-                PROPERTY_VOCABULARY, return_tensors="pt"
-            ).to(device),
-        }
-        if WHISPER_LANGUAGE:
-            generate_kwargs["language"] = WHISPER_LANGUAGE
-
         import torch
 
         with torch.inference_mode():
             generated_ids = model.generate(
                 input_features,
                 attention_mask=attention_mask,
-                **generate_kwargs,
             )
         return processor.batch_decode(
             generated_ids,
