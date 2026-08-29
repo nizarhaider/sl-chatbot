@@ -157,6 +157,10 @@ class LocalGemmaTurnPipeline:
             now = time.monotonic()
             if output_track.pending_audio_seconds > 0:
                 playback_echo_state["was_playing"] = True
+                # WhatsApp feeds the agent's playback back through the inbound
+                # audio track. Never send that echo to VAD/ASR.
+                vad.discard()
+                continue
             elif playback_echo_state["was_playing"]:
                 playback_echo_state["was_playing"] = False
                 playback_echo_state["until"] = now + TURN_PLAYBACK_ECHO_TAIL_SECONDS
