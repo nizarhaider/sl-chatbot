@@ -22,10 +22,10 @@ class LocalWhisperASR:
     def prewarm(self) -> None:
         self._get_model()
 
-    def transcribe(self, pcm_array: np.ndarray, language: str | None = None) -> str:
-        return self._transcribe(pcm_array, language=language)
+    def transcribe(self, pcm_array: np.ndarray) -> str:
+        return self._transcribe(pcm_array)
 
-    def _transcribe(self, pcm_array: np.ndarray, language: str | None = None) -> str:
+    def _transcribe(self, pcm_array: np.ndarray) -> str:
         processor, model, device = self._get_model()
         inputs = processor(
             pcm_array,
@@ -45,7 +45,7 @@ class LocalWhisperASR:
             generated_ids = model.generate(
                 input_features,
                 attention_mask=attention_mask,
-                language=language or WHISPER_LANGUAGE,
+                language=WHISPER_LANGUAGE,
                 max_new_tokens=WHISPER_MAX_NEW_TOKENS,
                 task=WHISPER_TASK,
             )

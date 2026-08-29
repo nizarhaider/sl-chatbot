@@ -338,8 +338,7 @@ class LocalGemmaTurnPipeline:
 
     async def _timed_transcribe(self, call_id, utterance_pcm: bytes) -> tuple[str, float]:
         started = time.perf_counter()
-        language = self._call_languages.get(call_id, "si")
-        transcript_text = await self._transcribe_pcm16(utterance_pcm, language=language)
+        transcript_text = await self._transcribe_pcm16(utterance_pcm)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if transcript_text:
             logger.info("Turn transcript for %s in %.0f ms: %s", call_id, elapsed_ms, transcript_text)
@@ -375,14 +374,10 @@ class LocalGemmaTurnPipeline:
         audio_seconds = await self._speak(call_id, response_text, output_track, playback_generation)
         return audio_seconds, (time.perf_counter() - started) * 1000.0
 
-    async def _transcribe_pcm16(self, pcm: bytes, language: str) -> str:
+    async def _transcribe_pcm16(self, pcm: bytes) -> str:
         pcm_array = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         loop = asyncio.get_running_loop()
-        whisper_language = {"si": "sinhala", "ta": "tamil", "en": "english"}[language]
-        text = await loop.run_in_executor(
-            None,
-            lambda: self._asr.transcribe(pcm_array, language=whisper_language),
-        )
+        text = await loop.run_in_executor(None, lambda: self._asr.transcribe(pcm_array))
         if not text:
             logger.warning("Whisper returned empty transcription")
         return text
