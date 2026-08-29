@@ -94,16 +94,16 @@ import sys
 rows = json.load(sys.stdin)
 if isinstance(rows, dict):
     rows = rows.get("instances", [])
-rows = [
-    row for row in rows
-    if row.get("label") == "'"${INSTANCE_LABEL}"'"
-    and row.get("actual_status") == "running"
-    and float(row.get("gpu_ram") or 0) >= '"${MIN_GPU_RAM_GB}"' * 1024
-]
-rows.sort(key=lambda row: float(row.get("start_date") or 0), reverse=True)
-for row in rows:
+active = [row for row in rows if row.get("actual_status") in {"running", "loading", "creating"}]
+if len(active) > 1:
+    raise SystemExit("Refusing to deploy while more than one Vast.ai instance is active")
+if active:
+    row = active[0]
+    if row.get("label") != "'"${INSTANCE_LABEL}"'":
+        raise SystemExit("Refusing to deploy while another Vast.ai instance is active")
+    if float(row.get("gpu_ram") or 0) < '"${MIN_GPU_RAM_GB}"' * 1024:
+        raise SystemExit("The active Vast.ai instance does not have enough VRAM")
     print(row.get("id", ""))
-    break
 ')"
 
 destroy_instance() {
@@ -193,7 +193,7 @@ done
 
   if [ "${SSH_READY}" != "true" ]; then
     destroy_instance "${INSTANCE_ID}"
-    continue
+    fail "Instance ${INSTANCE_ID} was not SSH-ready and was destroyed; no replacement was launched."
   fi
 
   log "Deploying branch ${REMOTE_BRANCH} to instance ${INSTANCE_ID} without a post-SSH deadline..."
@@ -208,10 +208,7 @@ done
 
   log "Setup failed; terminating instance ${INSTANCE_ID}."
   destroy_instance "${INSTANCE_ID}"
-  if [ "${instance_attempt}" -lt "${MAX_INSTANCE_ATTEMPTS}" ]; then
-    log "Trying a different offer..."
-    continue
-  fi
+  fail "Setup failed; the instance was destroyed and no replacement was launched."
 done
 
 fail "All ${MAX_INSTANCE_ATTEMPTS} instance attempts failed; no server was left running."
@@ -220,7 +217,7 @@ fi
 #!/usr/bin/env bash
 # =============================================================================
 # setup_vastai.sh — Setup a Vast.ai instance using the
-# SPEAK-ASR/whisper-medium-si-merged ASR model and local 4-bit Gemma 4 E4B.
+# SPEAK-ASR/whisper-medium-si-merged ASR model and Unsloth's Q4 Gemma 4 E4B GGUF.
 # =============================================================================
 
 set -euo pipefail
@@ -232,7 +229,10 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
-LLM_MODEL="google/gemma-4-E4B-it"
+LLM_PORT="${LLM_PORT:-8000}"
+LLM_MODEL="unsloth/gemma-4-E4B-it-GGUF"
+LLM_MODEL_FILE="gemma-4-E4B-it-UD-Q4_K_XL.gguf"
+LLM_MODEL_PATH="/workspace/models/${LLM_MODEL_FILE}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -354,26 +354,43 @@ $SSH "
 log "Installing minimal system packages..."
 $SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl"
 
-log "Installing the minimal Python runtime..."
+log "Installing the minimal Python runtime, prebuilt llama.cpp, and the Q4 model in parallel..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
-  env -u UV_NO_CACHE uv sync --frozen --no-dev
+  env -u UV_NO_CACHE uv sync --frozen --no-dev &
+  uv_pid=\$!
+  (
+    if [ ! -x /root/.local/bin/llama ]; then
+      curl --fail --location --retry 3 https://llama.app/install.sh | sh
+    fi
+  ) &
+  llama_pid=\$!
+  (
+    mkdir -p /workspace/models
+    hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
+    test -n \"\$hf_token\"
+    curl --fail --location --retry 3 --continue-at - \\
+      -H \"Authorization: Bearer \$hf_token\" \\
+      https://huggingface.co/${LLM_MODEL}/resolve/main/${LLM_MODEL_FILE} \\
+      --output ${LLM_MODEL_PATH}
+  ) &
+  model_pid=\$!
+  wait \$uv_pid
+  wait \$llama_pid
+  wait \$model_pid
 "
 
-log "Pre-downloading Gemma, Whisper, and OmniVoice concurrently into the shared Hugging Face cache..."
+log "Pre-downloading Whisper and OmniVoice concurrently into the shared Hugging Face cache..."
 $SSH "
   set -euo pipefail
   cd ${REMOTE_DIR}
   hf_token=\$(sed -n 's/^HF_TOKEN=//p' .env | head -n 1)
   test -n \"\$hf_token\"
-  HF_TOKEN=\"\$hf_token\" .venv/bin/hf download ${LLM_MODEL} &
-  llm_pid=\$!
   HF_TOKEN=\"\$hf_token\" .venv/bin/hf download SPEAK-ASR/whisper-medium-si-merged &
   asr_pid=\$!
   HF_TOKEN=\"\$hf_token\" .venv/bin/hf download 2broke2code/serendib-omnivoice-finetuned-v2 &
   tts_pid=\$!
-  wait \$llm_pid
   wait \$asr_pid
   wait \$tts_pid
 "
@@ -381,7 +398,7 @@ $SSH "
 log "Compile-checking Python modules..."
 $SSH "cd ${REMOTE_DIR} && find app -name '*.py' -print0 | xargs -0 .venv/bin/python -m py_compile && echo 'COMPILE OK'"
 
-log "Starting the permanent Cloudflare tunnel..."
+log "Starting the local Q4 Gemma server and permanent Cloudflare tunnel..."
 $SSH "
   cd ${REMOTE_DIR}
   mkdir -p run_logs
@@ -391,12 +408,29 @@ $SSH "
     'set -euo pipefail' \
     'cd /workspace/sl-chatbot' \
     'mkdir -p run_logs' \
+    'exec >>run_logs/llm.log 2>&1' \
+    'exec /root/.local/bin/llama serve --model ${LLM_MODEL_PATH} --alias ${LLM_MODEL} --n-gpu-layers 99 --ctx-size 4096 --flash-attn on --jinja --host 127.0.0.1 --port ${LLM_PORT}' \
+    > /opt/supervisor-scripts/sl-llm.sh
+  printf '%s\\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'cd /workspace/sl-chatbot' \
+    'mkdir -p run_logs' \
     'exec >>run_logs/cloudflared.log 2>&1' \
     'set -a; . ./.env; set +a' \
     'exec /opt/instance-tools/bin/cloudflared tunnel run' \
     > /opt/supervisor-scripts/sl-cloudflared.sh
-  rm -f /opt/supervisor-scripts/sl-llm.sh /etc/supervisor/conf.d/sl-llm.conf
-  chmod 755 /opt/supervisor-scripts/sl-cloudflared.sh
+  chmod 755 /opt/supervisor-scripts/sl-llm.sh /opt/supervisor-scripts/sl-cloudflared.sh
+  printf '%s\\n' \
+    '[program:sl-llm]' \
+    'command=/opt/supervisor-scripts/sl-llm.sh' \
+    'autostart=true' \
+    'autorestart=unexpected' \
+    'startsecs=2' \
+    'stdout_logfile=/dev/stdout' \
+    'stdout_logfile_maxbytes=0' \
+    'redirect_stderr=true' \
+    > /etc/supervisor/conf.d/sl-llm.conf
   printf '%s\\n' \
     '[program:sl-cloudflared]' \
     'command=/opt/supervisor-scripts/sl-cloudflared.sh' \
@@ -409,8 +443,10 @@ $SSH "
     > /etc/supervisor/conf.d/sl-cloudflared.conf
   supervisorctl reread
   supervisorctl update
-  supervisorctl restart sl-cloudflared
+  supervisorctl restart sl-llm sl-cloudflared
 "
+log "Waiting for local Gemma to become ready..."
+$SSH "until curl -fsS http://127.0.0.1:${LLM_PORT}/v1/models >/dev/null; do sleep 2; done"
 log "Starting webhook..."
 $SSH "
   cd ${REMOTE_DIR}

@@ -8,7 +8,7 @@ The current voice path is:
 WhatsApp Cloud webhook -> FastAPI /webhook
 WhatsApp Calling SDP offer -> aiortc peer connection
 Inbound WhatsApp audio -> local VAD -> local Whisper STT
-Whisper transcript -> official Gemma 4 E4B via local 4-bit Transformers
+Whisper transcript -> Unsloth Gemma 4 E4B UD-Q4_K_XL via local llama.cpp
 Gemma text -> RealtimeTTS OmniVoice
 OmniVoice PCM -> outbound aiortc audio track -> WhatsApp call
 ```
@@ -119,8 +119,8 @@ What it does:
 2. Drops inbound frames briefly during greeting protection.
 3. Uses local RMS VAD to detect caller turns.
 4. Transcribes completed 16 kHz PCM turns with local Whisper.
-5. Sends transcript text to official Gemma 4 E4B loaded in-process with
-   Transformers and bitsandbytes NF4 quantization.
+5. Sends transcript text to Unsloth's Gemma 4 E4B UD-Q4_K_XL GGUF through
+   the local llama.cpp OpenAI-compatible server.
 6. Sends Gemma response text to OmniVoice.
 7. Streams synthesized PCM into `RealtimeAudioTrack`.
 
@@ -130,7 +130,7 @@ Focused wrappers and hardcoded settings for Whisper, Gemma, OmniVoice, prompts, 
 Use `SPEAK-ASR/whisper-medium-si-merged` for Sinhala call audio. The general multilingual Whisper
 model did not meet live-call quality requirements for this runtime.
 
-Gemma loads with Transformers' `device_map="auto"` and 4-bit NF4 quantization.
+Gemma runs as Unsloth's `UD-Q4_K_XL` GGUF with all layers offloaded to the GPU.
 Property searches remain deterministic in the turn pipeline.
 
 ## Environment Variables That Matter

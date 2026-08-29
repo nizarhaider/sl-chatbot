@@ -38,7 +38,7 @@ def configure_logging() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
     )
-    for noisy_logger in ("aioice", "httpx", "transformers", "bitsandbytes"):
+    for noisy_logger in ("aioice", "httpx", "llama_cpp"):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
     configure_important_log()
 
