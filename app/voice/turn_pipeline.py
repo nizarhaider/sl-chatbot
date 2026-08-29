@@ -483,7 +483,7 @@ class LocalGemmaTurnPipeline:
 
 def _detect_language_selection(text: str) -> str | None:
     normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
-    if re.search(r"(?:\bsinhala(?:\s+language)?\b|සිංහල(?:ෙන්| භාෂාව)?)", normalized):
+    if re.search(r"(?:\bsinhala(?:\s+language)?\b|සිංහල(?:ෙන්| භාෂාව)?|සෙංහල|සින්හල)", normalized):
         return "si"
     if re.search(r"(?:\btamil(?:\s+language)?\b|தமிழ்(?:இல்|ல்| மொழி)?)", normalized):
         return "ta"
