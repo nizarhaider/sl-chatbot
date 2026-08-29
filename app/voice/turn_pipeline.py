@@ -46,6 +46,7 @@ class LocalGemmaTurnPipeline:
         self._tools = RealEstateToolService.from_env()
         self._conversation_history: dict[str, list] = {}
         self._language_selection_pending: set[str] = set()
+        self._call_languages: dict[str, str] = {}
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -79,6 +80,7 @@ class LocalGemmaTurnPipeline:
             await asyncio.gather(greeting_task, return_exceptions=True)
             self._conversation_history.pop(call_id, None)
             self._language_selection_pending.discard(call_id)
+            self._call_languages.pop(call_id, None)
 
     async def _play_greeting(self, call_id, output_track, playback_generation) -> None:
         if TURN_GREETING_DELAY_SECONDS:
@@ -231,6 +233,27 @@ class LocalGemmaTurnPipeline:
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
         dashboard_state.emit(call_id, "pipeline.asr_complete", {"text": transcript_text, "duration_ms": transcript_ms})
 
+        if call_id in self._language_selection_pending:
+            language = _detect_language_selection(transcript_text)
+            if language is None:
+                response_text = (
+                    "Please choose English, Sinhala, or Tamil so I can continue in your language."
+                )
+                dashboard_state.emit(call_id, "language.selection_retry", {"transcript": transcript_text})
+                dashboard_state.add_transcript(call_id, "assistant", response_text)
+                await self._timed_speak(call_id, response_text, output_track, playback_generation)
+                return
+            self._call_languages[call_id] = language
+            self._language_selection_pending.discard(call_id)
+            dashboard_state.emit(call_id, "language.selected", {"language": language})
+            response_text, llm_ms = await self._timed_response(
+                call_id, caller_phone, transcript_text, None, language=language, selecting_language=True
+            )
+            if response_text:
+                dashboard_state.add_transcript(call_id, "assistant", response_text)
+                await self._timed_speak(call_id, response_text, output_track, playback_generation)
+            return
+
         if _is_wait_request(transcript_text):
             response_text = _wait_response(transcript_text)
             dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": 0})
@@ -298,6 +321,8 @@ class LocalGemmaTurnPipeline:
         caller_phone,
         transcript_text: str,
         announce_tool: Callable[[object], Awaitable[None]] | None = None,
+        language: str | None = None,
+        selecting_language: bool = False,
     ) -> tuple[str, float]:
         started = time.perf_counter()
         response_text = await self._generate_response(
@@ -305,6 +330,8 @@ class LocalGemmaTurnPipeline:
             caller_phone,
             transcript_text,
             announce_tool,
+            language=language,
+            selecting_language=selecting_language,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if not response_text:
@@ -330,32 +357,28 @@ class LocalGemmaTurnPipeline:
         caller_phone,
         transcript_text: str,
         announce_tool: Callable[[object], Awaitable[None]] | None = None,
+        language: str | None = None,
+        selecting_language: bool = False,
     ) -> str:
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         history = list(self._conversation_history.get(call_id, []))
         dashboard_state.emit(call_id, "model.request", {"transcript": transcript_text})
-        selecting_language = call_id in self._language_selection_pending
         if selecting_language:
-            messages = [{
-                "role": "user",
-                "content": (
-                    "The caller is answering the language-selection greeting. Infer the language "
-                    "they want from the meaning of this message, without relying on a hard-coded "
-                    "word list. If the selection is clear, acknowledge it briefly and naturally "
-                    "in that language, then say you are ready to listen. Do not ask what property "
-                    "they want yet. If it is unclear, ask them to choose a language again. Do not "
-                    "search for properties or use any property details during this turn."
-                ),
-            }, *history, {"role": "user", "content": transcript_text}]
+            messages = [{"role": "user", "content": (
+                "The caller has selected the language identified by the application. Acknowledge "
+                "the selection briefly in that language and say you are ready to listen. Do not "
+                "ask about properties or process the caller's request during this turn."
+            )}, *history, {"role": "user", "content": transcript_text}]
         else:
             messages = [*history, {"role": "user", "content": transcript_text}]
         search_query = _property_search_query(history, transcript_text)
         if not selecting_language and self._tools is not None and search_query:
             return await self._search_properties(
-                call_id, caller_phone, search_query, announce_tool
+                call_id, caller_phone, search_query, announce_tool,
+                language=language or self._call_languages.get(call_id),
             )
         for _ in range(4):
-            assistant = await self._llm.chat(messages, LLM_TOOLS if self._tools else None)
+            assistant = await self._llm.chat(messages, LLM_TOOLS if self._tools else None, language=language or self._call_languages.get(call_id))
             messages.append(assistant)
             tool_calls = assistant.get("tool_calls") or []
             if not tool_calls:
@@ -395,14 +418,6 @@ class LocalGemmaTurnPipeline:
 
         self._conversation_history[call_id] = messages
         response = message_text(assistant)
-        # Keep the picker active when Gemma indicates that the language was
-        # unclear and asks a clarification question. This is model-driven and
-        # avoids hard-coded language-word branches.
-        if selecting_language and "?" not in response:
-            self._language_selection_pending.discard(call_id)
-            dashboard_state.emit(call_id, "language.selection_complete", {})
-        elif selecting_language:
-            dashboard_state.emit(call_id, "language.selection_retry", {})
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
 
@@ -412,6 +427,7 @@ class LocalGemmaTurnPipeline:
         caller_phone: str,
         transcript_text: str,
         announce_tool: Callable[[object], Awaitable[None]] | None,
+        language: str | None = None,
     ) -> str:
         assert self._tools is not None
         arguments = {"query": transcript_text}
@@ -426,7 +442,7 @@ class LocalGemmaTurnPipeline:
         dashboard_state.emit(call_id, "tool.result", {
             "name": "search_properties", "result": result,
         })
-        response = await self._llm.summarize_search(transcript_text, result)
+        response = await self._llm.summarize_search(transcript_text, result, language=language)
         self._append_conversation_turn(call_id, transcript_text, response)
         dashboard_state.emit(call_id, "model.output", {"text": response})
         return response
@@ -450,12 +466,25 @@ class LocalGemmaTurnPipeline:
             if playback_generation.get(call_id, 0) == generation_id:
                 loop.call_soon_threadsafe(output_track.add_pcm_audio, chunk, sample_rate)
 
-        audio_seconds = await self._tts.speak(prepared, on_audio_chunk)
+        audio_seconds = await self._tts.speak(
+            prepared, on_audio_chunk, language=self._call_languages.get(call_id)
+        )
         await asyncio.sleep(0)
         if playback_generation.get(call_id, 0) != generation_id:
             logger.info("Stopping interrupted RealtimeTTS playback for %s", call_id)
             return 0.0
         return audio_seconds
+
+
+def _detect_language_selection(text: str) -> str | None:
+    normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
+    if re.search(r"(?:\bsinhala\b|සිංහල)", normalized):
+        return "si"
+    if re.search(r"(?:\btamil\b|தமிழ்)", normalized):
+        return "ta"
+    if re.search(r"(?:\benglish\b|ඉංග්‍රීසි|ஆங்கிலம்)", normalized):
+        return "en"
+    return None
 
     def _log_turn_timings(
         self,

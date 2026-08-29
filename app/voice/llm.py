@@ -18,10 +18,15 @@ class LocalLlmClient:
     async def prewarm(self) -> None:
         await self.chat([{"role": "user", "content": "Reply with OK."}])
 
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        language: str | None = None,
+    ) -> dict:
         payload = {
             "model": LLM_MODEL,
-            "messages": [{"role": "system", "content": agent_system_prompt()}, *messages],
+            "messages": [{"role": "system", "content": agent_system_prompt(language)}, *messages],
             "temperature": LLM_TEMPERATURE,
             "max_tokens": 128,
         }
@@ -33,7 +38,12 @@ class LocalLlmClient:
             response.raise_for_status()
         return response.json()["choices"][0]["message"]
 
-    async def summarize_search(self, transcript_text: str, search_result: dict) -> str:
+    async def summarize_search(
+        self,
+        transcript_text: str,
+        search_result: dict,
+        language: str | None = None,
+    ) -> str:
         message = await self.chat([{
             "role": "user",
             "content": (
@@ -42,13 +52,18 @@ class LocalLlmClient:
                 f"Caller request: {transcript_text}\n"
                 f"Search result: {json.dumps(search_result, ensure_ascii=False)}"
             ),
-        }])
+        }], language=language)
         return message_text(message)
 
 
-def agent_system_prompt() -> str:
+def agent_system_prompt(language: str | None = None) -> str:
     local_time = datetime.now(ZoneInfo("Asia/Colombo")).isoformat(timespec="minutes")
-    return f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\nCurrent Sri Lanka date and time: {local_time}."
+    language_lock = {
+        "si": "The application has locked this call to Sinhala. Use Sinhala only; never switch languages.",
+        "ta": "The application has locked this call to Tamil. Use Tamil only; never switch languages.",
+        "en": "The application has locked this call to English. Use English only; never switch languages.",
+    }.get(language, "")
+    return f"{HOMELANDS_LOCAL_SYSTEM_PROMPT}\n\n{language_lock}\nCurrent Sri Lanka date and time: {local_time}."
 
 
 def message_text(message: dict) -> str:

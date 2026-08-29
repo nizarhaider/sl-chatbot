@@ -22,13 +22,14 @@ logger = logging.getLogger(__name__)
 class RealtimeOmniVoiceTTS:
     def __init__(self) -> None:
         self._stream = None
+        self._engine = None
         self._sample_rate = 24000
         self._lock = asyncio.Lock()
 
     async def prewarm(self) -> None:
         await asyncio.to_thread(self._get_stream)
 
-    async def speak(self, text: str, on_audio_chunk) -> float:
+    async def speak(self, text: str, on_audio_chunk, language: str | None = None) -> float:
         async with self._lock:
             chunks: list[bytes] = []
 
@@ -37,7 +38,7 @@ class RealtimeOmniVoiceTTS:
                 on_audio_chunk(chunk, self._sample_rate)
 
             started = time.perf_counter()
-            await asyncio.to_thread(self._play, text, collect_and_forward)
+            await asyncio.to_thread(self._play, text, collect_and_forward, language)
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             audio_seconds = self._audio_duration_seconds(sum(len(chunk) for chunk in chunks))
             logger.info(
@@ -49,8 +50,9 @@ class RealtimeOmniVoiceTTS:
             )
             return audio_seconds
 
-    def _play(self, text: str, on_audio_chunk) -> None:
+    def _play(self, text: str, on_audio_chunk, language: str | None) -> None:
         stream = self._get_stream()
+        self._engine.forced_language = language
         stream.feed(text)
         stream.play(muted=True, on_audio_chunk=on_audio_chunk)
 
@@ -62,6 +64,8 @@ class RealtimeOmniVoiceTTS:
         import torch
 
         class PatchedOmniVoiceEngine(OmniVoiceEngine):
+            forced_language: str | None = None
+
             def synthesize(self, text: str, sentence_count: int = 0) -> bool:
                 super(OmniVoiceEngine, self).synthesize(text, sentence_count)
                 if not self.current_voice:
@@ -73,7 +77,7 @@ class RealtimeOmniVoiceTTS:
                             torch.cuda.synchronize()
 
                         audio = self._model.generate(
-                            language=_language_for_text(text, self.current_voice.language),
+                            language=self.forced_language or _language_for_text(text, self.current_voice.language),
                             text=text,
                             ref_audio=self.current_voice.ref_audio,
                             ref_text=self.current_voice.ref_text,
@@ -112,6 +116,7 @@ class RealtimeOmniVoiceTTS:
         )
 
         _, _, self._sample_rate = engine.get_stream_info()
+        self._engine = engine
         self._stream = TextToAudioStream(engine, muted=True)
         return self._stream
 
