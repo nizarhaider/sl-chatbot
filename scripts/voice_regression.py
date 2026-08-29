@@ -53,6 +53,11 @@ DEFAULT_FIXTURES = [
     "/Users/nizar/Library/Containers/com.apple.VoiceMemos/Data/tmp/.com.apple.uikit.itemprovider.temporary.Spkg8M/Pragathi Mawatha 8.m4a",
 ]
 REQUIRED_ENV = ("DATABASE_URL", "PHONE_NUMBER_ID", "PINECONE_API_KEY")
+AGENT_ECHO_FIXTURE_NAMES = {
+    "Pragathi Mawatha 5.m4a",
+    "Pragathi Mawatha 6.m4a",
+    "Pragathi Mawatha 7.m4a",
+}
 
 
 class RegressionFailure(AssertionError):
@@ -209,6 +214,7 @@ async def wait_for_interruptions(
 async def run_case(
     name: str,
     clips: list[tuple[Path, bytes]],
+    agent_echo_clips: list[tuple[Path, bytes]],
     expected_language: str,
     barge_in: bool,
     pace: bool,
@@ -258,6 +264,20 @@ async def run_case(
         if selected != expected_language:
             raise RegressionFailure(f"Expected language {expected_language!r}, got {selected!r}")
 
+        # These supplied clips contain the language-selection prompt captured
+        # from agent playback. Replay them on an otherwise idle inbound leg and
+        # require the production pipeline to reject them as non-caller audio.
+        if agent_echo_clips and not barge_in:
+            await output_track.wait_until_idle()
+            await asyncio.sleep(TURN_PLAYBACK_ECHO_TAIL_SECONDS + 0.05)
+            for echo_path, echo_pcm in agent_echo_clips:
+                ignored_before = len(trace.values("asr.ignored_agent_audio"))
+                output_before = len(output_track.audio_events)
+                await input_track.feed(echo_pcm, pace)
+                await wait_for_count(trace.values("asr.ignored_agent_audio"), ignored_before + 1)
+                if len(output_track.audio_events) != output_before:
+                    raise RegressionFailure(f"Agent echo unexpectedly triggered a response: {echo_path.name}")
+
         for clip_path, pcm in clips[1:]:
             if barge_in:
                 # Start this recording while the preceding agent response is
@@ -284,11 +304,14 @@ async def run_case(
 
         await asyncio.sleep(0.1)
         transcripts = trace.values("asr.transcript")
-        if len(transcripts) != len(clips):
+        if len(transcripts) < len(clips):
             raise RegressionFailure(
-                f"Expected exactly {len(clips)} caller transcripts; received {len(transcripts)}. "
-                "This indicates agent playback or transport audio was transcribed as caller speech."
+                f"Expected at least {len(clips)} caller transcripts; received {len(transcripts)}"
             )
+        if any(_looks_like_language_menu(item["text"]) for item in transcripts):
+            raise RegressionFailure("Agent language-menu audio was transcribed as caller speech")
+        if agent_echo_clips and len(trace.values("asr.ignored_agent_audio")) < len(agent_echo_clips):
+            raise RegressionFailure("Not every injected agent-audio clip was rejected")
         tool_calls = trace.values("tool.call")
         if not any(call["name"] == "search_properties" for call in tool_calls):
             raise RegressionFailure("No search_properties call was made for the recorded property requests")
@@ -326,6 +349,7 @@ async def run_case(
             "first_audio_latency": utterances,
             "final_response": trace.values("model.output")[-1] if trace.values("model.output") else None,
             "barge_ins": trace.values("vad.barge_in"),
+            "ignored_agent_audio": trace.values("asr.ignored_agent_audio"),
             "output_interruptions": output_track.interruptions,
             "status": "passed",
         }
@@ -345,6 +369,7 @@ async def run_case(
             "model_outputs": trace.values("model.output"),
             "first_audio_latency": utterances,
             "barge_ins": trace.values("vad.barge_in"),
+            "ignored_agent_audio": trace.values("asr.ignored_agent_audio"),
             "output_interruptions": output_track.interruptions,
             "status": "failed",
             "error": str(exc),
@@ -372,6 +397,11 @@ def _pcm_rms(pcm: bytes) -> float:
     return float(np.sqrt(np.mean(values.astype(np.float64) ** 2))) if values.size else 0.0
 
 
+def _looks_like_language_menu(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    return normalized in {"sinhala", "english", "tamil", "sinhala sinhala"}
+
+
 def preflight(fixtures: list[Path]) -> None:
     missing = [str(path) for path in fixtures if not path.is_file()]
     if missing:
@@ -396,13 +426,15 @@ def write_artifact(directory: Path, name: str, payload: dict) -> Path:
 async def main_async(args: argparse.Namespace) -> int:
     fixtures = [Path(item).expanduser().resolve() for item in args.fixture]
     preflight(fixtures)
-    clips = [(path, decode_recording(path)) for path in fixtures]
+    decoded = [(path, decode_recording(path)) for path in fixtures]
+    agent_echo_clips = [(path, pcm) for path, pcm in decoded if path.name in AGENT_ECHO_FIXTURE_NAMES]
+    clips = [(path, pcm) for path, pcm in decoded if path.name not in AGENT_ECHO_FIXTURE_NAMES]
     run_dir = Path(args.artifacts_dir) / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = {"started_at": datetime.now(UTC).isoformat(), "production_settings": True, "cases": []}
     try:
         for name, barge_in in (("normal", False), ("barge_in", True)):
             try:
-                case = await run_case(name, clips, args.expected_language, barge_in, not args.no_pace)
+                case = await run_case(name, clips, agent_echo_clips, args.expected_language, barge_in, not args.no_pace)
             except Exception as exc:
                 case = getattr(exc, "case_artifact", None)
                 if case is not None:

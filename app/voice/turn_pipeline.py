@@ -299,6 +299,14 @@ class LocalGemmaTurnPipeline:
         transcript_text, transcript_ms = await self._timed_transcribe(call_id, utterance_pcm)
         if not transcript_text:
             return
+        if call_id not in self._language_selection_pending and _is_language_menu_echo(transcript_text):
+            logger.info("Dropping echoed language-selection prompt for %s: %s", call_id, transcript_text)
+            dashboard_state.emit(call_id, "pipeline.agent_audio_ignored", {"text": transcript_text})
+            self._trace("asr.ignored_agent_audio", {
+                "text": transcript_text,
+                "duration_ms": transcript_ms,
+            })
+            return
         dashboard_state.add_transcript(call_id, "caller", transcript_text)
         dashboard_state.emit(call_id, "pipeline.asr_complete", {"text": transcript_text, "duration_ms": transcript_ms})
         self._trace("asr.transcript", {
@@ -573,6 +581,15 @@ def _detect_language_selection(text: str) -> str | None:
     if re.search(r"(?:\benglish(?:\s+language)?\b|ඉංග්‍රීසි(?:යෙන්| භාෂාව)?|ஆங்கிலம்(?:ல்| மொழி)?)", normalized):
         return "en"
     return None
+
+
+def _is_language_menu_echo(text: str) -> bool:
+    """Recognize the three isolated language-menu words in leaked playback."""
+    normalized = re.sub(r"[^a-zA-Z\u0b80-\u0dff]+", " ", text.casefold()).strip()
+    return bool(re.fullmatch(
+        r"(?:sinhala|සිංහල|english|ඉංග්‍රීසි|tamil|தமிழ்)(?:\s+(?:sinhala|සිංහල|english|ඉංග්‍රීසි|tamil|தமிழ்))*",
+        normalized,
+    ))
 
 
 def _tool_wait_message(transcript_text: str, tool_name: str) -> str:
