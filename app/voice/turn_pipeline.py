@@ -49,7 +49,6 @@ class LocalGemmaTurnPipeline:
         self._conversation_history: dict[str, list] = {}
         self._language_selection_pending: set[str] = set()
         self._call_languages: dict[str, str] = {}
-        self._greeting_calls: set[str] = set()
 
     async def prewarm_tts(self) -> None:
         await self._tts.prewarm()
@@ -71,7 +70,6 @@ class LocalGemmaTurnPipeline:
 
     async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
         self._language_selection_pending.add(call_id)
-        self._greeting_calls.add(call_id)
         dashboard_state.emit(call_id, "language.selection_pending", {})
         greeting_task = asyncio.create_task(
             self._play_greeting(call_id, output_track, playback_generation),
@@ -85,7 +83,6 @@ class LocalGemmaTurnPipeline:
             self._conversation_history.pop(call_id, None)
             self._language_selection_pending.discard(call_id)
             self._call_languages.pop(call_id, None)
-            self._greeting_calls.discard(call_id)
 
     async def _play_greeting(self, call_id, output_track, playback_generation) -> None:
         if TURN_GREETING_DELAY_SECONDS:
@@ -158,18 +155,6 @@ class LocalGemmaTurnPipeline:
             del chunk_buffer[:TURN_INPUT_CHUNK_SIZE]
 
             now = time.monotonic()
-            if call_id in self._greeting_calls:
-                if output_track.pending_audio_seconds > 0:
-                    playback_echo_state["was_playing"] = True
-                    vad.discard()
-                    continue
-                if playback_echo_state["was_playing"]:
-                    playback_echo_state["was_playing"] = False
-                    playback_echo_state["until"] = now + TURN_PLAYBACK_ECHO_TAIL_SECONDS
-                if now < float(playback_echo_state["until"]):
-                    vad.discard()
-                    continue
-                self._greeting_calls.discard(call_id)
             if output_track.pending_audio_seconds > 0:
                 playback_echo_state["was_playing"] = True
             elif playback_echo_state["was_playing"]:
