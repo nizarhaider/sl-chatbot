@@ -6,6 +6,7 @@ import numpy as np
 from app.voice.config import (
     WHISPER_DEVICE,
     WHISPER_LANGUAGE,
+    WHISPER_MAX_NEW_TOKENS,
     WHISPER_MODEL,
     WHISPER_TASK,
 )
@@ -45,6 +46,7 @@ class LocalWhisperASR:
                 input_features,
                 attention_mask=attention_mask,
                 language=WHISPER_LANGUAGE,
+                max_new_tokens=WHISPER_MAX_NEW_TOKENS,
                 task=WHISPER_TASK,
             )
         return processor.batch_decode(
