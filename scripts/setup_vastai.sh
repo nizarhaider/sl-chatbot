@@ -402,7 +402,7 @@ $SSH "
     'fastapi>=0.129.0' 'uvicorn>=0.41.0' 'aiortc>=1.9.0' 'httpx>=0.27.0' \
     'numpy>=1.26.0' 'realtimetts[omnivoice]>=0.7.1' 'python-dotenv>=1.2.1' \
     'psycopg[binary]>=3.2' 'transformers>=5.3.0,<6' 'pinecone>=9.1.0' \
-    'num2words>=0.5.14' &
+    'num2words>=0.5.14' 'boto3>=1.42.0' &
   uv_pid=\$!
   (
     # Build current llama.cpp with CUDA support; the image's cached binary may
