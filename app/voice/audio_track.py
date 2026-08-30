@@ -28,6 +28,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._logged_non_silent_frames = 0
         self._initial_buffer_seconds = 0.24
         self._initial_buffer_wait_seconds = 3.0
+        self._recording_callback = None
 
     @property
     def sample_rate(self) -> int:
@@ -51,6 +52,9 @@ class RealtimeAudioTrack(MediaStreamTrack):
         self._buffer = b""
         self._pending_audio_bytes = 0
 
+    def set_recording_callback(self, callback) -> None:
+        self._recording_callback = callback
+
     def add_pcm_audio(self, pcm: bytes, sample_rate: int) -> None:
         if not pcm:
             return
@@ -71,6 +75,8 @@ class RealtimeAudioTrack(MediaStreamTrack):
                 await asyncio.sleep(0.01)
         await self._pace_next_frame()
         data_to_send = self._next_frame_bytes()
+        if self._recording_callback is not None and data_to_send.strip(b"\x00"):
+            self._recording_callback(data_to_send, self._sample_rate, self._channels)
         self._log_emitted_audio(data_to_send)
         return self._make_audio_frame(data_to_send)
 

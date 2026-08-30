@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 import numpy as np
 from av.audio.resampler import AudioResampler
 from app.dashboard.state import dashboard_state
-from app.voice.audio_archive import AudioClipArchive
+from app.voice.audio_archive import CallAudioArchive, CallAudioRecorder
 from app.voice.asr import LocalWhisperASR, is_noise_text
 from app.voice.config import (
     LOCAL_TURN_GREETING,
@@ -41,7 +41,7 @@ class LocalGemmaTurnPipeline:
         interrupt_playback,
         tts: RealtimeOmniVoiceTTS | None = None,
         trace_event: Callable[[str, dict], None] | None = None,
-        audio_archive: AudioClipArchive | None = None,
+        audio_archive: CallAudioArchive | None = None,
     ):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
@@ -49,7 +49,7 @@ class LocalGemmaTurnPipeline:
         self._tts = tts or RealtimeOmniVoiceTTS()
         self._llm = LocalLlmClient()
         self._tools = RealEstateToolService.from_env()
-        self._audio_archive = audio_archive or AudioClipArchive()
+        self._audio_archive = audio_archive or CallAudioArchive()
         self._conversation_history: dict[str, list] = {}
         self._language_selection_pending: set[str] = set()
         self._call_languages: dict[str, str] = {}
@@ -80,7 +80,7 @@ class LocalGemmaTurnPipeline:
             await self._tts.prewarm()
             logger.info("OmniVoice prewarm complete")
 
-    async def run(self, call_id, caller_phone, input_track, output_track, playback_generation):
+    async def run(self, call_id, caller_phone, input_track, output_track, playback_generation, recorder: CallAudioRecorder):
         self._language_selection_pending.add(call_id)
         self._greeting_playback_calls.add(call_id)
         dashboard_state.emit(call_id, "language.selection_pending", {})
@@ -89,7 +89,7 @@ class LocalGemmaTurnPipeline:
             name=f"greeting-{call_id}",
         )
         try:
-            await self._run_turn_loop(call_id, caller_phone, input_track, output_track, playback_generation)
+            await self._run_turn_loop(call_id, caller_phone, input_track, output_track, playback_generation, recorder)
         finally:
             greeting_task.cancel()
             await asyncio.gather(greeting_task, return_exceptions=True)
@@ -97,6 +97,7 @@ class LocalGemmaTurnPipeline:
             self._language_selection_pending.discard(call_id)
             self._call_languages.pop(call_id, None)
             self._greeting_playback_calls.discard(call_id)
+            self._audio_archive.archive_call(call_id, recorder)
 
     async def _play_greeting(self, call_id, output_track, playback_generation) -> None:
         if TURN_GREETING_DELAY_SECONDS:
@@ -118,7 +119,7 @@ class LocalGemmaTurnPipeline:
             greeting_seconds * 1000.0,
         )
 
-    async def _run_turn_loop(self, call_id, caller_phone, input_track, output_track, playback_generation) -> None:
+    async def _run_turn_loop(self, call_id, caller_phone, input_track, output_track, playback_generation, recorder) -> None:
         vad = VadState()
         playback_echo_state = {"until": 0.0, "was_playing": False}
         resampler = AudioResampler(format="s16", layout="mono", rate=16000)
@@ -134,7 +135,9 @@ class LocalGemmaTurnPipeline:
                     return
 
                 for resampled in resampler.resample(frame):
-                    chunk_buffer.extend(resampled.to_ndarray().tobytes())
+                    pcm = resampled.to_ndarray().tobytes()
+                    chunk_buffer.extend(pcm)
+                    recorder.add_caller_pcm(pcm)
                     turn_task = await self._consume_chunks(
                         call_id,
                         caller_phone,
@@ -299,9 +302,6 @@ class LocalGemmaTurnPipeline:
             logger.info("Skipping short utterance for %s: %.0f ms", call_id, audio_ms)
             return
 
-        # S3 archival is scheduled separately, so a slow or failed upload can
-        # never delay ASR, the model response, or the caller's audio reply.
-        self._audio_archive.archive_turn(call_id, utterance_pcm)
         transcript_text, transcript_ms = await self._timed_transcribe(call_id, utterance_pcm)
         if not transcript_text:
             return

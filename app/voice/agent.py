@@ -6,6 +6,7 @@ from aiortc import MediaStreamTrack
 from num2words import num2words
 
 from app.dashboard.state import dashboard_state
+from app.voice.audio_archive import CallAudioRecorder
 from app.voice.audio_track import RealtimeAudioTrack
 from app.voice.turn_pipeline import LocalGemmaTurnPipeline
 
@@ -86,6 +87,8 @@ class VoiceAgent:
         return spoken.rstrip(",;:").strip()
 
     async def _run_turn_pipeline(self, call_id, caller_phone, input_track, output_track):
+        recorder = CallAudioRecorder()
+        output_track.set_recording_callback(recorder.add_agent_pcm)
         try:
             await self.turn_pipeline.run(
                 call_id=call_id,
@@ -93,12 +96,14 @@ class VoiceAgent:
                 input_track=input_track,
                 output_track=output_track,
                 playback_generation=self.playback_generation,
+                recorder=recorder,
             )
         except asyncio.CancelledError:
             logger.info("vLLM turn pipeline cancelled for %s", call_id)
         except Exception as exc:
             logger.error("vLLM turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
         finally:
+            output_track.set_recording_callback(None)
             self.active_calls.pop(call_id, None)
             self.playback_generation.pop(call_id, None)
             dashboard_state.end_call(call_id)
