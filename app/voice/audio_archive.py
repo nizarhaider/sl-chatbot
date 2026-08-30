@@ -100,7 +100,7 @@ class CallAudioArchive:
 def _pcm16_stereo_to_mp3(pcm: bytes) -> bytes:
     result = subprocess.run([
         "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE),
-        "-ac", "2", "-i", "pipe:0", "-codec:a", "libmp3lame", "-q:a", "2", "-f", "mp3", "pipe:1",
+        "-ac", "2", "-i", "pipe:0", "-codec:a", "libmp3lame", "-b:a", "64k", "-f", "mp3", "pipe:1",
     ], input=pcm, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if result.returncode or not result.stdout:
         raise RuntimeError(f"Could not encode call recording as MP3: {result.stderr.decode('utf-8', errors='replace').strip()}")
