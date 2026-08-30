@@ -18,6 +18,7 @@ dependencies = [
     "transformers>=5.3.0,<6",
     "pinecone>=9.1.0",
     "num2words>=0.5.14",
+    "boto3>=1.42.0",
 ]
 
 [dependency-groups]

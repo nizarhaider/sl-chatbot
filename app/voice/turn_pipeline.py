@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 import numpy as np
 from av.audio.resampler import AudioResampler
 from app.dashboard.state import dashboard_state
+from app.voice.audio_archive import AudioClipArchive
 from app.voice.asr import LocalWhisperASR, is_noise_text
 from app.voice.config import (
     LOCAL_TURN_GREETING,
@@ -40,6 +41,7 @@ class LocalGemmaTurnPipeline:
         interrupt_playback,
         tts: RealtimeOmniVoiceTTS | None = None,
         trace_event: Callable[[str, dict], None] | None = None,
+        audio_archive: AudioClipArchive | None = None,
     ):
         self._prepare_tts_text = prepare_tts_text
         self._interrupt_playback = interrupt_playback
@@ -47,6 +49,7 @@ class LocalGemmaTurnPipeline:
         self._tts = tts or RealtimeOmniVoiceTTS()
         self._llm = LocalLlmClient()
         self._tools = RealEstateToolService.from_env()
+        self._audio_archive = audio_archive or AudioClipArchive()
         self._conversation_history: dict[str, list] = {}
         self._language_selection_pending: set[str] = set()
         self._call_languages: dict[str, str] = {}
@@ -296,6 +299,9 @@ class LocalGemmaTurnPipeline:
             logger.info("Skipping short utterance for %s: %.0f ms", call_id, audio_ms)
             return
 
+        # S3 archival is scheduled separately, so a slow or failed upload can
+        # never delay ASR, the model response, or the caller's audio reply.
+        self._audio_archive.archive_turn(call_id, utterance_pcm)
         transcript_text, transcript_ms = await self._timed_transcribe(call_id, utterance_pcm)
         if not transcript_text:
             return
