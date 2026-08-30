@@ -388,7 +388,7 @@ $SSH "
 "
 
 log "Installing minimal system packages..."
-$SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl"
+$SSH "apt-get update -qq && apt-get install -y --no-install-recommends portaudio19-dev curl ffmpeg"
 
 log "Reusing the image Python/Torch runtime and installing app packages in parallel..."
 $SSH "

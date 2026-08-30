@@ -1,8 +1,5 @@
 import asyncio
-import io
-import wave
-
-from app.voice.audio_archive import AudioClipArchive, SAMPLE_RATE, S3_BUCKET, _object_key
+from app.voice.audio_archive import AudioClipArchive, S3_BUCKET, _object_key, _pcm16_to_mp3
 
 
 class FakeS3Client:
@@ -13,10 +10,10 @@ class FakeS3Client:
         self.requests.append(kwargs)
 
 
-def test_archives_pcm_as_private_wav_without_waiting_for_upload() -> None:
+def test_archives_pcm_as_private_mp3_without_waiting_for_upload() -> None:
     async def run() -> FakeS3Client:
         client = FakeS3Client()
-        archive = AudioClipArchive(client_factory=lambda: client)
+        archive = AudioClipArchive(client_factory=lambda: client, encode=lambda pcm: b"mp3-data")
         archive.archive_turn("call/123", b"\x01\x00" * 160)
         await asyncio.gather(*archive._tasks)
         return client
@@ -26,12 +23,10 @@ def test_archives_pcm_as_private_wav_without_waiting_for_upload() -> None:
     assert request["Bucket"] == S3_BUCKET
     assert request["Key"].startswith("voice-clips/")
     assert "/call_123/" in request["Key"]
-    assert request["ContentType"] == "audio/wav"
+    assert request["Key"].endswith(".mp3")
+    assert request["ContentType"] == "audio/mpeg"
     assert request["ServerSideEncryption"] == "AES256"
-    with wave.open(io.BytesIO(request["Body"]), "rb") as wav:
-        assert wav.getframerate() == SAMPLE_RATE
-        assert wav.getnchannels() == 1
-        assert wav.getnframes() == 160
+    assert request["Body"] == b"mp3-data"
 
 
 def test_object_key_excludes_unsafe_call_id_characters() -> None:
@@ -39,3 +34,8 @@ def test_object_key_excludes_unsafe_call_id_characters() -> None:
     assert key.startswith("voice-clips/")
     assert "../" not in key
     assert "call_id" in key
+
+
+def test_encodes_pcm_as_playable_mp3() -> None:
+    mp3 = _pcm16_to_mp3(b"\x00\x00" * 16_000)
+    assert mp3.startswith(b"ID3") or mp3.startswith(b"\xff\xfb")
