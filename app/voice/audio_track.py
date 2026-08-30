@@ -76,7 +76,7 @@ class RealtimeAudioTrack(MediaStreamTrack):
         await self._pace_next_frame()
         data_to_send = self._next_frame_bytes()
         if self._recording_callback is not None and data_to_send.strip(b"\x00"):
-            self._recording_callback(data_to_send, self._sample_rate, self._channels)
+            self._recording_callback(data_to_send, self._sample_rate, self._channels, self._pts / self._sample_rate)
         self._log_emitted_audio(data_to_send)
         return self._make_audio_frame(data_to_send)
 

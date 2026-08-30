@@ -23,12 +23,15 @@ class CallAudioRecorder:
         self._started_at = clock()
         self._caller: list[tuple[int, np.ndarray]] = []
         self._agent: list[tuple[int, np.ndarray]] = []
+        self._caller_cursor = 0
 
     def add_caller_pcm(self, pcm: bytes) -> None:
-        self._add(self._caller, pcm, channels=1, sample_rate=SAMPLE_RATE)
+        samples = self._add(self._caller, pcm, channels=1, sample_rate=SAMPLE_RATE, offset=self._caller_cursor)
+        self._caller_cursor += samples
 
-    def add_agent_pcm(self, pcm: bytes, sample_rate: int, channels: int = 2) -> None:
-        self._add(self._agent, pcm, channels=channels, sample_rate=sample_rate)
+    def add_agent_pcm(self, pcm: bytes, sample_rate: int, channels: int = 2, offset_seconds: float | None = None) -> None:
+        offset = round(offset_seconds * SAMPLE_RATE) if offset_seconds is not None else None
+        self._add(self._agent, pcm, channels=channels, sample_rate=sample_rate, offset=offset)
 
     def render_pcm16_stereo(self) -> bytes:
         length = max(
@@ -42,9 +45,9 @@ class CallAudioRecorder:
         self._mix(output, self._agent, 1)
         return np.clip(output, -32768, 32767).astype(np.int16).tobytes()
 
-    def _add(self, destination, pcm: bytes, channels: int, sample_rate: int) -> None:
+    def _add(self, destination, pcm: bytes, channels: int, sample_rate: int, offset: int | None = None) -> int:
         if not pcm:
-            return
+            return 0
         samples = np.frombuffer(pcm, dtype=np.int16)
         if channels > 1:
             samples = samples[: len(samples) // channels * channels].reshape(-1, channels)[:, 0]
@@ -53,8 +56,11 @@ class CallAudioRecorder:
                 raise ValueError(f"Unsupported recording sample rate: {sample_rate}")
             samples = samples[:: sample_rate // SAMPLE_RATE]
         if samples.size:
-            offset = max(0, round((self._clock() - self._started_at) * SAMPLE_RATE))
+            if offset is None:
+                offset = max(0, round((self._clock() - self._started_at) * SAMPLE_RATE))
             destination.append((offset, samples.copy()))
+            return len(samples)
+        return 0
 
     @staticmethod
     def _mix(output: np.ndarray, segments, channel: int) -> None:

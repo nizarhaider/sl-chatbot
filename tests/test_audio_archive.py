@@ -35,11 +35,20 @@ def test_records_caller_and_agent_in_separate_stereo_channels() -> None:
     now = [0.0]
     recorder = CallAudioRecorder(clock=lambda: now[0])
     recorder.add_caller_pcm(np.array([100, 200], dtype=np.int16).tobytes())
-    now[0] = 2 / 16_000
     agent = np.repeat(np.array([300, 400, 500, 600, 700, 800], dtype=np.int16)[:, None], 2, axis=1)
-    recorder.add_agent_pcm(agent.tobytes(), sample_rate=48_000)
+    recorder.add_agent_pcm(agent.tobytes(), sample_rate=48_000, offset_seconds=2 / 16_000)
     recorded = np.frombuffer(recorder.render_pcm16_stereo(), dtype=np.int16).reshape(-1, 2)
     assert recorded.tolist() == [[100, 0], [200, 0], [0, 300], [0, 600]]
+
+
+def test_caller_recording_uses_contiguous_media_samples_not_arrival_time() -> None:
+    now = [0.0]
+    recorder = CallAudioRecorder(clock=lambda: now[0])
+    recorder.add_caller_pcm(np.array([100, 200], dtype=np.int16).tobytes())
+    now[0] = 10.0
+    recorder.add_caller_pcm(np.array([300, 400], dtype=np.int16).tobytes())
+    recorded = np.frombuffer(recorder.render_pcm16_stereo(), dtype=np.int16).reshape(-1, 2)
+    assert recorded[:, 0].tolist() == [100, 200, 300, 400]
 
 
 def test_object_key_and_mp3_encoder() -> None:
