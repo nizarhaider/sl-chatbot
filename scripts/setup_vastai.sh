@@ -55,7 +55,9 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-allowed = re.compile(r"^(?:RTX|A\d|L\d|Tesla|Quadro)", re.IGNORECASE)
+# The voice runtime's CUDA build supports only the Ampere/Ada consumer cards
+# selected below. Older Tesla cards (for example, P40) cannot run its kernels.
+allowed = re.compile(r"\bRTX\s+(?:30|40)\d{2}\b", re.IGNORECASE)
 excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
 minimum_down = float(os.environ["MIN_INTERNET_DOWN_MBIT"])
 eligible = [
@@ -244,6 +246,11 @@ SCP="scp -o StrictHostKeyChecking=accept-new -P ${SSH_PORT} -i ${SSH_KEY}"
 log() { echo "▶ $*"; }
 
 log "Checking machine..."
+GPU_NAME="$($SSH 'nvidia-smi --query-gpu=name --format=csv,noheader')"
+if ! printf '%s\n' "${GPU_NAME}" | grep -Eqi '(^| )RTX (30|40)[0-9][0-9]($| )'; then
+  echo "ERROR: Unsupported GPU '${GPU_NAME}'. The voice runtime requires an RTX 30- or 40-series GPU."
+  exit 1
+fi
 $SSH "uname -a && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader && which uv git python3"
 
 log "Preparing remote repo on branch ${REMOTE_BRANCH}..."
@@ -412,7 +419,7 @@ $SSH "
       git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /workspace/llama.cpp
       cmake -S /workspace/llama.cpp -B /workspace/llama.cpp/build \
         -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DGGML_CUDA_FA=ON \
-        -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
+        -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_CUDA_ARCHITECTURES='86;89' \
         -DLLAMA_CURL=OFF
       cmake --build /workspace/llama.cpp/build --config Release --target llama-server -j 8
     fi
