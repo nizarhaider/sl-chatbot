@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -19,6 +20,10 @@ import numpy as np
 import torch
 from av.audio.resampler import AudioResampler
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.voice.config import (
     TURN_END_SILENCE_CHUNKS,
