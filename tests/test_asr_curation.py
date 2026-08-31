@@ -68,3 +68,23 @@ def test_accepts_previously_unpublished_owner_permitted_clip(tmp_path):
     accepted, reason = validate(item, tmp_path, set(), set())
     assert reason is None
     assert accepted["rights_basis"] == "owner-permission"
+
+
+def test_rejects_video_in_the_known_training_denylist(tmp_path):
+    audio = tmp_path / "clip.mp3"
+    audio.write_bytes(b"audio")
+    item = record(audio.name)
+    item["video_id"] = "known-video"
+    accepted, reason = validate(item, tmp_path, set(), set(), {"known-video"}, set())
+    assert accepted is None
+    assert reason == "video is present in known model training material"
+
+
+def test_rejects_transcript_in_the_known_training_denylist(tmp_path):
+    audio = tmp_path / "clip.mp3"
+    audio.write_bytes(b"audio")
+    item = record(audio.name)
+    initial, _ = validate(item, tmp_path, set(), set())
+    accepted, reason = validate(item, tmp_path, set(), set(), set(), {initial["text_sha256"]})
+    assert accepted is None
+    assert reason == "transcript is present in known model training material"

@@ -55,7 +55,14 @@ def has_non_overlap_evidence(record: dict, rights: str) -> bool:
         return False
 
 
-def validate(record: dict, manifest_dir: Path, audio_hashes: set[str], text_hashes: set[str]) -> tuple[dict | None, str | None]:
+def validate(
+    record: dict,
+    manifest_dir: Path,
+    audio_hashes: set[str],
+    text_hashes: set[str],
+    overlap_video_ids: set[str] | None = None,
+    overlap_text_hashes: set[str] | None = None,
+) -> tuple[dict | None, str | None]:
     required = ("id", "audio", "text", "source", "source_url", "rights_basis", "rights_evidence_url", "source_revision")
     missing = [field for field in required if not str(record.get(field, "")).strip()]
     if missing:
@@ -63,6 +70,8 @@ def validate(record: dict, manifest_dir: Path, audio_hashes: set[str], text_hash
     source = str(record["source"]).strip().lower()
     if source in DENIED_SOURCES:
         return None, "known common Sinhala ASR training source is excluded"
+    if str(record.get("video_id", "")) in (overlap_video_ids or set()):
+        return None, "video is present in known model training material"
     rights = str(record["rights_basis"]).strip().lower()
     if rights not in ALLOWED_RIGHTS:
         return None, "rights basis is not approved for training"
@@ -76,6 +85,8 @@ def validate(record: dict, manifest_dir: Path, audio_hashes: set[str], text_hash
         return None, "transcript is not predominantly Sinhala"
     audio_sha256 = digest_file(audio)
     text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if text_sha256 in (overlap_text_hashes or set()):
+        return None, "transcript is present in known model training material"
     if audio_sha256 in audio_hashes:
         return None, "duplicate audio content"
     if text_sha256 in text_hashes:
@@ -96,18 +107,35 @@ def records(path: Path) -> Iterable[tuple[int, dict]]:
             yield number, json.loads(line)
 
 
+def overlap_denylist(paths: Iterable[Path]) -> tuple[set[str], set[str]]:
+    """Load hash-only source exclusions produced by build_hf_overlap_denylist."""
+    video_ids: set[str] = set()
+    text_hashes: set[str] = set()
+    for path in paths:
+        for _, item in records(path):
+            if item.get("video_id"):
+                video_ids.add(str(item["video_id"]))
+            if item.get("text_sha256"):
+                text_hashes.add(str(item["text_sha256"]))
+    return video_ids, text_hashes
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--accepted", required=True, type=Path)
     parser.add_argument("--rejected", required=True, type=Path)
+    parser.add_argument("--overlap-denylist", action="append", type=Path, default=[])
     args = parser.parse_args()
     audio_hashes: set[str] = set()
     text_hashes: set[str] = set()
     accepted: list[dict] = []
     rejected: list[dict] = []
+    overlap_video_ids, overlap_text_hashes = overlap_denylist(args.overlap_denylist)
     for line, record in records(args.input):
-        item, reason = validate(record, args.input.parent, audio_hashes, text_hashes)
+        item, reason = validate(
+            record, args.input.parent, audio_hashes, text_hashes, overlap_video_ids, overlap_text_hashes
+        )
         if item is None:
             rejected.append({"line": line, "id": record.get("id"), "reason": reason})
         else:
