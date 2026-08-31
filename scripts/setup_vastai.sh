@@ -55,7 +55,7 @@ import re
 import sys
 
 offers = json.load(sys.stdin)
-# The voice runtime's CUDA build supports only the Ampere/Ada consumer cards
+# The voice runtime CUDA build supports only the Ampere/Ada consumer cards
 # selected below. Older Tesla cards (for example, P40) cannot run its kernels.
 allowed = re.compile(r"\bRTX\s+(?:30|40)\d{2}\b", re.IGNORECASE)
 excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
