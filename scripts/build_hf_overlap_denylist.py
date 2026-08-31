@@ -12,8 +12,10 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -29,8 +31,16 @@ DEFAULT_DATASET = "SPEAK-ASR/youtube-sinhala-asr"
 
 
 def get_json(path: str, params: dict) -> dict:
-    with urlopen(f"{BASE_URL}/{path}?{urlencode(params)}", timeout=30) as response:  # noqa: S310 - fixed HTTPS host
-        return json.load(response)
+    url = f"{BASE_URL}/{path}?{urlencode(params)}"
+    for attempt in range(3):
+        try:
+            with urlopen(url, timeout=30) as response:  # noqa: S310 - fixed HTTPS host
+                return json.load(response)
+        except (HTTPError, URLError) as error:
+            if attempt == 2 or isinstance(error, HTTPError) and error.code < 500:
+                raise
+            time.sleep(attempt + 1)
+    raise AssertionError("unreachable")
 
 
 def text_hash(value: str) -> str:
