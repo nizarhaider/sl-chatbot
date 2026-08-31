@@ -81,7 +81,7 @@ def caller_turns(pcm: bytes) -> list[tuple[float, bytes]]:
 
 
 def load_model(device: torch.device):
-    dtype = torch.float16 if device.type == "mps" else torch.float32
+    dtype = torch.float16 if device.type in {"cuda", "mps"} else torch.float32
     processor = AutoProcessor.from_pretrained(WHISPER_MODEL)
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
         WHISPER_MODEL,
@@ -111,9 +111,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--device", choices=("mps", "cpu"), default="mps")
+    parser.add_argument("--device", choices=("cuda", "mps", "cpu"), default="cuda")
     args = parser.parse_args()
     device = torch.device(args.device)
+    if args.device == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("CUDA is unavailable; rerun with --device cpu")
     if args.device == "mps" and not torch.backends.mps.is_available():
         raise SystemExit("MPS is unavailable; rerun with --device cpu")
     processor, model, dtype = load_model(device)
