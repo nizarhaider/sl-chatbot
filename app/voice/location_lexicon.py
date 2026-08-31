@@ -61,7 +61,8 @@ def location_search_terms(location: str) -> str:
     return " ".join(dict.fromkeys((location, sinhala, *aliases)))
 
 
-# Whisper's decoder prompt shares its fixed output budget. Bias the most common
-# inventory areas here; the full lexicon is still used for query normalization
-# and retrieval below.
-ASR_LOCATION_HINTS = "Sri Lankan places: බත්තරමුල්ල, මාලඹේ, දෙහිවල, කොළඹ, නුගේගොඩ."
+ASR_LOCATION_HINTS = ", ".join(
+    value
+    for canonical, (sinhala, _) in LOCATION_LEXICON.items()
+    for value in (canonical, sinhala)
+)
