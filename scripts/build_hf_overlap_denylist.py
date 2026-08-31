@@ -77,13 +77,40 @@ def records(dataset: str, fetch: Callable[[str, dict], dict] = get_json) -> Iter
             offset += len(rows)
 
 
+def parquet_records(dataset: str, fetch: Callable[[str, dict], dict] = get_json) -> Iterable[dict]:
+    """Read only identifiers and text columns, avoiding Dataset Viewer rate limits."""
+    try:
+        import duckdb
+    except ImportError as error:
+        raise SystemExit("Parquet mode needs DuckDB: run with `uv run --with duckdb`") from error
+    files = fetch("parquet", {"dataset": dataset}).get("parquet_files", [])
+    urls = [str(item["url"]) for item in files]
+    if not urls:
+        return
+    relation = duckdb.connect().execute(
+        "SELECT video_id, text, filename FROM read_parquet(?, filename = true)", [urls]
+    )
+    for video_id, text, filename in relation.fetchall():
+        if str(video_id).strip() and normalized_text(str(text)):
+            split = next((part for part in str(filename).split("/") if part in {"train", "validation", "test"}), "unknown")
+            yield {
+                "source_dataset": dataset,
+                "config": "default",
+                "split": split,
+                "video_id": str(video_id),
+                "text_sha256": text_hash(str(text)),
+            }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--backend", choices=("rows", "parquet"), default="rows")
     args = parser.parse_args()
     unique: dict[tuple[str, str], dict] = {}
-    for item in records(args.dataset):
+    source_records = parquet_records(args.dataset) if args.backend == "parquet" else records(args.dataset)
+    for item in source_records:
         unique[(item["video_id"], item["text_sha256"])] = item
     args.output.write_text(
         "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in unique.values()), encoding="utf-8"
