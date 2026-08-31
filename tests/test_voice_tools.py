@@ -102,3 +102,21 @@ def test_turn_pipeline_executes_openai_style_tool_call_before_answering() -> Non
     assert response == "I found an apartment in Malabe."
     assert pipeline._llm.requests[1][-1]["role"] == "tool"
     assert "property-1" in pipeline._llm.requests[1][-1]["content"]
+
+
+def test_language_selection_follow_up_describes_the_available_help() -> None:
+    pipeline = LocalGemmaTurnPipeline.__new__(LocalGemmaTurnPipeline)
+    pipeline._conversation_history = {}
+    pipeline._call_languages = {}
+    pipeline._trace_event = None
+    pipeline._llm = FakeLlm([{"role": "assistant", "content": "How can I help?"}])
+    pipeline._tools = None
+
+    asyncio.run(
+        pipeline._generate_response(
+            "call-1", "94770000000", "English", language="en", selecting_language=True
+        )
+    )
+
+    instruction = pipeline._llm.requests[0][0]["content"]
+    assert "find a suitable property and arrange a viewing" in instruction

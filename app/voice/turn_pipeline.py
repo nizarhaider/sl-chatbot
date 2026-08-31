@@ -461,8 +461,9 @@ class LocalGemmaTurnPipeline:
         if selecting_language:
             messages = [{"role": "user", "content": (
                 "The caller has selected the language identified by the application. Acknowledge "
-                "the selection briefly in that language and say you are ready to listen. Do not "
-                "ask about properties or process the caller's request during this turn."
+                "the selection briefly in that language, explain that you can help find a suitable "
+                "property and arrange a viewing, then ask what they are looking for. Do not process "
+                "the caller's request during this turn."
             )}, *history, {"role": "user", "content": transcript_text}]
         else:
             messages = [*history]
