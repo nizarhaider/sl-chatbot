@@ -59,36 +59,49 @@ def qualifying_entry(entry: dict, discovered_at: str) -> dict | None:
     }
 
 
-def search(query: str, limit: int) -> list[dict]:
+def search(query: str, limit: int) -> tuple[list[dict], str | None]:
     command = [
         "yt-dlp", f"ytsearch{limit}:{query}", "--dump-single-json", "--skip-download",
         "--no-warnings", "--socket-timeout", "30", "--retries", "1",
     ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
-    return json.loads(result.stdout).get("entries", [])
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if result.returncode:
+        return [], result.stderr.strip() or f"yt-dlp exited {result.returncode}"
+    try:
+        return json.loads(result.stdout).get("entries", []), None
+    except json.JSONDecodeError as error:
+        return [], f"invalid yt-dlp JSON: {error}"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--queries", type=Path, required=True, help="UTF-8 file with one search query per line")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--errors", type=Path, help="Optional JSONL query-failure report")
+    parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
     discovered_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     candidates: dict[str, dict] = {}
+    errors: list[dict] = []
     searched = 0
     for query in args.queries.read_text(encoding="utf-8").splitlines():
         if not query.strip():
             continue
         searched += 1
-        for entry in search(query, args.limit):
+        entries, error = search(query, args.limit)
+        if error:
+            errors.append({"query": query, "error": error})
+            continue
+        for entry in entries:
             candidate = qualifying_entry(entry, discovered_at)
             if candidate:
                 candidates[candidate["id"]] = candidate
     args.output.write_text(
         "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in candidates.values()), encoding="utf-8"
     )
-    print(f"queries={searched} candidates={len(candidates)}")
+    if args.errors:
+        args.errors.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in errors), encoding="utf-8")
+    print(f"queries={searched} candidates={len(candidates)} failed_queries={len(errors)}")
 
 
 if __name__ == "__main__":
