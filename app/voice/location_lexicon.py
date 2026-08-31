@@ -31,6 +31,10 @@ LOCATION_LEXICON: dict[str, tuple[str, tuple[str, ...]]] = {
     "Matara": ("මාතර", ("මාතර", "matara")),
     "Kurunegala": ("කුරුණෑගල", ("කුරුණෑගල", "kurunegala")),
     "Anuradhapura": ("අනුරාධපුර", ("අනුරාධපුර", "anuradhapura")),
+    "Angoda": (
+        "අංගොඩ",
+        ("අංගොඩ", "අංගොඩේ", "ආණ්ඩුකේගොඩ", "ආණ්ඩුකේ ගොඩ", "ආඤ්ඤුගය ගොඩ", "angoda"),
+    ),
 }
 
 
@@ -64,4 +68,4 @@ def location_search_terms(location: str) -> str:
 # Whisper's decoder prompt shares its fixed output budget. Bias the most common
 # inventory areas here; the full lexicon is still used for query normalization
 # and retrieval below.
-ASR_LOCATION_HINTS = "Sri Lankan places: බත්තරමුල්ල, මාලඹේ, දෙහිවල, කොළඹ, නුගේගොඩ."
+ASR_LOCATION_HINTS = "Sri Lankan places: අංගොඩ, බත්තරමුල්ල, මාලඹේ, දෙහිවල, කොළඹ."

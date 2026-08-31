@@ -11,6 +11,7 @@ def test_known_sinhala_location_is_canonicalized_for_search() -> None:
     assert canonicalize_location_mentions("මට බත්තරමුල්ලේ apartment එකක් ඕනේ") == (
         "මට Battaramulla apartment එකක් ඕනේ"
     )
+    assert canonicalize_location_mentions("ආඤ්ඤුගය ගොඩ පැත්තෙන්") == "Angoda පැත්තෙන්"
 
 
 def test_tts_uses_sinhala_pronunciation_for_known_locations() -> None:
