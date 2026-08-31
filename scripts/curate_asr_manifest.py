@@ -14,12 +14,16 @@ import json
 import re
 import unicodedata
 from collections.abc import Iterable
+from datetime import date
 from pathlib import Path
 
 
 ALLOWED_RIGHTS = {"cc0-1.0", "cc-by-4.0", "public-domain", "owner-permission"}
 DENIED_SOURCES = {"openslr-52", "slr52", "openslr/slr52"}
 SINHALA = re.compile(r"[\u0D80-\u0DFF]")
+# The deployed SPEAK-ASR checkpoint was created on the Hugging Face Hub at this
+# date. Public clips published later cannot have been part of its training set.
+MODEL_CREATION_DATE = date(2026, 5, 5)
 
 
 def normalized_text(value: str) -> str:
@@ -40,6 +44,17 @@ def has_sinhala(text: str) -> bool:
     return bool(letters) and sum(bool(SINHALA.fullmatch(character)) for character in letters) / len(letters) >= 0.5
 
 
+def has_non_overlap_evidence(record: dict, rights: str) -> bool:
+    """Require a temporal or private-origin guarantee against model overlap."""
+    if rights == "owner-permission" and record.get("previously_unpublished") is True:
+        return True
+    published = str(record.get("source_published_at", ""))
+    try:
+        return date.fromisoformat(published[:10]) > MODEL_CREATION_DATE
+    except ValueError:
+        return False
+
+
 def validate(record: dict, manifest_dir: Path, audio_hashes: set[str], text_hashes: set[str]) -> tuple[dict | None, str | None]:
     required = ("id", "audio", "text", "source", "source_url", "rights_basis", "rights_evidence_url", "source_revision")
     missing = [field for field in required if not str(record.get(field, "")).strip()]
@@ -51,6 +66,8 @@ def validate(record: dict, manifest_dir: Path, audio_hashes: set[str], text_hash
     rights = str(record["rights_basis"]).strip().lower()
     if rights not in ALLOWED_RIGHTS:
         return None, "rights basis is not approved for training"
+    if not has_non_overlap_evidence(record, rights):
+        return None, "no evidence that this clip postdates the deployed model"
     audio = (manifest_dir / str(record["audio"])).resolve()
     if not audio.is_file():
         return None, "referenced audio is missing"
