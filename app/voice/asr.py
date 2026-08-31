@@ -10,6 +10,7 @@ from app.voice.config import (
     WHISPER_MODEL,
     WHISPER_TASK,
 )
+from app.voice.location_lexicon import ASR_LOCATION_HINTS
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +43,16 @@ class LocalWhisperASR:
         import torch
 
         with torch.inference_mode():
+            prompt_ids = processor.get_prompt_ids(
+                f"Sri Lankan locations: {ASR_LOCATION_HINTS}",
+                return_tensors="pt",
+            ).to(device)
             generated_ids = model.generate(
                 input_features,
                 attention_mask=attention_mask,
                 language=WHISPER_LANGUAGE,
                 max_new_tokens=WHISPER_MAX_NEW_TOKENS,
+                prompt_ids=prompt_ids,
                 task=WHISPER_TASK,
             )
         return processor.batch_decode(
