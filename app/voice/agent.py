@@ -8,7 +8,6 @@ from num2words import num2words
 from app.dashboard.state import dashboard_state
 from app.voice.audio_archive import CallAudioRecorder
 from app.voice.audio_track import RealtimeAudioTrack
-from app.voice.location_lexicon import spoken_location_text
 from app.voice.turn_pipeline import LocalGemmaTurnPipeline
 
 logger = logging.getLogger(__name__)
@@ -73,7 +72,7 @@ class VoiceAgent:
             output_track.clear_buffer()
 
     def _prepare_tts_text(self, text: str) -> str:
-        cleaned = spoken_location_text(re.sub(r"\s+", " ", text).strip())
+        cleaned = re.sub(r"\s+", " ", text).strip()
         spoken = re.sub(
             r"\b(?P<hour>\d{1,2})(?:[:.](?P<minute>[0-5]\d))?\s*(?P<period>a\.?m\.?|p\.?m\.?)\b",
             _time_to_words,

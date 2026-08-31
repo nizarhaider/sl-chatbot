@@ -1,7 +1,5 @@
 import logging
 
-from app.voice.location_lexicon import location_search_terms
-
 logger = logging.getLogger(__name__)
 
 
@@ -47,11 +45,10 @@ class PineconePropertyStore:
 def _property_record(property_data: dict) -> dict:
     bedrooms = property_data["bedrooms"]
     bedroom_text = f"{bedrooms} bedrooms" if bedrooms is not None else "land without bedrooms"
-    location_terms = location_search_terms(property_data["location"])
     return {
         "_id": str(property_data["property_id"]),
         "content": (
-            f"{property_data['name']} is a {property_data['property_type']} in {location_terms}. "
+            f"{property_data['name']} is a {property_data['property_type']} in {property_data['location']}. "
             f"It has {bedroom_text}. The exact price is {property_data['price_label']}. "
             f"Details: {property_data['details']}"
         ),

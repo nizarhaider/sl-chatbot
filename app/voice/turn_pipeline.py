@@ -28,7 +28,6 @@ from app.voice.config import (
 )
 from app.voice.llm import LocalLlmClient, message_text
 from app.voice.tts import RealtimeOmniVoiceTTS
-from app.voice.location_lexicon import canonicalize_location_mentions
 from app.voice.tools import LLM_TOOLS, CallContext, RealEstateToolService
 from app.voice.vad import VadState, pcm_rms
 
@@ -339,23 +338,12 @@ class LocalGemmaTurnPipeline:
                 await self._timed_speak(call_id, response_text, output_track, playback_generation)
             return
 
-        understood_text = canonicalize_location_mentions(transcript_text)
-        if understood_text != transcript_text:
-            dashboard_state.emit(call_id, "pipeline.location_normalized", {
-                "transcript": transcript_text,
-                "understood": understood_text,
-            })
-            self._trace("asr.location_normalized", {
-                "transcript": transcript_text,
-                "understood": understood_text,
-            })
-
         # Persist the caller's turn before inference. If they interrupt a reply,
         # cancellation cannot erase this context from the next response.
-        self._append_caller_turn(call_id, understood_text)
+        self._append_caller_turn(call_id, transcript_text)
 
-        if _is_wait_request(understood_text):
-            response_text = _wait_response(understood_text)
+        if _is_wait_request(transcript_text):
+            response_text = _wait_response(transcript_text)
             dashboard_state.emit(call_id, "pipeline.response_ready", {"text": response_text, "duration_ms": 0})
             dashboard_state.add_transcript(call_id, "assistant", response_text)
             self._append_assistant_turn(call_id, response_text)
@@ -365,7 +353,7 @@ class LocalGemmaTurnPipeline:
         async def announce_tool(tool_name: str) -> None:
             if tool_name not in {"search_properties", "book_appointment", "send_whatsapp_message"}:
                 return
-            hold_text = _tool_wait_message(understood_text, tool_name)
+            hold_text = _tool_wait_message(transcript_text, tool_name)
             dashboard_state.emit(call_id, "tool.announced", {"name": tool_name, "text": hold_text})
             dashboard_state.add_transcript(call_id, "assistant", hold_text)
             hold_audio_seconds, _ = await self._timed_speak(
@@ -378,7 +366,7 @@ class LocalGemmaTurnPipeline:
         response_text, llm_ms = await self._timed_response(
             call_id,
             caller_phone,
-            understood_text,
+            transcript_text,
             announce_tool,
         )
         if not response_text or is_noise_text(response_text):
