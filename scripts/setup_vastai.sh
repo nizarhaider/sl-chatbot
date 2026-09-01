@@ -226,6 +226,10 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
+LLM_PORT="${LLM_PORT:-8000}"
+LLM_MODEL="unsloth/gemma-4-E4B-it-GGUF"
+LLM_MODEL_FILE="gemma-4-E4B-it-UD-Q4_K_XL.gguf"
+LLM_MODEL_PATH="/workspace/models/${LLM_MODEL_FILE}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -394,7 +398,7 @@ $SSH "
     'fastapi>=0.129.0' 'uvicorn>=0.41.0' 'aiortc>=1.9.0' 'httpx>=0.27.0' \
     'numpy>=1.26.0' 'realtimetts[omnivoice]>=0.7.1' 'python-dotenv>=1.2.1' \
     'psycopg[binary]>=3.2' 'transformers>=5.3.0,<6' 'pinecone>=9.1.0' \
-    'num2words>=0.5.14' 'boto3>=1.42.0' &
+    'num2words>=0.5.14' 'boto3>=1.42.0' 'google-genai>=1.69.0' &
   uv_pid=\$!
   (
     # Build current llama.cpp with CUDA support; the image's cached binary may
