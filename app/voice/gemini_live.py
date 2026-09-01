@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import os
+from collections import deque
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from av.audio.resampler import AudioResampler
 from google import genai
 from google.genai import types
+import numpy as np
 
 from app.dashboard.state import dashboard_state
 from app.voice.audio_archive import CallAudioArchive, CallAudioRecorder
@@ -19,6 +21,9 @@ GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
 INPUT_RATE = 16_000
 OUTPUT_RATE = 24_000
 INPUT_CHUNK_BYTES = INPUT_RATE * 2 // 10  # 100 ms of mono PCM16.
+SPEECH_RMS_THRESHOLD = 650
+TURN_END_SILENCE_CHUNKS = 7  # 700 ms at the 100 ms input chunk size.
+PREFIX_CHUNKS = 3
 
 
 class GeminiLivePipeline:
@@ -94,16 +99,19 @@ class GeminiLivePipeline:
             "system_instruction": (
                 f"{VOICE_AGENT_PROMPT}\n\n"
                 f"Today is {today} in Asia/Colombo. You are a live phone agent: "
-                "respond with native audio only. Gemini Live handles turn detection; "
-                "do not mention transcripts, tools, or implementation details."
+                "respond with native audio only. Do not mention transcripts, tools, or "
+                "implementation details. Speak as a warm, professional Sri Lankan woman. "
+                "Use natural Sri Lankan English and Sinhala pronunciation; never imitate an "
+                "American accent."
             ),
+            "speech_config": {
+                "voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}
+            },
             "input_audio_transcription": {},
             "output_audio_transcription": {},
             "realtime_input_config": {
                 "automatic_activity_detection": {
-                    "disabled": False,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 700,
+                    "disabled": True,
                 }
             },
             "tools": [{"function_declarations": declarations}],
@@ -112,15 +120,16 @@ class GeminiLivePipeline:
     async def _send_input(self, session, call_id, input_track, recorder: CallAudioRecorder) -> None:
         resampler = AudioResampler(format="s16", layout="mono", rate=INPUT_RATE)
         buffer = bytearray()
+        prefix: deque[bytes] = deque(maxlen=PREFIX_CHUNKS)
+        speaking = False
+        silence_chunks = 0
         while True:
             try:
                 frame = await input_track.recv()
             except Exception as exc:
                 logger.info("Gemini Live input ended for %s: %s", call_id, exc)
-                if buffer:
-                    await session.send_realtime_input(
-                        audio=types.Blob(data=bytes(buffer), mime_type="audio/pcm;rate=16000")
-                    )
+                if speaking:
+                    await session.send_realtime_input(activity_end=types.ActivityEnd())
                 await session.send_realtime_input(audio_stream_end=True)
                 return
             for resampled in resampler.resample(frame):
@@ -130,9 +139,42 @@ class GeminiLivePipeline:
                 while len(buffer) >= INPUT_CHUNK_BYTES:
                     chunk = bytes(buffer[:INPUT_CHUNK_BYTES])
                     del buffer[:INPUT_CHUNK_BYTES]
+                    rms = _pcm_rms(chunk)
+                    if not speaking:
+                        prefix.append(chunk)
+                        if rms < SPEECH_RMS_THRESHOLD:
+                            continue
+                        speaking = True
+                        silence_chunks = 0
+                        dashboard_state.emit(call_id, "pipeline.speech_started", {"provider": "bridge_vad"})
+                        logger.info("Gemini Live speech start for %s (rms=%.0f)", call_id, rms)
+                        await session.send_realtime_input(activity_start=types.ActivityStart())
+                        for buffered_chunk in prefix:
+                            await session.send_realtime_input(
+                                audio=types.Blob(data=buffered_chunk, mime_type="audio/pcm;rate=16000")
+                            )
+                        prefix.clear()
+                        continue
                     await session.send_realtime_input(
                         audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
                     )
+                    if rms >= SPEECH_RMS_THRESHOLD:
+                        silence_chunks = 0
+                        continue
+                    silence_chunks += 1
+                    if silence_chunks >= TURN_END_SILENCE_CHUNKS:
+                        speaking = False
+                        silence_chunks = 0
+                        dashboard_state.emit(call_id, "pipeline.speech_ended", {"provider": "bridge_vad"})
+                        logger.info("Gemini Live speech end for %s", call_id)
+                        await session.send_realtime_input(activity_end=types.ActivityEnd())
+
+
+def _pcm_rms(pcm: bytes) -> float:
+    samples = np.frombuffer(pcm, dtype=np.int16)
+    if not samples.size:
+        return 0.0
+    return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
 
     async def _receive(self, session, call_id, context, output_track, playback_generation) -> None:
         caller_text: list[str] = []
