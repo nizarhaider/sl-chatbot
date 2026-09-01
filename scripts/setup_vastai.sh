@@ -8,11 +8,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 if [ "$#" -eq 0 ]; then
-DISK_GB="${DISK_GB:-50}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-24}"
+DISK_GB="${DISK_GB:-20}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-8}"
 MIN_CPU_CORES="${MIN_CPU_CORES:-8}"
 MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-700}"
-MIN_CUDA_VERSION="${MIN_CUDA_VERSION:-12.8}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
 TEMPLATE_HASH="${TEMPLATE_HASH:-247f2f26d31d533719c1fc4c9b5cbf93}"
@@ -28,7 +27,7 @@ command -v uvx >/dev/null 2>&1 || fail "uvx is required: https://docs.astral.sh/
 test -f .env || fail "${ROOT_DIR}/.env is required"
 test -f "${SSH_KEY}" || fail "SSH key not found: ${SSH_KEY}"
 [[ "${MIN_GPU_RAM_GB}" =~ ^[0-9]+$ ]] || fail "MIN_GPU_RAM_GB must be numeric"
-[ "${MIN_GPU_RAM_GB}" -ge 24 ] || fail "Gemma Q4 voice runtime deployments require at least 24 GB VRAM"
+[ "${MIN_GPU_RAM_GB}" -ge 8 ] || fail "Gemini Live deployments require at least 8 GB VRAM"
 [[ "${MIN_CPU_CORES}" =~ ^[0-9]+$ ]] || fail "MIN_CPU_CORES must be numeric"
 [[ "${MIN_INTERNET_DOWN_MBIT}" =~ ^[0-9]+$ ]] || fail "MIN_INTERNET_DOWN_MBIT must be numeric"
 
@@ -40,7 +39,7 @@ VASTAI_API_KEY="$(${PYTHON} -c \
 test -n "${VASTAI_API_KEY}" || fail "VASTAI_API_KEY is missing from .env"
 
 VASTAI=(uvx --from vastai vastai --api-key "${VASTAI_API_KEY}" --raw)
-QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_cores_effective>=${MIN_CPU_CORES} cpu_arch=amd64 disk_space>=${DISK_GB} cuda_vers>=${MIN_CUDA_VERSION} direct_port_count>=1"
+QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_cores_effective>=${MIN_CPU_CORES} cpu_arch=amd64 disk_space>=${DISK_GB} direct_port_count>=1"
 
 log "Finding the cheapest verified on-demand GPU with at least ${MIN_GPU_RAM_GB} GB VRAM, ${MIN_CPU_CORES} effective CPU cores, and ${MIN_INTERNET_DOWN_MBIT} Mbps ingress..."
 ATTEMPTED_OFFER_IDS=""
@@ -51,19 +50,14 @@ select_offer() {
   | EXCLUDED_OFFER_IDS="${ATTEMPTED_OFFER_IDS}" MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT}" "${PYTHON}" -c '
 import json
 import os
-import re
 import sys
 
 offers = json.load(sys.stdin)
-# The voice runtime CUDA build supports only the Ampere/Ada consumer cards
-# selected below. Older Tesla cards (for example, P40) cannot run its kernels.
-allowed = re.compile(r"\bRTX\s+(?:30|40)\d{2}\b", re.IGNORECASE)
 excluded = {value for value in os.environ.get("EXCLUDED_OFFER_IDS", "").split(",") if value}
 minimum_down = float(os.environ["MIN_INTERNET_DOWN_MBIT"])
 eligible = [
     offer for offer in offers
     if str(offer.get("id", "")) not in excluded
-    and allowed.search(str(offer.get("gpu_name", "")))
     and float(offer.get("inet_down") or 0) >= minimum_down
 ]
 if not eligible:
@@ -232,10 +226,6 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/vastai_ssh_file}"
 REMOTE="root@${HOST_IP}"
 REMOTE_DIR="/workspace/sl-chatbot"
 APP_PORT="${APP_PORT:-8081}"
-LLM_PORT="${LLM_PORT:-8000}"
-LLM_MODEL="unsloth/gemma-4-E4B-it-GGUF"
-LLM_MODEL_FILE="gemma-4-E4B-it-UD-Q4_K_XL.gguf"
-LLM_MODEL_PATH="/workspace/models/${LLM_MODEL_FILE}"
 
 PUBLIC_WEBHOOK_URL="https://whatsapp.serendibai.lk/webhook"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
@@ -246,11 +236,6 @@ SCP="scp -o StrictHostKeyChecking=accept-new -P ${SSH_PORT} -i ${SSH_KEY}"
 log() { echo "▶ $*"; }
 
 log "Checking machine..."
-GPU_NAME="$($SSH 'nvidia-smi --query-gpu=name --format=csv,noheader')"
-if ! printf '%s\n' "${GPU_NAME}" | grep -Eqi '(^| )RTX (30|40)[0-9][0-9]($| )'; then
-  echo "ERROR: Unsupported GPU '${GPU_NAME}'. The voice runtime requires an RTX 30- or 40-series GPU."
-  exit 1
-fi
 $SSH "uname -a && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader && which uv git python3"
 
 log "Preparing remote repo on branch ${REMOTE_BRANCH}..."

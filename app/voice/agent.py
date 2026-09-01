@@ -8,7 +8,7 @@ from num2words import num2words
 from app.dashboard.state import dashboard_state
 from app.voice.audio_archive import CallAudioRecorder
 from app.voice.audio_track import RealtimeAudioTrack
-from app.voice.turn_pipeline import LocalGemmaTurnPipeline
+from app.voice.gemini_live import GeminiLivePipeline
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +17,7 @@ class VoiceAgent:
     def __init__(self):
         self.active_calls: dict[str, asyncio.Task] = {}
         self.playback_generation: dict[str, int] = {}
-        self.turn_pipeline = LocalGemmaTurnPipeline(
-            prepare_tts_text=self._prepare_tts_text,
-            interrupt_playback=self._interrupt_playback,
-        )
+        self.turn_pipeline = GeminiLivePipeline(interrupt_playback=self._interrupt_playback)
 
     async def process_audio(
         self,
@@ -49,9 +46,6 @@ class VoiceAgent:
             logger.info("Call task %s cancelled", call_id)
         except Exception as exc:
             logger.error("Error cancelling task %s: %s", call_id, exc)
-
-    async def prewarm_tts(self) -> None:
-        await self.turn_pipeline.prewarm_tts()
 
     async def prewarm_models(self) -> None:
         await self.turn_pipeline.prewarm_models()
@@ -99,9 +93,9 @@ class VoiceAgent:
                 recorder=recorder,
             )
         except asyncio.CancelledError:
-            logger.info("vLLM turn pipeline cancelled for %s", call_id)
+            logger.info("Gemini Live pipeline cancelled for %s", call_id)
         except Exception as exc:
-            logger.error("vLLM turn pipeline failed for %s: %s", call_id, exc, exc_info=True)
+            logger.error("Gemini Live pipeline failed for %s: %s", call_id, exc, exc_info=True)
         finally:
             output_track.set_recording_callback(None)
             self.active_calls.pop(call_id, None)

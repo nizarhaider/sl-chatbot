@@ -19,6 +19,7 @@ dependencies = [
     "pinecone>=9.1.0",
     "num2words>=0.5.14",
     "boto3>=1.42.0",
+    "google-genai>=1.69.0",
 ]
 
 [dependency-groups]
