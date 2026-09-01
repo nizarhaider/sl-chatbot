@@ -134,7 +134,6 @@ class GeminiLivePipeline:
                 logger.info("Gemini Live input ended for %s: %s", call_id, exc)
                 if speaking:
                     await session.send_realtime_input(activity_end=types.ActivityEnd())
-                await session.send_realtime_input(audio_stream_end=True)
                 return
             for resampled in resampler.resample(frame):
                 pcm = resampled.to_ndarray().tobytes()
@@ -176,27 +175,32 @@ class GeminiLivePipeline:
     async def _receive(self, session, call_id, context, output_track, playback_generation) -> None:
         caller_text: list[str] = []
         assistant_text: list[str] = []
-        async for response in session.receive():
-            if response.tool_call:
-                await self._handle_tool_calls(session, response.tool_call.function_calls, call_id, context)
-            content = response.server_content
-            if content is None:
-                continue
-            if content.interrupted:
-                self._interrupt_playback(call_id, output_track)
-                dashboard_state.emit(call_id, "gemini_live.interrupted", {})
-            if content.input_transcription and content.input_transcription.text:
-                caller_text.append(content.input_transcription.text)
-            if content.output_transcription and content.output_transcription.text:
-                assistant_text.append(content.output_transcription.text)
-            if content.model_turn:
-                for part in content.model_turn.parts or []:
-                    if part.inline_data and part.inline_data.data:
-                        output_track.add_pcm_audio(part.inline_data.data, OUTPUT_RATE)
-            if content.turn_complete:
-                self._publish_transcripts(call_id, caller_text, assistant_text)
-                caller_text.clear()
-                assistant_text.clear()
+        # The SDK exposes one receive iterator per completed Live turn.  Start
+        # the next iterator after each turn so a call remains conversational
+        # after Gemini has delivered its opening greeting.
+        while True:
+            async for response in session.receive():
+                if response.tool_call:
+                    await self._handle_tool_calls(session, response.tool_call.function_calls, call_id, context)
+                content = response.server_content
+                if content is None:
+                    continue
+                if content.interrupted:
+                    self._interrupt_playback(call_id, output_track)
+                    dashboard_state.emit(call_id, "gemini_live.interrupted", {})
+                if content.input_transcription and content.input_transcription.text:
+                    caller_text.append(content.input_transcription.text)
+                if content.output_transcription and content.output_transcription.text:
+                    assistant_text.append(content.output_transcription.text)
+                if content.model_turn:
+                    for part in content.model_turn.parts or []:
+                        if part.inline_data and part.inline_data.data:
+                            output_track.add_pcm_audio(part.inline_data.data, OUTPUT_RATE)
+                if content.turn_complete:
+                    logger.info("Gemini Live turn complete for %s", call_id)
+                    self._publish_transcripts(call_id, caller_text, assistant_text)
+                    caller_text.clear()
+                    assistant_text.clear()
 
     async def _handle_tool_calls(self, session, calls, call_id: str, context: CallContext) -> None:
         responses = []
