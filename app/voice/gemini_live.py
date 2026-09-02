@@ -234,7 +234,9 @@ class GeminiLivePipeline:
             else:
                 result = await self._tools.execute(call.name, arguments, context)
             dashboard_state.emit(call_id, "tool.result", {"name": call.name, "result": result})
-            responses.append(types.FunctionResponse(id=call.id, name=call.name, response=result))
+            # Live API function responses use a `result` envelope. Supplying the
+            # raw tool object leaves Gemini waiting for a completed tool turn.
+            responses.append(types.FunctionResponse(id=call.id, name=call.name, response={"result": result}))
         if responses:
             await session.send_tool_response(function_responses=responses)
 
