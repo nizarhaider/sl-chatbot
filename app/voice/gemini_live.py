@@ -9,6 +9,7 @@ from av.audio.resampler import AudioResampler
 from google import genai
 from google.genai import types
 import numpy as np
+from websockets.exceptions import ConnectionClosed
 
 from app.dashboard.state import dashboard_state
 from app.voice.audio_archive import CallAudioArchive, CallAudioRecorder
@@ -22,8 +23,11 @@ INPUT_RATE = 16_000
 OUTPUT_RATE = 24_000
 INPUT_CHUNK_BYTES = INPUT_RATE * 2 // 10  # 100 ms of mono PCM16.
 SPEECH_RMS_THRESHOLD = 650
+SPEECH_START_CHUNKS = 2
 TURN_END_SILENCE_CHUNKS = 7  # 700 ms at the 100 ms input chunk size.
 PREFIX_CHUNKS = 3
+MAX_PLAYBACK_BUFFER_SECONDS = 0.8
+LIVE_SESSION_ATTEMPTS = 2
 
 
 class GeminiLivePipeline:
@@ -58,28 +62,38 @@ class GeminiLivePipeline:
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         dashboard_state.emit(call_id, "gemini_live.connecting", {"model": GEMINI_LIVE_MODEL})
         try:
-            async with client.aio.live.connect(
-                model=GEMINI_LIVE_MODEL,
-                config=self._session_config(),
-            ) as session:
-                dashboard_state.emit(call_id, "gemini_live.connected", {"model": GEMINI_LIVE_MODEL})
-                # Gemini Live generates the multilingual opening directly; it is
-                # deliberately a Live input rather than a local prerecorded/TTS greeting.
-                await session.send_realtime_input(
-                    text=(
-                        "Start the phone call now. Say only the language-selection greeting: "
-                        "ask the caller to say English, Sinhala, or Tamil."
-                    )
-                )
-                receive_task = asyncio.create_task(
-                    self._receive(session, call_id, context, output_track, playback_generation),
-                    name=f"gemini-receive-{call_id}",
-                )
+            for attempt in range(1, LIVE_SESSION_ATTEMPTS + 1):
                 try:
-                    await self._send_input(session, call_id, input_track, recorder)
-                finally:
-                    receive_task.cancel()
-                    await asyncio.gather(receive_task, return_exceptions=True)
+                    async with client.aio.live.connect(
+                        model=GEMINI_LIVE_MODEL,
+                        config=self._session_config(),
+                    ) as session:
+                        dashboard_state.emit(call_id, "gemini_live.connected", {"model": GEMINI_LIVE_MODEL, "attempt": attempt})
+                        # Gemini Live generates the multilingual opening directly; it is
+                        # deliberately a Live input rather than a local prerecorded/TTS greeting.
+                        if attempt == 1:
+                            await session.send_realtime_input(
+                                text=(
+                                    "Start the phone call now. Say only the language-selection greeting: "
+                                    "ask the caller to say English, Sinhala, or Tamil."
+                                )
+                            )
+                        receive_task = asyncio.create_task(
+                            self._receive(session, call_id, context, output_track, playback_generation),
+                            name=f"gemini-receive-{call_id}-{attempt}",
+                        )
+                        try:
+                            await self._send_input(session, call_id, input_track, recorder)
+                            return
+                        finally:
+                            receive_task.cancel()
+                            await asyncio.gather(receive_task, return_exceptions=True)
+                except ConnectionClosed as exc:
+                    if attempt == LIVE_SESSION_ATTEMPTS:
+                        raise
+                    logger.warning("Gemini Live closed for %s; reconnecting once: %s", call_id, exc)
+                    dashboard_state.emit(call_id, "gemini_live.reconnecting", {"attempt": attempt, "reason": "connection_closed"})
+                    await asyncio.sleep(0.25)
         finally:
             self._audio_archive.archive_call(call_id, recorder)
 
@@ -126,6 +140,7 @@ class GeminiLivePipeline:
         buffer = bytearray()
         prefix: deque[bytes] = deque(maxlen=PREFIX_CHUNKS)
         speaking = False
+        speech_chunks = 0
         silence_chunks = 0
         while True:
             try:
@@ -146,8 +161,13 @@ class GeminiLivePipeline:
                     if not speaking:
                         prefix.append(chunk)
                         if rms < SPEECH_RMS_THRESHOLD:
+                            speech_chunks = 0
+                            continue
+                        speech_chunks += 1
+                        if speech_chunks < SPEECH_START_CHUNKS:
                             continue
                         speaking = True
+                        speech_chunks = 0
                         silence_chunks = 0
                         dashboard_state.emit(call_id, "pipeline.speech_started", {"provider": "audio_activity"})
                         logger.info("Gemini Live activity start for %s (rms=%.0f)", call_id, rms)
@@ -195,6 +215,8 @@ class GeminiLivePipeline:
                 if content.model_turn:
                     for part in content.model_turn.parts or []:
                         if part.inline_data and part.inline_data.data:
+                            while output_track.pending_audio_seconds >= MAX_PLAYBACK_BUFFER_SECONDS:
+                                await asyncio.sleep(0.02)
                             output_track.add_pcm_audio(part.inline_data.data, OUTPUT_RATE)
                 if content.turn_complete:
                     logger.info("Gemini Live turn complete for %s", call_id)
