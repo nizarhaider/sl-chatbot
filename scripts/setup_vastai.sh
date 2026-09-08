@@ -132,6 +132,7 @@ offers = [
     o for o in json.load(sys.stdin)
     if float(o.get("inet_down") or 0) >= float(os.environ["MIN_DOWN"])
     and int(o.get("compute_cap") or 0) >= 750
+    and float(o.get("reliability") or 0) >= 0.98
 ]
 if not offers: raise SystemExit("No eligible Vast offer is currently available")
 offer = min(offers, key=lambda o: float(o.get("dph_total") or "inf"))
