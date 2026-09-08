@@ -14,7 +14,7 @@ MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-200}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git branch --show-current)}"
 INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-gemini-live}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
-TEMPLATE_HASH="${TEMPLATE_HASH:-247f2f26d31d533719c1fc4c9b5cbf93}"
+VAST_IMAGE="${VAST_IMAGE:-python:3.12-slim}"
 
 log() { printf '▶ %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -51,7 +51,7 @@ PY
 
   log "Uploading the Gemini Live runtime to ${host_ip}:${ssh_port}"
   ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "${SSH_KEY}" -p "${ssh_port}" "root@${host_ip}" \
-    "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ffmpeg"
+    "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ffmpeg supervisor"
   ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "${SSH_KEY}" -p "${ssh_port}" "root@${host_ip}" \
     "if [ -d /workspace/sl_chatbot/.git ]; then cd /workspace/sl_chatbot && git fetch origin && git checkout '${REMOTE_BRANCH}' && git reset --hard 'origin/${REMOTE_BRANCH}'; else git clone --branch '${REMOTE_BRANCH}' '$(git remote get-url origin)' /workspace/sl_chatbot; fi"
   scp -q -o StrictHostKeyChecking=accept-new -i "${SSH_KEY}" -P "${ssh_port}" "${env_file}" "root@${host_ip}:/workspace/sl_chatbot/.env"
@@ -61,6 +61,11 @@ set -euo pipefail
 cd /workspace/sl_chatbot
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="/root/.local/bin:${PATH}"
+if ! command -v cloudflared >/dev/null; then
+  curl -LsSf -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+  dpkg -i /tmp/cloudflared.deb
+  rm -f /tmp/cloudflared.deb
+fi
 uv sync --no-dev
 install -d /var/log/serendibai
 cat >/usr/local/bin/serendibai-webhook <<'EOF'
@@ -129,7 +134,7 @@ offer = min(offers, key=lambda o: float(o.get("dph_total") or "inf"))
 print(offer["id"])
 ')"
 log "Creating Vast instance from offer ${OFFER}"
-CREATED="$(${VASTAI[@]} create instance "${OFFER}" --template_hash "${TEMPLATE_HASH}" --disk "${DISK_GB}" --label "${INSTANCE_LABEL}" --ssh --direct --cancel-unavail)"
+CREATED="$(${VASTAI[@]} create instance "${OFFER}" --image "${VAST_IMAGE}" --disk "${DISK_GB}" --label "${INSTANCE_LABEL}" --ssh --direct --cancel-unavail)"
 INSTANCE_ID="$(printf '%s' "${CREATED}" | "${PYTHON}" -c 'import json,sys; print(json.load(sys.stdin).get("new_contract", ""))')"
 test -n "${INSTANCE_ID}" || fail "Vast did not return an instance ID"
 
