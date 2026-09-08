@@ -57,7 +57,7 @@ class GeminiLivePipeline:
         ):
             logger.info("Gemini Live prewarm connection established")
 
-    async def run(self, call_id, caller_phone, input_track, output_track, playback_generation, recorder: CallAudioRecorder):
+    async def run(self, call_id, caller_phone, input_track, output_track, recorder: CallAudioRecorder):
         client = self._get_client()
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         dashboard_state.emit(call_id, "gemini_live.connecting", {"model": GEMINI_LIVE_MODEL})
@@ -79,7 +79,7 @@ class GeminiLivePipeline:
                                 )
                             )
                         receive_task = asyncio.create_task(
-                            self._receive(session, call_id, context, output_track, playback_generation),
+                            self._receive(session, call_id, context, output_track),
                             name=f"gemini-receive-{call_id}-{attempt}",
                         )
                         try:
@@ -192,7 +192,7 @@ class GeminiLivePipeline:
                         logger.info("Gemini Live activity end for %s", call_id)
                         await session.send_realtime_input(activity_end=types.ActivityEnd())
 
-    async def _receive(self, session, call_id, context, output_track, playback_generation) -> None:
+    async def _receive(self, session, call_id, context, output_track) -> None:
         caller_text: list[str] = []
         assistant_text: list[str] = []
         # The SDK exposes one receive iterator per completed Live turn.  Start

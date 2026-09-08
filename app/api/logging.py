@@ -13,12 +13,9 @@ class ImportantEventFilter(logging.Filter):
         "Turn transcript",
         "Turn dropped",
         "Turn response",
-        "Gemma response",
-        "Local Gemma model",
-        "RealtimeTTS complete",
-        "Greeting timings",
-        "Turn timings",
-        "Turn stages",
+        "Gemini Live",
+        "gemini_live",
+        "Voice tool service",
         "Discarded",
         "input ended",
         "Stopping interrupted",
@@ -38,7 +35,7 @@ def configure_logging() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
     )
-    for noisy_logger in ("aioice", "httpx", "llama_cpp"):
+    for noisy_logger in ("aioice", "httpx"):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
     configure_important_log()
 

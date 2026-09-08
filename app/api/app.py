@@ -12,19 +12,19 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 
-async def prewarm_voice_models(app: FastAPI) -> None:
+async def prewarm_gemini_live(app: FastAPI) -> None:
     from app.voice.agent import voice_agent
 
     try:
-        logger.info("Prewarming local voice models")
+        logger.info("Prewarming Gemini Live runtime")
         await voice_agent.prewarm_models()
         app.state.voice_ready = True
-        logger.info("Local voice model prewarm complete")
+        logger.info("Gemini Live prewarm complete")
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         app.state.voice_startup_error = str(exc)
-        logger.exception("Local voice model prewarm failed")
+        logger.exception("Gemini Live prewarm failed")
 
 
 @asynccontextmanager
@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
     app.state.voice_ready = False
     app.state.voice_startup_error = ""
     prewarm_task = asyncio.create_task(
-        prewarm_voice_models(app),
-        name="voice-model-prewarm",
+        prewarm_gemini_live(app),
+        name="gemini-live-prewarm",
     )
     try:
         yield
