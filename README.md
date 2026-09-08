@@ -44,11 +44,11 @@ From the repository root, run:
 ./scripts/setup_vastai.sh
 ```
 
-The script rents a low-cost Vast instance (4 GB VRAM and 2 CPU cores by default),
+The script rents a Vast instance with at least 8 GB VRAM and 2 CPU cores,
 deploys the current branch, configures the webhook and Cloudflare tunnel, and
 verifies the service. Gemini performs inference remotely, so the instance does
-not need GPU capacity for ASR, LLM, or TTS and does not download open-source
-speech or language models.
+not run ASR, LLM, or TTS locally and does not download open-source speech or
+language models.
 
 Live call transcripts are available at
 https://dashboard.serendibai.lk/dashboard/calls.

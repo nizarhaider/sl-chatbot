@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 DISK_GB="${DISK_GB:-20}"
-MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-4}"
+MIN_GPU_RAM_GB="${MIN_GPU_RAM_GB:-8}"
 MIN_CPU_CORES="${MIN_CPU_CORES:-2}"
 MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-200}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git branch --show-current)}"
