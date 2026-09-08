@@ -128,7 +128,11 @@ QUERY="num_gpus=1 gpu_ram>=${MIN_GPU_RAM_GB} cpu_cores_effective>=${MIN_CPU_CORE
 log "Finding a verified Vast offer for the Gemini Live bridge"
 OFFER="$(${VASTAI[@]} search offers "${QUERY}" --storage "${DISK_GB}" --order dph --limit 200 | MIN_DOWN="${MIN_INTERNET_DOWN_MBIT}" "${PYTHON}" -c '
 import json, os, sys
-offers = [o for o in json.load(sys.stdin) if float(o.get("inet_down") or 0) >= float(os.environ["MIN_DOWN"])]
+offers = [
+    o for o in json.load(sys.stdin)
+    if float(o.get("inet_down") or 0) >= float(os.environ["MIN_DOWN"])
+    and int(o.get("compute_cap") or 0) >= 750
+]
 if not offers: raise SystemExit("No eligible Vast offer is currently available")
 offer = min(offers, key=lambda o: float(o.get("dph_total") or "inf"))
 print(offer["id"])
