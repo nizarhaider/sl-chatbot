@@ -21,4 +21,6 @@ Pinecone, and WhatsApp environment variables. Never log or commit credentials.
 
 Run `uv run pytest` after runtime changes. `scripts/setup_vastai.sh` deploys the
 current branch to Vast and configures only the webhook and Cloudflare services.
+Its low default GPU requirement is only a Vast marketplace selector; Gemini
+inference runs remotely and the runtime has no local model workload.
 The hosted transcript dashboard is https://dashboard.serendibai.lk/dashboard/calls.
