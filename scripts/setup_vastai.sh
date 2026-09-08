@@ -14,7 +14,7 @@ MIN_INTERNET_DOWN_MBIT="${MIN_INTERNET_DOWN_MBIT:-200}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-$(git branch --show-current)}"
 INSTANCE_LABEL="${INSTANCE_LABEL:-serendibai-gemini-live}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/vastai_ssh_file}"
-VAST_IMAGE="${VAST_IMAGE:-python:3.12-slim}"
+VAST_IMAGE="${VAST_IMAGE:-vastai/base-image:@vastai-automatic-tag}"
 
 log() { printf '▶ %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
