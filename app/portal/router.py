@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import psycopg
+from psycopg.types.json import Json
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from openpyxl import load_workbook
@@ -54,7 +55,7 @@ def _schema(connection, customer_id):
     """)
     count = connection.execute("select count(*) from agent_profiles where customer_id = %s", (customer_id,)).fetchone()[0]
     if not count:
-        connection.execute("insert into agent_profiles (id, customer_id, name, instructions, enabled_tools) values (%s,%s,%s,%s,%s)", (uuid.uuid4(), customer_id, "Homelands concierge", "Be a concise, warm female agent. Ask one focused question at a time.", ["search_properties", "book_appointment", "send_whatsapp_message", "query_catalog", "search_knowledge_base"]))
+        connection.execute("insert into agent_profiles (id, customer_id, name, instructions, enabled_tools) values (%s,%s,%s,%s,%s)", (uuid.uuid4(), customer_id, "Homelands concierge", "Be a concise, warm female agent. Ask one focused question at a time.", Json(["search_properties", "book_appointment", "send_whatsapp_message", "query_catalog"])) )
     count = connection.execute("select count(*) from client_catalog where customer_id = %s", (customer_id,)).fetchone()[0]
     if not count:
         for name, description, price, stock in [("City Gardens viewing", "Three-bedroom apartment in Rajagiriya.", 41500000, 3), ("Horizon Residencies", "Two-bedroom apartment in Malabe.", 28000000, 0), ("Home consultation", "Property consultation with a Homelands agent.", 0, 12)]:
@@ -115,7 +116,7 @@ async def save_agent(request: Request):
         customer_id = _customer(connection)
         _schema(connection, customer_id)
         agent_id = data.get("id") or str(uuid.uuid4())
-        connection.execute("insert into agent_profiles (id,customer_id,name,instructions,enabled_tools,active) values (%s,%s,%s,%s,%s,%s) on conflict (id) do update set name=excluded.name,instructions=excluded.instructions,enabled_tools=excluded.enabled_tools,active=excluded.active", (agent_id, customer_id, data.get("name", "Voice agent"), data.get("instructions", ""), data.get("enabled_tools", []), bool(data.get("active", True))))
+        connection.execute("insert into agent_profiles (id,customer_id,name,instructions,enabled_tools,active) values (%s,%s,%s,%s,%s,%s) on conflict (id) do update set name=excluded.name,instructions=excluded.instructions,enabled_tools=excluded.enabled_tools,active=excluded.active", (agent_id, customer_id, data.get("name", "Voice agent"), data.get("instructions", ""), Json(data.get("enabled_tools", [])), bool(data.get("active", True))))
     return {"ok": True, "id": agent_id}
 
 
