@@ -260,6 +260,7 @@ DASHBOARD_HTML = """
       font-weight: 760;
       line-height: 1;
     }
+    .modelValue { font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
     .statMeta {
       margin-top: 7px;
       color: var(--text-soft);
@@ -591,26 +592,26 @@ DASHBOARD_HTML = """
     </div>
   </header>
   <main>
-    <section class="stats" aria-label="Call metrics">
+    <section class="stats" aria-label="Gemini quota health">
       <div class="stat">
-        <div class="statLabel">Active</div>
-        <div class="statValue" id="activeCount">0</div>
-        <div class="statMeta" id="activeMeta"></div>
+        <div class="statLabel">Live Model</div>
+        <div class="statValue modelValue" id="modelName">--</div>
+        <div class="statMeta">Current runtime</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Total</div>
-        <div class="statValue" id="totalCount">0</div>
-        <div class="statMeta" id="totalMeta"></div>
+        <div class="statLabel">Rate Limits</div>
+        <div class="statValue" id="rateLimitCount">0</div>
+        <div class="statMeta">Observed 429/quota events</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Messages</div>
-        <div class="statValue" id="messageCount">0</div>
-        <div class="statMeta" id="messageMeta"></div>
+        <div class="statLabel">Last Throttle</div>
+        <div class="statValue" id="lastThrottle">--</div>
+        <div class="statMeta" id="throttleMeta">No quota errors seen</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Latest</div>
-        <div class="statValue" id="latestTime">--</div>
-        <div class="statMeta" id="latestMeta"></div>
+        <div class="statLabel">Gemini API</div>
+        <div class="statValue" id="apiStatus">Ready</div>
+        <div class="statMeta">Connection health</div>
       </div>
     </section>
     <div class="toolbar">
@@ -627,14 +628,11 @@ DASHBOARD_HTML = """
     const callsEl = document.getElementById("calls");
     const statusTextEl = document.getElementById("statusText");
     const statusDotEl = document.getElementById("statusDot");
-    const activeCountEl = document.getElementById("activeCount");
-    const activeMetaEl = document.getElementById("activeMeta");
-    const totalCountEl = document.getElementById("totalCount");
-    const totalMetaEl = document.getElementById("totalMeta");
-    const messageCountEl = document.getElementById("messageCount");
-    const messageMetaEl = document.getElementById("messageMeta");
-    const latestTimeEl = document.getElementById("latestTime");
-    const latestMetaEl = document.getElementById("latestMeta");
+    const modelNameEl = document.getElementById("modelName");
+    const rateLimitCountEl = document.getElementById("rateLimitCount");
+    const lastThrottleEl = document.getElementById("lastThrottle");
+    const throttleMetaEl = document.getElementById("throttleMeta");
+    const apiStatusEl = document.getElementById("apiStatus");
     const filterButtons = Array.from(document.querySelectorAll(".filter button"));
     let currentFilter = "all";
     let lastData = { calls: [] };
@@ -675,19 +673,16 @@ DASHBOARD_HTML = """
     }
 
     function updateStats(calls) {
-      const active = calls.filter(call => call.status === "active");
-      const ended = calls.filter(call => call.status === "ended");
-      const messages = calls.reduce((sum, call) => sum + (call.transcript || []).length, 0);
-      const latest = calls[0];
+      const events = calls.flatMap(call => call.events || []);
+      const limits = events.filter(event => event.kind === "gemini_live.rate_limited");
+      const latestLimit = limits.at(-1);
+      const connection = events.filter(event => event.kind === "gemini_live.connected").at(-1);
 
-      activeCountEl.textContent = active.length;
-      activeMetaEl.textContent = active.length ? `${active[0].caller_phone || "Unknown caller"} on call` : "No live calls";
-      totalCountEl.textContent = calls.length;
-      totalMetaEl.textContent = `${ended.length} ended`;
-      messageCountEl.textContent = messages;
-      messageMetaEl.textContent = calls.length ? "Transcript events" : "";
-      latestTimeEl.textContent = latest ? formatTime(latest.updated_at || latest.started_at) : "--";
-      latestMetaEl.textContent = latest ? (latest.caller_phone || shortId(latest.call_id)) : "No activity";
+      modelNameEl.textContent = connection?.data?.model || "--";
+      rateLimitCountEl.textContent = limits.length;
+      lastThrottleEl.textContent = latestLimit ? formatTime(latestLimit.timestamp) : "--";
+      throttleMetaEl.textContent = latestLimit ? "Check call event details" : "No quota errors seen";
+      apiStatusEl.textContent = limits.length ? "Throttled" : connection ? "Healthy" : "Waiting";
     }
 
     function render(data) {

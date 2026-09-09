@@ -77,6 +77,10 @@ LLM_TOOLS = [
                 "properties": {
                     "property_id": {"type": "string"},
                     "customer_name": {"type": "string"},
+                    "recipient_phone": {
+                        "type": "string",
+                        "description": "WhatsApp number for the confirmation. Omit to use the caller's number.",
+                    },
                     "appointment_at": {
                         "type": "string",
                         "description": "ISO 8601 date and time in Asia/Colombo",
@@ -90,10 +94,16 @@ LLM_TOOLS = [
         "type": "function",
         "function": {
             "name": "send_whatsapp_message",
-            "description": "Send text to the caller only when they explicitly request it.",
+            "description": "Send text only when the caller explicitly requests it.",
             "parameters": {
                 "type": "object",
-                "properties": {"message": {"type": "string"}},
+                "properties": {
+                    "message": {"type": "string"},
+                    "recipient_phone": {
+                        "type": "string",
+                        "description": "WhatsApp number to receive the message. Omit to use the caller's number.",
+                    },
+                },
                 "required": ["message"],
             },
         },
@@ -185,7 +195,7 @@ class NeonRealEstateStore:
         customer_id, _ = self._mapping()
         return customer_id
 
-    def book_appointment(self, arguments: dict, context: CallContext) -> dict:
+    def book_appointment(self, arguments: dict, context: CallContext, customer_phone: str) -> dict:
         customer_id, whatsapp_number_id = self._mapping()
         property_reference = _required(arguments, "property_id")
         customer_name = _required(arguments, "customer_name")
@@ -226,7 +236,7 @@ class NeonRealEstateStore:
                     """,
                     (
                         appointment_id, customer_id, whatsapp_number_id, property_row[0], context.call_id,
-                        context.caller_phone or None, customer_name, appointment_at,
+                        customer_phone, customer_name, appointment_at,
                     ),
                 )
         except UniqueViolation as exc:
@@ -238,7 +248,7 @@ class NeonRealEstateStore:
             "property_name": property_row[1],
             "location": property_row[2],
             "customer_name": customer_name,
-            "appointment_at": appointment_at.isoformat(),
+            "appointment_time": _friendly_appointment_time(appointment_at),
             "status": "booked",
         }
 
@@ -300,20 +310,25 @@ class RealEstateToolService:
                     return {"ok": True, **search_result}
                 return {"ok": True, "properties": search_result, "count": len(search_result)}
             if name == "book_appointment":
-                if not _normalize_phone_number(context.caller_phone):
+                recipient_phone = _recipient_phone(arguments, context)
+                if not recipient_phone:
                     return {"ok": False, "error": "A valid WhatsApp number is required to book a viewing."}
-                appointment = await asyncio.to_thread(self._store.book_appointment, arguments, context)
+                appointment = await asyncio.to_thread(self._store.book_appointment, arguments, context, recipient_phone)
                 confirmation_sent = await whatsapp_api.send_text_message(
-                    context.caller_phone,
+                    recipient_phone,
                     (
-                        f"Your viewing is confirmed: {appointment['property_name']} in "
-                        f"{appointment['location']} on {appointment['appointment_at']}."
+                        f"Hi {appointment['customer_name']}, your viewing at {appointment['property_name']} "
+                        f"in {appointment['location']} is confirmed for {appointment['appointment_time']}. "
+                        "We look forward to seeing you."
                     ),
                 )
                 logger.info("Appointment persisted for %s: appointment_id=%s", context.call_id, appointment["appointment_id"])
                 return {"ok": True, "appointment": appointment, "confirmation_sent": confirmation_sent}
             if name == "send_whatsapp_message":
-                sent = await whatsapp_api.send_text_message(context.caller_phone, _required(arguments, "message"))
+                recipient_phone = _recipient_phone(arguments, context)
+                if not recipient_phone:
+                    return {"ok": False, "error": "A valid WhatsApp number is required to send a message."}
+                sent = await whatsapp_api.send_text_message(recipient_phone, _required(arguments, "message"))
                 return {"ok": sent, "message_sent": sent}
             return {"ok": False, "error": f"Unknown tool: {name}"}
         except ValueError as exc:
@@ -328,6 +343,14 @@ def _required(arguments: dict, name: str) -> str:
     if not value:
         raise ValueError(f"Missing required argument: {name}")
     return value
+
+
+def _recipient_phone(arguments: dict, context: CallContext) -> str:
+    return _normalize_phone_number(str(arguments.get("recipient_phone") or context.caller_phone))
+
+
+def _friendly_appointment_time(value: datetime) -> str:
+    return value.astimezone(COLOMBO_TZ).strftime("%A, %-d %B at %-I:%M %p")
 
 
 def _appointment_time(value: str) -> datetime:
