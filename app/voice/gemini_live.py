@@ -58,13 +58,14 @@ class GeminiLivePipeline:
     async def run(self, call_id, caller_phone, input_track, output_track, recorder: CallAudioRecorder):
         client = self._get_client()
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
+        agent_config = await self._tools.agent_config() if self._tools is not None else {}
         dashboard_state.emit(call_id, "gemini_live.connecting", {"model": GEMINI_LIVE_MODEL})
         try:
             for attempt in range(1, LIVE_SESSION_ATTEMPTS + 1):
                 try:
                     async with client.aio.live.connect(
                         model=GEMINI_LIVE_MODEL,
-                        config=self._session_config(),
+                        config=self._session_config(agent_config),
                     ) as session:
                         dashboard_state.emit(call_id, "gemini_live.connected", {"model": GEMINI_LIVE_MODEL, "attempt": attempt})
                         # Gemini Live generates the multilingual opening directly; it is
@@ -112,8 +113,10 @@ class GeminiLivePipeline:
             self._client = genai.Client(api_key=api_key)
         return self._client
 
-    def _session_config(self) -> dict:
-        declarations = [tool["function"] for tool in LLM_TOOLS]
+    def _session_config(self, agent_config: dict | None = None) -> dict:
+        enabled_tools = set((agent_config or {}).get("enabled_tools") or [])
+        declarations = [tool["function"] for tool in LLM_TOOLS if not enabled_tools or tool["function"]["name"] in enabled_tools]
+        custom_instructions = str((agent_config or {}).get("instructions") or "").strip()
         today = datetime.now(ZoneInfo("Asia/Colombo")).date().isoformat()
         return {
             "response_modalities": ["AUDIO"],
@@ -134,6 +137,7 @@ class GeminiLivePipeline:
                 "the caller to repeat English, Sinhala, or Tamil. Listen to and "
                 "respond to every caller turn; never wait for text input or an external language "
                 "selection signal."
+                + (f"\n\nClient instructions: {custom_instructions}" if custom_instructions else "")
             ),
             "speech_config": {
                 "voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}

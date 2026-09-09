@@ -108,6 +108,18 @@ LLM_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_catalog",
+            "description": "Run a read-only SQL query against client_catalog. Check stock and status before promising availability.",
+            "parameters": {
+                "type": "object",
+                "properties": {"sql": {"type": "string", "description": "A single SELECT query using only client_catalog."}},
+                "required": ["sql"],
+            },
+        },
+    },
 ]
 
 
@@ -157,6 +169,15 @@ class NeonRealEstateStore:
             )
             connection.execute(
                 """
+                create table if not exists agent_profiles (
+                    id uuid primary key, customer_id uuid not null, name text not null,
+                    instructions text not null, enabled_tools jsonb not null default '[]',
+                    active boolean not null default true, created_at timestamptz not null default now()
+                )
+                """
+            )
+            connection.execute(
+                """
                 create unique index if not exists property_appointments_booked_slot_idx
                 on property_appointments (property_id, appointment_at)
                 where status = 'booked'
@@ -194,6 +215,24 @@ class NeonRealEstateStore:
     def customer_namespace(self) -> str:
         customer_id, _ = self._mapping()
         return customer_id
+
+    def agent_config(self) -> dict:
+        customer_id, _ = self._mapping()
+        with psycopg.connect(self._database_url, connect_timeout=10) as connection:
+            row = connection.execute("select instructions, enabled_tools from agent_profiles where customer_id=%s and active=true order by created_at desc limit 1", (customer_id,)).fetchone()
+        return {"instructions": row[0], "enabled_tools": row[1]} if row else {}
+
+    def query_catalog(self, statement: str) -> list[dict]:
+        customer_id, _ = self._mapping()
+        normalized = " ".join(statement.lower().split())
+        if not normalized.startswith("select ") or ";" in normalized or "client_catalog" not in normalized:
+            raise ValueError("Only a single SELECT query against client_catalog is allowed.")
+        if any(word in normalized for word in ("insert", "update", "delete", "drop", "alter", "join")):
+            raise ValueError("Only catalog SELECT queries are allowed.")
+        with psycopg.connect(self._database_url, connect_timeout=10) as connection:
+            cursor = connection.execute(f"select * from ({statement}) as catalog_query where customer_id = %s limit 10", (customer_id,))
+            columns = [column.name for column in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def book_appointment(self, arguments: dict, context: CallContext, customer_phone: str) -> dict:
         customer_id, whatsapp_number_id = self._mapping()
@@ -300,6 +339,9 @@ class RealEstateToolService:
             self._store.list_active_properties(),
         )
 
+    async def agent_config(self) -> dict:
+        return await asyncio.to_thread(self._store.agent_config)
+
     async def execute(self, name: str, arguments: dict, context: CallContext) -> dict:
         try:
             if name == "search_properties":
@@ -324,6 +366,8 @@ class RealEstateToolService:
                 )
                 logger.info("Appointment persisted for %s: appointment_id=%s", context.call_id, appointment["appointment_id"])
                 return {"ok": True, "appointment": appointment, "confirmation_sent": confirmation_sent}
+            if name == "query_catalog":
+                return {"ok": True, "rows": await asyncio.to_thread(self._store.query_catalog, _required(arguments, "sql"))}
             if name == "send_whatsapp_message":
                 recipient_phone = _recipient_phone(arguments, context)
                 if not recipient_phone:

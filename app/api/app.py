@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 
 from app.api.logging import configure_logging
 
@@ -49,13 +50,18 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     from app.dashboard.router import router as dashboard_router
     from app.integrations.whatsapp.webhook import router as whatsapp_router
+    from app.portal.router import router as portal_router
 
     app = FastAPI(title="WhatsApp Voice Bot", lifespan=lifespan)
     app.include_router(dashboard_router)
+    app.include_router(portal_router)
     app.include_router(whatsapp_router)
 
     @app.get("/")
     def read_root(request: Request):
+        if request.headers.get("host", "").split(":")[0] == "app.serendibai.lk":
+            from app.portal.router import PORTAL_HTML
+            return HTMLResponse(PORTAL_HTML)
         if request.app.state.voice_startup_error:
             status = "error"
         elif request.app.state.voice_ready:
