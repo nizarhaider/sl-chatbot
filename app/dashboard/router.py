@@ -599,19 +599,19 @@ DASHBOARD_HTML = """
         <div class="statMeta">Current runtime</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Input Limit</div>
-        <div class="statValue">131K</div>
-        <div class="statMeta">Tokens per Live session</div>
+        <div class="statLabel">RPM</div>
+        <div class="statValue" id="rpmUsage">0 / 4</div>
+        <div class="statMeta">Free / paid: unlimited</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Output Limit</div>
-        <div class="statValue">65K</div>
-        <div class="statMeta">Tokens per Live session</div>
+        <div class="statLabel">TPM</div>
+        <div class="statValue">5.22K / 65K</div>
+        <div class="statMeta">Free / paid token limit</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Calls / Hour</div>
-        <div class="statValue" id="hourlyCalls">0</div>
-        <div class="statMeta">Inferred from this instance</div>
+        <div class="statLabel">RPD</div>
+        <div class="statValue" id="rpdUsage">0 / 29</div>
+        <div class="statMeta">Free / paid: unlimited</div>
       </div>
       <div class="stat">
         <div class="statLabel">Rate Limit Hits</div>
@@ -636,7 +636,8 @@ DASHBOARD_HTML = """
     const modelNameEl = document.getElementById("modelName");
     const rateLimitCountEl = document.getElementById("rateLimitCount");
     const throttleMetaEl = document.getElementById("throttleMeta");
-    const hourlyCallsEl = document.getElementById("hourlyCalls");
+    const rpmUsageEl = document.getElementById("rpmUsage");
+    const rpdUsageEl = document.getElementById("rpdUsage");
     const filterButtons = Array.from(document.querySelectorAll(".filter button"));
     let currentFilter = "all";
     let lastData = { calls: [] };
@@ -680,12 +681,17 @@ DASHBOARD_HTML = """
       const events = calls.flatMap(call => call.events || []);
       const limits = events.filter(event => event.kind === "gemini_live.rate_limited");
       const latestLimit = limits.at(-1);
-      const connection = events.filter(event => event.kind === "gemini_live.connected").at(-1);
-      const hourAgo = Date.now() / 1000 - 3600;
+      const connections = events.filter(event => event.kind === "gemini_live.connected");
+      const connection = connections.at(-1);
+      const now = Date.now() / 1000;
+      const pacificDay = seconds => new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit"
+      }).format(new Date(seconds * 1000));
 
       modelNameEl.textContent = connection?.data?.model || "--";
       rateLimitCountEl.textContent = limits.length;
-      hourlyCallsEl.textContent = calls.filter(call => call.started_at >= hourAgo).length;
+      rpmUsageEl.textContent = `${connections.filter(event => event.timestamp >= now - 60).length} / 4`;
+      rpdUsageEl.textContent = `${connections.filter(event => pacificDay(event.timestamp) === pacificDay(now)).length} / 29`;
       throttleMetaEl.textContent = latestLimit ? `Last at ${formatTime(latestLimit.timestamp)}` : "No 429/quota errors seen";
     }
 
