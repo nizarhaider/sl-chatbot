@@ -235,7 +235,7 @@ DASHBOARD_HTML = """
     }
     .stats {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 12px;
       margin-bottom: 18px;
     }
@@ -599,19 +599,24 @@ DASHBOARD_HTML = """
         <div class="statMeta">Current runtime</div>
       </div>
       <div class="stat">
-        <div class="statLabel">Rate Limits</div>
+        <div class="statLabel">Input Limit</div>
+        <div class="statValue">131K</div>
+        <div class="statMeta">Tokens per Live session</div>
+      </div>
+      <div class="stat">
+        <div class="statLabel">Output Limit</div>
+        <div class="statValue">65K</div>
+        <div class="statMeta">Tokens per Live session</div>
+      </div>
+      <div class="stat">
+        <div class="statLabel">Calls / Hour</div>
+        <div class="statValue" id="hourlyCalls">0</div>
+        <div class="statMeta">Inferred from this instance</div>
+      </div>
+      <div class="stat">
+        <div class="statLabel">Rate Limit Hits</div>
         <div class="statValue" id="rateLimitCount">0</div>
-        <div class="statMeta">Observed 429/quota events</div>
-      </div>
-      <div class="stat">
-        <div class="statLabel">Last Throttle</div>
-        <div class="statValue" id="lastThrottle">--</div>
-        <div class="statMeta" id="throttleMeta">No quota errors seen</div>
-      </div>
-      <div class="stat">
-        <div class="statLabel">Gemini API</div>
-        <div class="statValue" id="apiStatus">Ready</div>
-        <div class="statMeta">Connection health</div>
+        <div class="statMeta" id="throttleMeta">No 429/quota errors seen</div>
       </div>
     </section>
     <div class="toolbar">
@@ -630,9 +635,8 @@ DASHBOARD_HTML = """
     const statusDotEl = document.getElementById("statusDot");
     const modelNameEl = document.getElementById("modelName");
     const rateLimitCountEl = document.getElementById("rateLimitCount");
-    const lastThrottleEl = document.getElementById("lastThrottle");
     const throttleMetaEl = document.getElementById("throttleMeta");
-    const apiStatusEl = document.getElementById("apiStatus");
+    const hourlyCallsEl = document.getElementById("hourlyCalls");
     const filterButtons = Array.from(document.querySelectorAll(".filter button"));
     let currentFilter = "all";
     let lastData = { calls: [] };
@@ -677,12 +681,12 @@ DASHBOARD_HTML = """
       const limits = events.filter(event => event.kind === "gemini_live.rate_limited");
       const latestLimit = limits.at(-1);
       const connection = events.filter(event => event.kind === "gemini_live.connected").at(-1);
+      const hourAgo = Date.now() / 1000 - 3600;
 
       modelNameEl.textContent = connection?.data?.model || "--";
       rateLimitCountEl.textContent = limits.length;
-      lastThrottleEl.textContent = latestLimit ? formatTime(latestLimit.timestamp) : "--";
-      throttleMetaEl.textContent = latestLimit ? "Check call event details" : "No quota errors seen";
-      apiStatusEl.textContent = limits.length ? "Throttled" : connection ? "Healthy" : "Waiting";
+      hourlyCallsEl.textContent = calls.filter(call => call.started_at >= hourAgo).length;
+      throttleMetaEl.textContent = latestLimit ? `Last at ${formatTime(latestLimit.timestamp)}` : "No 429/quota errors seen";
     }
 
     function render(data) {
