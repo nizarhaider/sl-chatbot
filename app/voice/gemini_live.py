@@ -74,8 +74,10 @@ class GeminiLivePipeline:
                         if attempt == 1:
                             await session.send_realtime_input(
                                 text=(
-                                    "Start the phone call now. Say only the language-selection greeting: "
-                                    "ask the caller to say English, Sinhala, or Tamil."
+                                "Start the phone call now. Say exactly this language-selection greeting, "
+                                "with each option in its own language: 'To speak in English, say English. "
+                                "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழில் பேச தமிழ் என்று சொல்லுங்கள்.' "
+                                "Do not add anything before or after it."
                                 )
                             )
                         receive_task = asyncio.create_task(
@@ -94,6 +96,13 @@ class GeminiLivePipeline:
                     logger.warning("Gemini Live closed for %s; reconnecting once: %s", call_id, exc)
                     dashboard_state.emit(call_id, "gemini_live.reconnecting", {"attempt": attempt, "reason": "connection_closed"})
                     await asyncio.sleep(0.25)
+                except Exception as exc:
+                    message = str(exc)
+                    kind = "gemini_live.rate_limited" if any(word in message.lower() for word in ("quota", "rate", "resource_exhausted", "429")) else "gemini_live.error"
+                    dashboard_state.emit(call_id, kind, {"error": message[:240], "attempt": attempt})
+                    logger.exception("Gemini Live session failed for %s", call_id)
+                    if attempt == LIVE_SESSION_ATTEMPTS:
+                        raise
         finally:
             self._audio_archive.archive_call(call_id, recorder)
 

@@ -1,7 +1,10 @@
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+import boto3
 
 from app.dashboard.state import dashboard_state
+from app.voice.audio_archive import S3_BUCKET
 
 router = APIRouter()
 
@@ -14,6 +17,51 @@ def dashboard() -> str:
 @router.get("/dashboard/calls")
 def live_calls() -> dict:
     return dashboard_state.snapshot()
+
+
+@router.get("/dashboard/recordings/{call_id}")
+def recording(call_id: str):
+    if call_id == "latest":
+        objects = boto3.client("s3").list_objects_v2(Bucket=S3_BUCKET, Prefix="call-recordings/").get("Contents", [])
+        if objects:
+            key = max(objects, key=lambda item: item.get("LastModified"))["Key"]
+            return RedirectResponse(boto3.client("s3").generate_presigned_url("get_object", Params={"Bucket": S3_BUCKET, "Key": key}, ExpiresIn=3600))
+        return {"error": "recording_not_found"}
+    key = None
+    for call in dashboard_state.snapshot()["calls"]:
+        if call["call_id"] != call_id:
+            continue
+        for event in reversed(call.get("events", [])):
+            if event.get("kind") == "recording.archived":
+                key = event.get("data", {}).get("key")
+                break
+        break
+    if key is None:
+        prefix = "call-recordings/"
+        objects = [
+            item for item in boto3.client("s3").list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix).get("Contents", [])
+            if f"/{call_id}/" in item.get("Key", "")
+        ]
+        if objects:
+            key = max(objects, key=lambda item: item.get("LastModified"))['Key']
+    if key:
+        url = boto3.client("s3").generate_presigned_url(
+            "get_object",
+            Params={"Bucket": S3_BUCKET, "Key": key},
+            ExpiresIn=3600,
+        )
+        return RedirectResponse(url)
+    return {"error": "recording_not_found"}
+
+
+@router.get("/dashboard/recordings/latest")
+def latest_recording():
+    objects = boto3.client("s3").list_objects_v2(Bucket=S3_BUCKET, Prefix="call-recordings/").get("Contents", [])
+    if not objects:
+        return {"error": "recording_not_found"}
+    key = max(objects, key=lambda item: item.get("LastModified"))["Key"]
+    url = boto3.client("s3").generate_presigned_url("get_object", Params={"Bucket": S3_BUCKET, "Key": key}, ExpiresIn=3600)
+    return RedirectResponse(url)
 
 
 @router.get("/operator-monitor", response_class=HTMLResponse)
@@ -659,6 +707,7 @@ DASHBOARD_HTML = """
         const callerMessages = transcript.filter(event => event.speaker === "caller").length;
         const assistantMessages = transcript.filter(event => event.speaker === "assistant").length;
         const latestEvent = transcript[transcript.length - 1];
+        const recording = (call.events || []).find(event => event.kind === "recording.archived");
         return `
         <section class="call ${escapeHtml(call.status || "unknown")}">
           <div class="callHeader">
@@ -703,11 +752,15 @@ DASHBOARD_HTML = """
                   <div class="sideLabel">Latest Text</div>
                   <div class="sideValue" title="${escapeHtml(latestEvent ? latestEvent.text : "")}">${escapeHtml(latestEvent ? latestEvent.text : "No transcript yet")}</div>
                 </div>
+                <div class="sideItem">
+                  <div class="sideLabel">Call Recording</div>
+                  <div class="sideValue">${recording ? `<a href="/dashboard/recordings/${encodeURIComponent(call.call_id)}" target="_blank" rel="noopener">Play MP3</a>` : "Uploading…"}</div>
+                </div>
               </div>
               <div class="toolLog">
                 <div class="sideLabel">Tool Calls</div>
                 <div class="toolEvents">
-                  ${(call.events || []).filter(event => ["tool.call", "tool.result", "tool.announced"].includes(event.kind)).slice().reverse().map(event => `
+                  ${(call.events || []).filter(event => ["tool.call", "tool.result", "tool.announced", "gemini_live.connected", "gemini_live.reconnecting", "gemini_live.rate_limited", "gemini_live.error"].includes(event.kind)).slice().reverse().map(event => `
                     <div class="toolEvent">
                       <span class="toolEventKind">${escapeHtml(event.kind)}</span>
                       <span class="toolEventTime">${formatTime(event.timestamp)}</span>

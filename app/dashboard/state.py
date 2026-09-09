@@ -110,6 +110,8 @@ class DashboardState:
         call = self._calls.get(call_id)
         if call is None:
             return
+        if call.status == "ended":
+            return
         call.status = "ended"
         call.ended_at = time.time()
         call.updated_at = call.ended_at
@@ -142,6 +144,11 @@ class DashboardState:
         })
         del call.events[:-500]
         call.updated_at = time.time()
+
+    def persist(self, call_id: str) -> None:
+        call = self._calls.get(call_id)
+        if call is not None:
+            self._persist(call)
 
     def snapshot(self) -> dict:
         calls = sorted(

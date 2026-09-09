@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 import boto3
 import numpy as np
 
+from app.dashboard.state import dashboard_state
+
 logger = logging.getLogger(__name__)
 S3_BUCKET = "serendibai-lk"
 SAMPLE_RATE = 16_000
@@ -91,6 +93,8 @@ class CallAudioArchive:
         if self._client is None:
             self._client = self._client_factory()
         await asyncio.to_thread(self._client.put_object, Bucket=S3_BUCKET, Key=key, Body=mp3, ContentType="audio/mpeg", ServerSideEncryption="AES256")
+        dashboard_state.emit(call_id, "recording.archived", {"bucket": S3_BUCKET, "key": key})
+        dashboard_state.persist(call_id)
         logger.info("Archived full call MP3 for %s to s3://%s/%s", call_id, S3_BUCKET, key)
 
     def _log_result(self, task: asyncio.Task) -> None:
