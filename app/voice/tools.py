@@ -225,12 +225,14 @@ class NeonRealEstateStore:
     def query_catalog(self, statement: str) -> list[dict]:
         customer_id, _ = self._mapping()
         normalized = " ".join(statement.lower().split())
-        if not normalized.startswith("select ") or ";" in normalized or "client_catalog" not in normalized:
+        if not normalized.startswith("select ") or ";" in normalized or normalized.count("client_catalog") != 1:
             raise ValueError("Only a single SELECT query against client_catalog is allowed.")
         if any(word in normalized for word in ("insert", "update", "delete", "drop", "alter", "join")):
             raise ValueError("Only catalog SELECT queries are allowed.")
+        scoped_table = "(select * from client_catalog where customer_id = %s) as client_catalog"
+        query = statement.replace("client_catalog", scoped_table)
         with psycopg.connect(self._database_url, connect_timeout=10) as connection:
-            cursor = connection.execute(f"select * from ({statement}) as catalog_query where customer_id = %s limit 10", (customer_id,))
+            cursor = connection.execute(query, (customer_id,))
             columns = [column.name for column in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 

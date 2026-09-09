@@ -112,11 +112,14 @@ def agents(request: Request):
 async def save_agent(request: Request):
     _portal(request)
     data = await request.json()
+    enabled_tools = list(data.get("enabled_tools", []))
+    if "query_catalog" not in enabled_tools:
+        enabled_tools.append("query_catalog")
     with psycopg.connect(_db()) as connection:
         customer_id = _customer(connection)
         _schema(connection, customer_id)
         agent_id = data.get("id") or str(uuid.uuid4())
-        connection.execute("insert into agent_profiles (id,customer_id,name,instructions,enabled_tools,active) values (%s,%s,%s,%s,%s,%s) on conflict (id) do update set name=excluded.name,instructions=excluded.instructions,enabled_tools=excluded.enabled_tools,active=excluded.active", (agent_id, customer_id, data.get("name", "Voice agent"), data.get("instructions", ""), Json(data.get("enabled_tools", [])), bool(data.get("active", True))))
+        connection.execute("insert into agent_profiles (id,customer_id,name,instructions,enabled_tools,active) values (%s,%s,%s,%s,%s,%s) on conflict (id) do update set name=excluded.name,instructions=excluded.instructions,enabled_tools=excluded.enabled_tools,active=excluded.active", (agent_id, customer_id, data.get("name", "Voice agent"), data.get("instructions", ""), Json(enabled_tools), bool(data.get("active", True))))
     return {"ok": True, "id": agent_id}
 
 
