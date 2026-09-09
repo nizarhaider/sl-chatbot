@@ -129,8 +129,10 @@ class GeminiLivePipeline:
                 "chooses English, Sinhala, or Tamil, acknowledge that choice in the selected "
                 "language and immediately ask what property they are looking for. Recognize "
                 "Sinhala and Tamil speech in native script and pronunciation. Do not choose "
-                "English from an unclear or short reply; ask the caller to repeat English, "
-                "Sinhala, or Tamil when uncertain. Listen to and "
+                "English from a short or unclear reply such as an acknowledgement. During the "
+                "language-selection turn, choose English only when the caller clearly says "
+                "English; otherwise identify Sinhala or Tamil from the caller's speech, or ask "
+                "the caller to repeat English, Sinhala, or Tamil. Listen to and "
                 "respond to every caller turn; never wait for text input or an external language "
                 "selection signal."
             ),
@@ -139,6 +141,7 @@ class GeminiLivePipeline:
             },
             "input_audio_transcription": types.AudioTranscriptionConfig(
                 language_codes=["si-LK", "en-US", "ta-LK"],
+                custom_vocabulary=["සිංහල", "සිංහලෙන්", "Sinhala", "Sinhalese", "தமிழ்", "Tamil", "English"],
             ),
             "output_audio_transcription": {},
             "realtime_input_config": {
