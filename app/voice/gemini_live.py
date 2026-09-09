@@ -127,14 +127,19 @@ class GeminiLivePipeline:
                 "Use natural Sri Lankan English and Sinhala pronunciation; never imitate an "
                 "American accent. Start with the language-selection greeting. Once the caller "
                 "chooses English, Sinhala, or Tamil, acknowledge that choice in the selected "
-                "language and immediately ask what property they are looking for. Listen to and "
+                "language and immediately ask what property they are looking for. Recognize "
+                "Sinhala and Tamil speech in native script and pronunciation. Do not choose "
+                "English from an unclear or short reply; ask the caller to repeat English, "
+                "Sinhala, or Tamil when uncertain. Listen to and "
                 "respond to every caller turn; never wait for text input or an external language "
                 "selection signal."
             ),
             "speech_config": {
                 "voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}
             },
-            "input_audio_transcription": {},
+            "input_audio_transcription": types.AudioTranscriptionConfig(
+                language_codes=["si-LK", "en-US", "ta-LK"],
+            ),
             "output_audio_transcription": {},
             "realtime_input_config": {
                 "automatic_activity_detection": {
@@ -217,6 +222,12 @@ class GeminiLivePipeline:
                 if content.interrupted:
                     self._interrupt_playback(call_id, output_track)
                     dashboard_state.emit(call_id, "gemini_live.interrupted", {})
+                if content.interim_input_transcription and content.interim_input_transcription.text:
+                    dashboard_state.emit(
+                        call_id,
+                        "transcript.interim",
+                        {"speaker": "caller", "text": content.interim_input_transcription.text},
+                    )
                 if content.input_transcription and content.input_transcription.text:
                     caller_text.append(content.input_transcription.text)
                 if content.output_transcription and content.output_transcription.text:
