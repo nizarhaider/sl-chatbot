@@ -74,6 +74,7 @@ def _rows(sql, params=()):
         return connection.execute(sql, (customer_id, *params)).fetchall()
 
 
+@router.post("/api/login")
 @router.post("/login")
 async def login(request: Request):
     body = await request.json()
