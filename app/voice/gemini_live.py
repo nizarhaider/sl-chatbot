@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-from collections import deque
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -25,7 +24,6 @@ INPUT_CHUNK_BYTES = INPUT_RATE * 2 // 10  # 100 ms of mono PCM16.
 SPEECH_RMS_THRESHOLD = 650
 SPEECH_START_CHUNKS = 2
 TURN_END_SILENCE_CHUNKS = 7  # 700 ms at the 100 ms input chunk size.
-PREFIX_CHUNKS = 3
 MAX_PLAYBACK_BUFFER_SECONDS = 0.8
 LIVE_SESSION_ATTEMPTS = 2
 
@@ -146,7 +144,7 @@ class GeminiLivePipeline:
             "output_audio_transcription": {},
             "realtime_input_config": {
                 "automatic_activity_detection": {
-                    "disabled": True,
+                    "disabled": False,
                 }
             },
             "tools": [{"function_declarations": declarations}],
@@ -155,7 +153,6 @@ class GeminiLivePipeline:
     async def _send_input(self, session, call_id, input_track, recorder: CallAudioRecorder) -> None:
         resampler = AudioResampler(format="s16", layout="mono", rate=INPUT_RATE)
         buffer = bytearray()
-        prefix: deque[bytes] = deque(maxlen=PREFIX_CHUNKS)
         speaking = False
         speech_chunks = 0
         silence_chunks = 0
@@ -164,8 +161,11 @@ class GeminiLivePipeline:
                 frame = await input_track.recv()
             except Exception as exc:
                 logger.info("Gemini Live input ended for %s: %s", call_id, exc)
-                if speaking:
-                    await session.send_realtime_input(activity_end=types.ActivityEnd())
+                if buffer:
+                    await session.send_realtime_input(
+                        audio=types.Blob(data=bytes(buffer), mime_type="audio/pcm;rate=16000")
+                    )
+                await session.send_realtime_input(audio_stream_end=True)
                 return
             for resampled in resampler.resample(frame):
                 pcm = resampled.to_ndarray().tobytes()
@@ -175,8 +175,10 @@ class GeminiLivePipeline:
                     chunk = bytes(buffer[:INPUT_CHUNK_BYTES])
                     del buffer[:INPUT_CHUNK_BYTES]
                     rms = _pcm_rms(chunk)
+                    await session.send_realtime_input(
+                        audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
+                    )
                     if not speaking:
-                        prefix.append(chunk)
                         if rms < SPEECH_RMS_THRESHOLD:
                             speech_chunks = 0
                             continue
@@ -186,18 +188,9 @@ class GeminiLivePipeline:
                         speaking = True
                         speech_chunks = 0
                         silence_chunks = 0
-                        dashboard_state.emit(call_id, "pipeline.speech_started", {"provider": "audio_activity"})
-                        logger.info("Gemini Live activity start for %s (rms=%.0f)", call_id, rms)
-                        await session.send_realtime_input(activity_start=types.ActivityStart())
-                        for buffered_chunk in prefix:
-                            await session.send_realtime_input(
-                                audio=types.Blob(data=buffered_chunk, mime_type="audio/pcm;rate=16000")
-                            )
-                        prefix.clear()
+                        dashboard_state.emit(call_id, "pipeline.speech_started", {"provider": "hybrid_vad"})
+                        logger.info("Gemini Live speech start for %s (rms=%.0f)", call_id, rms)
                         continue
-                    await session.send_realtime_input(
-                        audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
-                    )
                     if rms >= SPEECH_RMS_THRESHOLD:
                         silence_chunks = 0
                         continue
@@ -205,9 +198,9 @@ class GeminiLivePipeline:
                     if silence_chunks >= TURN_END_SILENCE_CHUNKS:
                         speaking = False
                         silence_chunks = 0
-                        dashboard_state.emit(call_id, "pipeline.speech_ended", {"provider": "audio_activity"})
-                        logger.info("Gemini Live activity end for %s", call_id)
-                        await session.send_realtime_input(activity_end=types.ActivityEnd())
+                        dashboard_state.emit(call_id, "pipeline.speech_ended", {"provider": "hybrid_vad"})
+                        logger.info("Gemini Live speech end for %s", call_id)
+                        await session.send_realtime_input(audio_stream_end=True)
 
     async def _receive(self, session, call_id, context, output_track) -> None:
         caller_text: list[str] = []
