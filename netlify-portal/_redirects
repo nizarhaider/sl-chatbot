@@ -1,0 +1,2 @@
+/app/*  https://whatsapp.serendibai.lk/app/:splat  200!
+/  https://whatsapp.serendibai.lk/app  200!

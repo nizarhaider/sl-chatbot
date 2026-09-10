@@ -1,2 +1,14 @@
 [build]
   publish = "."
+
+[[redirects]]
+  from = "/app/*"
+  to = "https://whatsapp.serendibai.lk/app/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/"
+  to = "https://whatsapp.serendibai.lk/app"
+  status = 200
+  force = true
