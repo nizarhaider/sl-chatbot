@@ -51,7 +51,7 @@ PY
 
   log "Uploading the Gemini Live runtime to ${host_ip}:${ssh_port}"
   ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "${SSH_KEY}" -p "${ssh_port}" "root@${host_ip}" \
-    "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ffmpeg supervisor"
+    "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ffmpeg supervisor tzdata"
   ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "${SSH_KEY}" -p "${ssh_port}" "root@${host_ip}" \
     "if [ -d /workspace/sl_chatbot/.git ]; then cd /workspace/sl_chatbot && git fetch origin && git checkout '${REMOTE_BRANCH}' && git reset --hard 'origin/${REMOTE_BRANCH}'; else git clone --branch '${REMOTE_BRANCH}' '$(git remote get-url origin)' /workspace/sl_chatbot; fi"
   scp -q -o StrictHostKeyChecking=accept-new -i "${SSH_KEY}" -P "${ssh_port}" "${env_file}" "root@${host_ip}:/workspace/sl_chatbot/.env"
@@ -101,6 +101,7 @@ autorestart=true
 stderr_logfile=/var/log/serendibai/cloudflared.err.log
 stdout_logfile=/var/log/serendibai/cloudflared.out.log
 EOF
+service supervisor start || true
 supervisorctl reread
 supervisorctl update
 supervisorctl restart serendibai-webhook serendibai-cloudflared
