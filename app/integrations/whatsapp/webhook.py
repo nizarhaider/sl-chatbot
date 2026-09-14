@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import hashlib
+import hmac
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -29,6 +31,11 @@ async def verify_webhook(request: Request):
 
 @router.post("/webhook")
 async def receive_webhook(request: Request):
+    secret = os.environ.get("WHATSAPP_APP_SECRET")
+    if secret:
+        expected = "sha256=" + hmac.new(secret.encode(), await request.body(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, request.headers.get("x-hub-signature-256", "")):
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
     body = await request.json()
     if body.get("object") != "whatsapp_business_account":
         raise HTTPException(status_code=404, detail="Not a WhatsApp API event")

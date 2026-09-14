@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 
@@ -17,6 +18,11 @@ class WebRTCService:
         self._caller_phones: dict[str, str] = {}
 
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = "") -> None:
+        if call_id in self.pcs:
+            return
+        if len(self.pcs) >= int(os.environ.get("PORTAL_MAX_CALLS", "20")):
+            await whatsapp_api.send_call_action(call_id, "reject")
+            return
         await self.close_call(call_id)
         self._caller_phones[call_id] = caller_phone
         dashboard_state.start_call(call_id, caller_phone)

@@ -25,6 +25,9 @@ class NeonCallStore:
 
     @classmethod
     def from_env(cls) -> "NeonCallStore | None":
+        if os.environ.get("PORTAL_RUNTIME_TOKEN"):
+            from app.voice.portal import PortalCallStore
+            return PortalCallStore()
         database_url = os.environ.get("DATABASE_URL")
         phone_number_id = os.environ.get("PHONE_NUMBER_ID")
         if not database_url or not phone_number_id:

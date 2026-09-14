@@ -23,4 +23,5 @@ Run `uv run pytest` after runtime changes. `scripts/setup_vastai.sh` deploys the
 current branch to Vast and configures only the webhook and Cloudflare services.
 Its 8 GB GPU requirement is a Vast marketplace selector; Gemini inference runs
 remotely and the runtime has no local model workload.
-The hosted transcript dashboard is https://dashboard.serendibai.lk/dashboard/calls.
+The customer portal and transcripts are at https://portal.serendibai.lk/dashboard.
+Portal-managed instances launch with `scripts/portal_start.sh`, fetch scoped configuration and report heartbeats through `app/portal_runtime.py`.
