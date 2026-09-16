@@ -12,6 +12,8 @@ PORTAL_TOOLS = [
     )
 ] + [
     {"type": "function", "function": {"name": "book_appointment", "description": "Book an appointment after the caller confirms their name, service, date and time. Use an ISO 8601 time with the +05:30 Sri Lanka offset.", "parameters": {"type": "object", "properties": {"customer_name": {"type": "string"}, "service": {"type": "string"}, "appointment_at": {"type": "string", "description": "ISO 8601 date and time with +05:30 offset"}, "duration_minutes": {"type": "integer", "default": 30}, "notes": {"type": "string"}}, "required": ["customer_name", "service", "appointment_at"]}}},
+    {"type": "function", "function": {"name": "create_order", "description": "Create one order after the caller confirms their name and every requested item and quantity.", "parameters": {"type": "object", "properties": {"customer_name": {"type": "string"}, "items": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "quantity": {"type": "integer"}}, "required": ["name", "quantity"]}}, "delivery_address": {"type": "string"}, "notes": {"type": "string"}}, "required": ["customer_name", "items"]}}},
+    {"type": "function", "function": {"name": "create_ticket", "description": "Create one support ticket after the caller confirms their name, issue and a clear summary.", "parameters": {"type": "object", "properties": {"customer_name": {"type": "string"}, "subject": {"type": "string"}, "description": {"type": "string"}, "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"]}}, "required": ["customer_name", "subject", "description"]}}},
     {"type": "function", "function": {"name": "send_whatsapp_message", "description": "Send a text message to the caller only when they explicitly request it.", "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}},
 ]
 
@@ -59,6 +61,28 @@ class PortalTools:
             response = await self._client.post(endpoint("appointments"), headers=headers(), json=payload)
             if response.status_code == 409:
                 return {"ok": False, "error": "That time is already booked. Ask the caller for another time."}
+            response.raise_for_status()
+            return response.json()
+        if name == "create_order":
+            payload = {
+                "call_id": context.call_id, "customer_phone": context.caller_phone,
+                "customer_name": str(arguments.get("customer_name", ""))[:150],
+                "items": [{"name": str(item.get("name", ""))[:200], "quantity": int(item.get("quantity", 1))} for item in arguments.get("items", [])[:50] if isinstance(item, dict)],
+                "delivery_address": str(arguments.get("delivery_address", ""))[:1000],
+                "notes": str(arguments.get("notes", ""))[:2000],
+            }
+            response = await self._client.post(endpoint("orders"), headers=headers(), json=payload)
+            response.raise_for_status()
+            return response.json()
+        if name == "create_ticket":
+            payload = {
+                "call_id": context.call_id, "customer_phone": context.caller_phone,
+                "customer_name": str(arguments.get("customer_name", ""))[:150],
+                "subject": str(arguments.get("subject", ""))[:200],
+                "description": str(arguments.get("description", ""))[:5000],
+                "priority": str(arguments.get("priority", "normal")),
+            }
+            response = await self._client.post(endpoint("tickets"), headers=headers(), json=payload)
             response.raise_for_status()
             return response.json()
         if name not in ("search_knowledge", "search_products"):

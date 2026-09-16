@@ -28,6 +28,13 @@ def test_portal_exposes_booking_tool_when_enabled():
     assert set(declaration["parameters"]["required"]) == {"customer_name", "service", "appointment_at"}
 
 
+def test_portal_exposes_order_and_ticket_tools_when_enabled():
+    pipeline = GeminiLivePipeline.__new__(GeminiLivePipeline)
+    config = pipeline._session_config({"greeting": "Hello", "enabled_tools": ["create_order", "create_ticket"]})
+    declarations = config["tools"][0]["function_declarations"]
+    assert [tool["name"] for tool in declarations] == ["create_order", "create_ticket"]
+
+
 def test_disabled_tool_is_rejected_at_execution():
     tools = PortalTools.__new__(PortalTools)
 
