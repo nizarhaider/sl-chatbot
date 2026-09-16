@@ -28,7 +28,7 @@ class DemoCall(BaseModel):
 
 @router.post("/demo/call")
 async def demo_call(request: Request):
-    secret = os.environ.get("WHATSAPP_APP_SECRET", "")
+    secret = os.environ.get("VERIFY_TOKEN", "")
     if os.environ.get("PORTAL_DEMO_ENABLED") != "1" or not secret:
         raise HTTPException(503, "Demo unavailable")
     raw = await request.body()
