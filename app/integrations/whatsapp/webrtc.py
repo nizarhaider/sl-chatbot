@@ -16,6 +16,9 @@ class WebRTCService:
     def __init__(self) -> None:
         self.pcs: dict[str, RTCPeerConnection] = {}
         self._caller_phones: dict[str, str] = {}
+        self._outbound: dict[str, RTCPeerConnection] = {}
+        self._dial_lock = asyncio.Lock()
+        self._timers: dict[str, asyncio.Task] = {}
 
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = "") -> None:
         if call_id in self.pcs:
@@ -69,7 +72,63 @@ class WebRTCService:
         await whatsapp_api.send_call_action(call_id, "accept", session=session)
         dashboard_state.emit(call_id, "whatsapp.accept_sent", {})
 
+    async def dial(self, request_id: str, phone: str) -> str:
+        async with self._dial_lock:
+            if len(self.pcs) + len(self._outbound) >= int(os.environ.get("PORTAL_MAX_CALLS", "3")):
+                raise RuntimeError("Demo capacity reached")
+            pc = RTCPeerConnection(configuration=_rtc_configuration())
+            self._outbound[request_id] = pc
+        output_track = RealtimeAudioTrack()
+        pc.addTrack(output_track)
+        bound = asyncio.Event()
+        call_id = ""
+
+        @pc.on("track")
+        def on_track(track):
+            async def process():
+                await bound.wait()
+                if track.kind == "audio" and call_id in self.pcs:
+                    dashboard_state.mark_call_active(call_id, phone)
+                    await voice_agent.process_audio(call_id, phone, track, output_track)
+            asyncio.create_task(process())
+
+        @pc.on("connectionstatechange")
+        async def on_state():
+            if call_id in self.pcs and pc.connectionState in ("failed", "closed", "disconnected"):
+                await whatsapp_api.send_call_action(call_id, "terminate")
+                await self.close_call(call_id, close_peer=pc.connectionState != "closed")
+
+        try:
+            await pc.setLocalDescription(await pc.createOffer())
+            call_id = await whatsapp_api.initiate_call(phone, pc.localDescription.sdp, request_id)
+            self.pcs[call_id] = pc
+            self._caller_phones[call_id] = phone
+            dashboard_state.start_call(call_id, phone)
+            dashboard_state.emit(call_id, "whatsapp.outbound_started", {"request_id": request_id})
+            bound.set()
+            self._timers[call_id] = asyncio.create_task(self._end_demo(call_id))
+            return call_id
+        except Exception:
+            bound.set()
+            await pc.close()
+            raise
+        finally:
+            self._outbound.pop(request_id, None)
+
+    async def handle_answer(self, call_id: str, sdp: str, request_id: str = "") -> None:
+        pc = self.pcs.get(call_id) or self._outbound.get(request_id)
+        if pc is not None and pc.signalingState == "have-local-offer":
+            await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+
+    async def _end_demo(self, call_id: str) -> None:
+        await asyncio.sleep(180)
+        await whatsapp_api.send_call_action(call_id, "terminate")
+        await self.close_call(call_id)
+
     async def close_call(self, call_id: str, close_peer: bool = True) -> None:
+        timer = self._timers.pop(call_id, None)
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
         self._caller_phones.pop(call_id, None)
         pc = self.pcs.pop(call_id, None)
         await voice_agent.cancel_call(call_id)

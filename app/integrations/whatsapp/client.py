@@ -6,7 +6,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-GRAPH_API_VERSION = "v22.0"
+GRAPH_API_VERSION = "v25.0"
 
 
 def _whatsapp_access_token() -> str | None:
@@ -57,6 +57,20 @@ class WhatsAppAPI:
                     action, type(exc).__name__, exc,
                 )
                 return False
+
+    @staticmethod
+    async def initiate_call(phone: str, sdp: str, request_id: str) -> str:
+        transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+        async with httpx.AsyncClient(transport=transport, timeout=15) as client:
+            response = await client.post(
+                f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/calls",
+                headers={"Authorization": f"Bearer {_whatsapp_access_token()}"},
+                json={"messaging_product": "whatsapp", "to": phone, "action": "connect",
+                      "session": {"sdp_type": "offer", "sdp": sdp},
+                      "biz_opaque_callback_data": request_id},
+            )
+            response.raise_for_status()
+            return response.json()["calls"][0]["id"]
 
     @staticmethod
     async def send_text_message(to_phone: str, body: str) -> bool:

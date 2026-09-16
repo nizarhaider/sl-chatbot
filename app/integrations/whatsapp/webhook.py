@@ -3,6 +3,9 @@ import logging
 import os
 import hashlib
 import hmac
+import time
+
+from pydantic import BaseModel, Field, ValidationError
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -12,6 +15,46 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_verify_token_123")
+
+
+_demo_requests: dict[str, float] = {}
+
+
+class DemoCall(BaseModel):
+    id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    phone: str = Field(pattern=r"^[1-9][0-9]{7,14}$")
+    timestamp: int
+
+
+@router.post("/demo/call")
+async def demo_call(request: Request):
+    secret = os.environ.get("WHATSAPP_APP_SECRET", "")
+    if os.environ.get("PORTAL_DEMO_ENABLED") != "1" or not secret:
+        raise HTTPException(503, "Demo unavailable")
+    raw = await request.body()
+    expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, request.headers.get("x-demo-signature", "")):
+        raise HTTPException(403, "Invalid signature")
+    try:
+        payload = DemoCall.model_validate_json(raw)
+    except ValidationError:
+        raise HTTPException(400, "Invalid request")
+    if abs(time.time() - payload.timestamp) > 60:
+        raise HTTPException(403, "Expired request")
+    if not request.app.state.voice_ready:
+        raise HTTPException(503, "Demo unavailable")
+    for key, expiry in list(_demo_requests.items()):
+        if expiry < time.time():
+            _demo_requests.pop(key, None)
+    if payload.id in _demo_requests:
+        raise HTTPException(409, "Demo already requested")
+    _demo_requests[payload.id] = time.time() + 300
+    try:
+        call_id = await webrtc_service.dial(payload.id, payload.phone)
+        return {"call_id": call_id}
+    except Exception:
+        logger.exception("Outbound demo connection failed")
+        raise HTTPException(502, "Could not connect demo")
 
 
 @router.get("/webhook")
@@ -86,7 +129,9 @@ async def _handle_call_event(call: dict) -> None:
 
     if event == "connect":
         session = call.get("session", {})
-        if session.get("sdp_type") == "offer":
+        if session.get("sdp_type") == "answer":
+            await webrtc_service.handle_answer(call_id, session.get("sdp", ""), call.get("biz_opaque_callback_data", ""))
+        elif session.get("sdp_type") == "offer":
             logger.info("Processing SDP Offer for %s", call_id)
             asyncio.create_task(
                 webrtc_service.handle_offer(call_id, session.get("sdp", ""), caller_phone)
