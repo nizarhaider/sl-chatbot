@@ -80,8 +80,9 @@ class GeminiLivePipeline:
                             await session.send_realtime_input(
                                 text=(
                                 "Start the phone call now. Say exactly this language-selection greeting, "
-                                "with each option in its own language: 'To speak in English, say English. "
-                                "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழில் பேச தமிழ் என்று சொல்லுங்கள்.' "
+                                "with each option in its own language: 'Welcome to SLT-MOBITEL. "
+                                "To speak in English, say English. සිංහලෙන් කතා කිරීමට සිංහල කියන්න. "
+                                "தமிழில் பேச தமிழ் என்று சொல்லுங்கள்.' "
                                 "Do not add anything before or after it."
                                 )
                             )
@@ -158,7 +159,8 @@ class GeminiLivePipeline:
                 "Use natural Sri Lankan English and Sinhala pronunciation; never imitate an "
                 "American accent. Start with the language-selection greeting. Once the caller "
                 "chooses English, Sinhala, or Tamil, acknowledge that choice in the selected "
-                "language and immediately ask what property they are looking for. Recognize "
+                "language and ask how you can help. If speech is mixed or unclear, ask one short "
+                "clarification and wait instead of guessing. Recognize "
                 "Sinhala and Tamil speech in native script and pronunciation. Do not choose "
                 "English from a short or unclear reply such as an acknowledgement. During the "
                 "language-selection turn, choose English only when the caller clearly says "
