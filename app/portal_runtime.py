@@ -64,7 +64,7 @@ def heartbeat():
             time.sleep(20)
 
 
-if os.environ.get("CLOUDFLARED_TUNNEL_TOKEN"):
+if os.environ.get("PORTAL_DISABLE_NAMED_TUNNEL") != "1" and os.environ.get("CLOUDFLARED_TUNNEL_TOKEN"):
     tunnels.append(subprocess.Popen(["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", os.environ["CLOUDFLARED_TUNNEL_TOKEN"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 threading.Thread(target=tunnel, daemon=True).start()
 threading.Thread(target=heartbeat, daemon=True).start()
