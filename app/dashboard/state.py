@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.dashboard.neon_store import NeonCallStore
+from app.voice.portal import PortalCallStore
 
 SESSION_STORE_PATH = "run_logs/call_sessions.json"
 MAX_STORED_CALLS = 100
@@ -76,13 +76,15 @@ class LiveCall:
 class DashboardState:
     def __init__(
         self,
-        call_store: NeonCallStore | None = None,
+        call_store: PortalCallStore | None = None,
         session_store_path: str = SESSION_STORE_PATH,
     ) -> None:
         self._session_store_path = session_store_path
-        self._call_store = call_store if call_store is not None else NeonCallStore.from_env()
+        self._call_store = call_store
+        if self._call_store is None and os.environ.get("PORTAL_RUNTIME_TOKEN"):
+            self._call_store = PortalCallStore()
         self._write_executor = (
-            ThreadPoolExecutor(max_workers=1, thread_name_prefix="neon-call-writer")
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="portal-call-writer")
             if self._call_store is not None
             else None
         )
@@ -179,14 +181,14 @@ class DashboardState:
         with open(self._session_store_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
         if self._write_executor is not None:
-            self._write_executor.submit(self._save_call_to_neon, call.to_dict())
+            self._write_executor.submit(self._save_call_to_portal, call.to_dict())
 
-    def _save_call_to_neon(self, call: dict) -> None:
+    def _save_call_to_portal(self, call: dict) -> None:
         try:
             assert self._call_store is not None
             self._call_store.save_call(call)
         except Exception:
-            logger.exception("Failed to persist call %s to Neon", call.get("call_id"))
+            logger.exception("Failed to persist call %s to the portal", call.get("call_id"))
 
     def close(self) -> None:
         if self._write_executor is not None:

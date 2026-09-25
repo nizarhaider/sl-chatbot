@@ -1,8 +1,15 @@
 import os
+from dataclasses import dataclass
 
 import httpx
 
 from app.integrations.whatsapp.client import whatsapp_api
+
+
+@dataclass(frozen=True)
+class CallContext:
+    call_id: str
+    caller_phone: str
 
 PORTAL_TOOLS = [
     {"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}

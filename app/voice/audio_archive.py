@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 import subprocess
 import time
@@ -13,7 +14,7 @@ import numpy as np
 from app.dashboard.state import dashboard_state
 
 logger = logging.getLogger(__name__)
-S3_BUCKET = "serendibai-lk"
+S3_BUCKET = os.environ.get("CALL_RECORDINGS_BUCKET", "serendibai-call-recordings-744861799976")
 SAMPLE_RATE = 16_000
 
 

@@ -1,8 +1,0 @@
-version: 3
-tunnels:
-  webhook:
-    proto: http
-    addr: localhost:APP_PORT_PLACEHOLDER
-    domain: ""
-log_level: info
-log_format: json
