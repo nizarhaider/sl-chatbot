@@ -28,7 +28,7 @@ booking require `DATABASE_URL`, `PINECONE_API_KEY`, and `PHONE_NUMBER_ID`.
 
 ```bash
 uv sync --all-groups
-uv run uvicorn app.api.app:create_app --host 0.0.0.0 --port 8081
+./deploy.sh --env local
 uv run pytest
 ```
 
@@ -36,19 +36,17 @@ The health endpoint returns `warming_up`, `ready`, or `error`. Startup opens a
 Gemini Live connection and initializes the property tool service before marking
 the runtime ready.
 
-## Vast deployment
+## Deployment
 
 From the repository root, run:
 
 ```bash
-./scripts/setup_vastai.sh
+./deploy.sh --env local
 ```
 
-The script rents a current-generation Vast instance with at least 8 GB VRAM and
-2 CPU cores, deploys the current branch, configures the webhook and Cloudflare
-tunnel, and verifies the service. Gemini performs inference remotely, so the
-instance does not run ASR, LLM, or TTS locally and does not download
-open-source speech or language models.
+The local mode connects the saved WhatsApp agent to the portal through a
+temporary Cloudflare tunnel. Keep the Mac awake and the process running to
+receive calls. `--env remote` is reserved for a future server provider.
 
 Live call transcripts are available at
-https://dashboard.serendibai.lk/dashboard/calls.
+https://portal.serendibai.lk/dashboard.

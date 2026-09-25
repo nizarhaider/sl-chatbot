@@ -68,4 +68,12 @@ if os.environ.get("PORTAL_DISABLE_NAMED_TUNNEL") != "1" and os.environ.get("CLOU
     tunnels.append(subprocess.Popen(["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", os.environ["CLOUDFLARED_TUNNEL_TOKEN"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 threading.Thread(target=tunnel, daemon=True).start()
 threading.Thread(target=heartbeat, daemon=True).start()
-uvicorn.run(app, host="0.0.0.0", port=8081)
+try:
+    uvicorn.run(app, host="0.0.0.0", port=8081)
+finally:
+    for process in tunnels:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()

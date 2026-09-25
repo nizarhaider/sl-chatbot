@@ -19,9 +19,8 @@ select English/Sinhala/Tamil, and speak as a warm Sri Lankan woman.
 `GEMINI_API_KEY` is required. Tool calls additionally need the existing Neon,
 Pinecone, and WhatsApp environment variables. Never log or commit credentials.
 
-Run `uv run pytest` after runtime changes. `scripts/setup_vastai.sh` deploys the
-current branch to Vast and configures only the webhook and Cloudflare services.
-Its 8 GB GPU requirement is a Vast marketplace selector; Gemini inference runs
-remotely and the runtime has no local model workload.
+Run `uv run pytest` after runtime changes. `./deploy.sh --env local` starts the
+voice runtime on this Mac and connects it to the portal. Gemini inference runs
+remotely and the runtime has no local model workload. `--env remote` is reserved.
 The customer portal and transcripts are at https://portal.serendibai.lk/dashboard.
-Portal-managed instances launch with `scripts/portal_start.sh`, fetch scoped configuration and report heartbeats through `app/portal_runtime.py`.
+The deployment script fetches scoped configuration and reports heartbeats through `app/portal_runtime.py`.

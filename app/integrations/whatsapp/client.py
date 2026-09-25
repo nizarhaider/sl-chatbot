@@ -39,9 +39,6 @@ class WhatsAppAPI:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
-        # Vast instances in this deployment have no usable IPv6 route to Meta.
-        # Binding the client to IPv4 avoids the default resolver's failed IPv6
-        # attempt consuming the time available to pre-accept an incoming call.
         transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=1)
         timeout = httpx.Timeout(10.0, connect=3.0)
         async with httpx.AsyncClient(transport=transport, timeout=timeout) as client:
