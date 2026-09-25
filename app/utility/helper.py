@@ -336,7 +336,7 @@ def run_runtime():
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8081)
+        uvicorn.run(app, host="0.0.0.0", port=8081, access_log=False)
     finally:
         if tunnel:
             tunnel.terminate()
