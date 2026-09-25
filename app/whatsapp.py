@@ -1,47 +1,17 @@
 import asyncio
-import hashlib
 import hmac
 import logging
 import os
-import time
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 from contextlib import asynccontextmanager
-from logging.handlers import RotatingFileHandler
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
-from pydantic import BaseModel, Field, ValidationError
 
 from app.gemini import RealtimeAudioTrack, voice_agent
 from app.utility.helper import call_state
 from app.utility.tools import whatsapp_api
-
-
-class ImportantEventFilter(logging.Filter):
-    IMPORTANT_PATTERNS = (
-        "WEBHOOK_VERIFIED",
-        "Received call event",
-        "Processing SDP Offer",
-        "Received audio track",
-        "Connection state",
-        "terminated by peer",
-        "Turn transcript",
-        "Turn dropped",
-        "Turn response",
-        "Gemini Live",
-        "gemini_live",
-        "Voice tool service",
-        "Discarded",
-        "input ended",
-        "Stopping interrupted",
-    )
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if record.levelno >= logging.WARNING:
-            return True
-        message = record.getMessage()
-        return any(pattern in message for pattern in self.IMPORTANT_PATTERNS)
 
 
 def configure_logging() -> None:
@@ -53,26 +23,6 @@ def configure_logging() -> None:
     )
     for noisy_logger in ("aioice", "httpx"):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
-    configure_important_log()
-
-
-def configure_important_log() -> None:
-    path = "run_logs/important.log"
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    handler = RotatingFileHandler(
-        path,
-        maxBytes=1048576,
-        backupCount=3,
-    )
-    handler.setLevel(logging.INFO)
-    handler.addFilter(ImportantEventFilter())
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-    logging.getLogger().addHandler(handler)
 
 
 load_dotenv()
@@ -130,46 +80,6 @@ def create_app() -> FastAPI:
 router = APIRouter()
 
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_verify_token_123")
-
-
-_demo_requests: dict[str, float] = {}
-
-
-class DemoCall(BaseModel):
-    id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    phone: str = Field(pattern=r"^[1-9][0-9]{7,14}$")
-    timestamp: int
-
-
-@router.post("/demo/call")
-async def demo_call(request: Request):
-    secret = os.environ.get("VERIFY_TOKEN", "")
-    if os.environ.get("PORTAL_DEMO_ENABLED") != "1" or not secret:
-        raise HTTPException(503, "Demo unavailable")
-    raw = await request.body()
-    expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, request.headers.get("x-demo-signature", "")):
-        raise HTTPException(403, "Invalid signature")
-    try:
-        payload = DemoCall.model_validate_json(raw)
-    except ValidationError:
-        raise HTTPException(400, "Invalid request")
-    if abs(time.time() - payload.timestamp) > 60:
-        raise HTTPException(403, "Expired request")
-    if not request.app.state.voice_ready:
-        raise HTTPException(503, "Demo unavailable")
-    for key, expiry in list(_demo_requests.items()):
-        if expiry < time.time():
-            _demo_requests.pop(key, None)
-    if payload.id in _demo_requests:
-        raise HTTPException(409, "Demo already requested")
-    _demo_requests[payload.id] = time.time() + 300
-    try:
-        call_id = await webrtc_service.dial(payload.id, payload.phone)
-        return {"call_id": call_id}
-    except Exception:
-        logger.exception("Outbound demo connection failed")
-        raise HTTPException(502, "Could not connect demo")
 
 
 @router.get("/webhook")
@@ -244,9 +154,7 @@ async def _handle_call_event(call: dict) -> None:
 
     if event == "connect":
         session = call.get("session", {})
-        if session.get("sdp_type") == "answer":
-            await webrtc_service.handle_answer(call_id, session.get("sdp", ""), call.get("biz_opaque_callback_data", ""))
-        elif session.get("sdp_type") == "offer":
+        if session.get("sdp_type") == "offer":
             logger.info("Processing SDP Offer for %s", call_id)
             asyncio.create_task(
                 webrtc_service.handle_offer(call_id, session.get("sdp", ""), caller_phone)
@@ -260,14 +168,11 @@ class WebRTCService:
     def __init__(self) -> None:
         self.pcs: dict[str, RTCPeerConnection] = {}
         self._caller_phones: dict[str, str] = {}
-        self._outbound: dict[str, RTCPeerConnection] = {}
-        self._dial_lock = asyncio.Lock()
-        self._timers: dict[str, asyncio.Task] = {}
 
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = "") -> None:
         if call_id in self.pcs:
             return
-        if len(self.pcs) >= int(os.environ.get("PORTAL_MAX_CALLS", "20")):
+        if len(self.pcs) >= int(os.environ.get("MAX_CALLS", "20")):
             await whatsapp_api.send_call_action(call_id, "reject")
             return
         await self.close_call(call_id)
@@ -316,63 +221,7 @@ class WebRTCService:
         await whatsapp_api.send_call_action(call_id, "accept", session=session)
         call_state.emit(call_id, "whatsapp.accept_sent", {})
 
-    async def dial(self, request_id: str, phone: str) -> str:
-        async with self._dial_lock:
-            if len(self.pcs) + len(self._outbound) >= int(os.environ.get("PORTAL_MAX_CALLS", "3")):
-                raise RuntimeError("Demo capacity reached")
-            pc = RTCPeerConnection(configuration=_rtc_configuration())
-            self._outbound[request_id] = pc
-        output_track = RealtimeAudioTrack()
-        pc.addTrack(output_track)
-        bound = asyncio.Event()
-        call_id = ""
-
-        @pc.on("track")
-        def on_track(track):
-            async def process():
-                await bound.wait()
-                if track.kind == "audio" and call_id in self.pcs:
-                    call_state.mark_call_active(call_id, phone)
-                    await voice_agent.process_audio(call_id, phone, track, output_track)
-            asyncio.create_task(process())
-
-        @pc.on("connectionstatechange")
-        async def on_state():
-            if call_id in self.pcs and pc.connectionState in ("failed", "closed", "disconnected"):
-                await whatsapp_api.send_call_action(call_id, "terminate")
-                await self.close_call(call_id, close_peer=pc.connectionState != "closed")
-
-        try:
-            await pc.setLocalDescription(await pc.createOffer())
-            call_id = await whatsapp_api.initiate_call(phone, pc.localDescription.sdp, request_id)
-            self.pcs[call_id] = pc
-            self._caller_phones[call_id] = phone
-            call_state.start_call(call_id, phone)
-            call_state.emit(call_id, "whatsapp.outbound_started", {"request_id": request_id})
-            bound.set()
-            self._timers[call_id] = asyncio.create_task(self._end_demo(call_id))
-            return call_id
-        except Exception:
-            bound.set()
-            await pc.close()
-            raise
-        finally:
-            self._outbound.pop(request_id, None)
-
-    async def handle_answer(self, call_id: str, sdp: str, request_id: str = "") -> None:
-        pc = self.pcs.get(call_id) or self._outbound.get(request_id)
-        if pc is not None and pc.signalingState == "have-local-offer":
-            await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
-
-    async def _end_demo(self, call_id: str) -> None:
-        await asyncio.sleep(180)
-        await whatsapp_api.send_call_action(call_id, "terminate")
-        await self.close_call(call_id)
-
     async def close_call(self, call_id: str, close_peer: bool = True) -> None:
-        timer = self._timers.pop(call_id, None)
-        if timer is not None and timer is not asyncio.current_task():
-            timer.cancel()
         self._caller_phones.pop(call_id, None)
         pc = self.pcs.pop(call_id, None)
         await voice_agent.cancel_call(call_id)

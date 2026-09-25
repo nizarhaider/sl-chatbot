@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import re
@@ -12,15 +11,15 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
 import boto3
-import httpx
 import numpy as np
 import psutil
 import uvicorn
 
-from app.utility.tools import PortalCallStore
+from psycopg.types.json import Jsonb
+
+from app.utility.tools import CallStore, connection
 
 def pcm_rms(pcm: bytes) -> float:
     samples = np.frombuffer(pcm, dtype=np.int16)
@@ -42,7 +41,6 @@ def join_transcript(chunks: list[str]) -> str:
     return merged
 
 
-SESSION_STORE_PATH = "run_logs/call_sessions.json"
 MAX_STORED_CALLS = 100
 logger = logging.getLogger(__name__)
 
@@ -84,45 +82,13 @@ class LiveCall:
             "events": self.events,
         }
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "LiveCall":
-        call = cls(
-            call_id=data.get("call_id", ""),
-            caller_phone=data.get("caller_phone", ""),
-            status=data.get("status", "ended"),
-            started_at=float(data.get("started_at") or time.time()),
-            updated_at=float(data.get("updated_at") or time.time()),
-            ended_at=data.get("ended_at"),
-        )
-        call.transcript = [
-            TranscriptEvent(
-                speaker=event.get("speaker", ""),
-                text=event.get("text", ""),
-                timestamp=float(event.get("timestamp") or call.started_at),
-            )
-            for event in data.get("transcript", [])
-            if event.get("text")
-        ]
-        call.events = list(data.get("events", []))[-500:]
-        return call
 
 
 class CallState:
-    def __init__(
-        self,
-        call_store: PortalCallStore | None = None,
-        session_store_path: str = SESSION_STORE_PATH,
-    ) -> None:
-        self._session_store_path = session_store_path
-        self._call_store = call_store
-        if self._call_store is None and os.environ.get("PORTAL_RUNTIME_TOKEN"):
-            self._call_store = PortalCallStore()
-        self._write_executor = (
-            ThreadPoolExecutor(max_workers=1, thread_name_prefix="portal-call-writer")
-            if self._call_store is not None
-            else None
-        )
-        self._calls: dict[str, LiveCall] = self._load_calls()
+    def __init__(self) -> None:
+        self._call_store = CallStore() if os.environ.get("VOICE_AGENT_ID") and os.environ.get("DATABASE_URL") else None
+        self._write_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="neon-call-writer") if self._call_store else None
+        self._calls: dict[str, LiveCall] = {}
 
     def start_call(self, call_id: str, caller_phone: str = "") -> None:
         self._calls[call_id] = LiveCall(call_id=call_id, caller_phone=caller_phone)
@@ -186,43 +152,16 @@ class CallState:
         if call is not None:
             self._persist(call)
 
-    def snapshot(self) -> dict:
-        calls = sorted(
-            self._calls.values(),
-            key=lambda call: (call.status != "active", -call.updated_at),
-        )
-        return {"generated_at": time.time(), "calls": [call.to_dict() for call in calls]}
-
-    def _load_calls(self) -> dict[str, LiveCall]:
-        if not os.path.exists(self._session_store_path):
-            return {}
-        try:
-            with open(self._session_store_path, encoding="utf-8") as handle:
-                data = json.load(handle)
-        except Exception:
-            return {}
-        calls = {}
-        for item in data.get("calls", []):
-            call = LiveCall.from_dict(item)
-            if call.call_id:
-                calls[call.call_id] = call
-        return calls
-
     def _persist(self, call: LiveCall) -> None:
-        Path(self._session_store_path).parent.mkdir(parents=True, exist_ok=True)
         self._trim_old_calls()
-        payload = self.snapshot()
-        with open(self._session_store_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
         if self._write_executor is not None:
-            self._write_executor.submit(self._save_call_to_portal, call.to_dict())
+            self._write_executor.submit(self._save_call, call.to_dict())
 
-    def _save_call_to_portal(self, call: dict) -> None:
+    def _save_call(self, call: dict) -> None:
         try:
-            assert self._call_store is not None
             self._call_store.save_call(call)
         except Exception:
-            logger.exception("Failed to persist call %s to the portal", call.get("call_id"))
+            logger.exception("Failed to persist call %s to Neon", call.get("call_id"))
 
     def close(self) -> None:
         if self._write_executor is not None:
@@ -349,72 +288,59 @@ def _object_key(call_id: str) -> str:
 
 
 def run_runtime():
-    global S3_BUCKET
-    base = os.environ["PORTAL_URL"].rstrip("/")
-    auth = {"Authorization": f"Bearer {os.environ['PORTAL_RUNTIME_TOKEN']}"}
-    with httpx.Client(timeout=30) as client:
-        response = client.get(f"{base}/api/runtime/config", headers=auth)
-        response.raise_for_status()
-        config = response.json()
-    for key, value in config["env"].items():
-        if value:
-            os.environ[key] = str(value)
-    os.environ["PORTAL_MAX_CALLS"] = str(config["max_calls"])
-    S3_BUCKET = os.environ.get("CALL_RECORDINGS_BUCKET", S3_BUCKET)
-
+    from app.gemini import voice_agent
     from app.whatsapp import create_app
 
     app = create_app()
-    runtime_url = ""
-    tunnels = []
-
-
-    def tunnel():
-        nonlocal runtime_url
-        process = subprocess.Popen(["cloudflared", "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8081"], stderr=subprocess.PIPE, text=True)
-        tunnels.append(process)
-        for line in process.stderr:
-            match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
-            if match:
-                runtime_url = match[0]
-        runtime_url = ""
-
+    agent_id = os.environ["VOICE_AGENT_ID"]
+    tunnel = None
+    if os.environ.get("CLOUDFLARED_TUNNEL_TOKEN"):
+        tunnel = subprocess.Popen(
+            ["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", os.environ["CLOUDFLARED_TUNNEL_TOKEN"]],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
 
     def heartbeat():
         process = psutil.Process()
-        with httpx.Client(timeout=20) as client:
-            while True:
-                try:
-                    from app.gemini import voice_agent
-                    status = "error" if getattr(app.state, "voice_startup_error", "") else "ready" if getattr(app.state, "voice_ready", False) else "warming_up"
-                    result = client.post(f"{base}/api/runtime/heartbeat", headers=auth, json={
-                        "version": config["version"], "active_calls": len(voice_agent.active_calls),
-                        "cpu_percent": psutil.cpu_percent(), "memory_mb": round(process.memory_info().rss / 1048576, 1),
-                        "status": status, "runtime_url": runtime_url,
-                        "error": "Gemini startup failed. Check the configured API key and model." if status == "error" else "",
-                    })
-                    result.raise_for_status()
-                    control = result.json()
-                    os.environ["PORTAL_MAX_CALLS"] = str(control.get("max_calls", config["max_calls"]))
-                    if control.get("restart"):
-                        for child in tunnels:
-                            child.terminate()
-                        os.execv(sys.executable, [sys.executable, "-c", "from app.utility.helper import run_runtime; run_runtime()"])
-                except Exception as exc:
-                    print(f"Portal heartbeat unavailable: {type(exc).__name__}", flush=True)
-                time.sleep(20)
+        while True:
+            try:
+                status = "error" if getattr(app.state, "voice_startup_error", "") else "ready" if getattr(app.state, "voice_ready", False) else "warming_up"
+                telemetry = {
+                    "active_calls": len(voice_agent.active_calls),
+                    "cpu_percent": psutil.cpu_percent(),
+                    "memory_mb": round(process.memory_info().rss / 1048576, 1),
+                    "status": status,
+                    "runtime_url": "https://whatsapp.serendibai.lk" if tunnel and tunnel.poll() is None else "",
+                    "error": "Gemini startup failed. Check the configured API key and model." if status == "error" else "",
+                }
+                with connection() as db:
+                    current = db.execute(
+                        "select max_calls,deployed_version from portal_agents where id=%s for update",
+                        (agent_id,),
+                    ).fetchone()
+                    restart = current is not None and current["deployed_version"] == -1
+                    row = db.execute(
+                        "update portal_agents set heartbeat_at=now(),telemetry=%s,status=%s,deployed_version=version where id=%s returning max_calls",
+                        (Jsonb(telemetry), "restarting" if restart else status, agent_id),
+                    ).fetchone()
+                if row:
+                    os.environ["MAX_CALLS"] = str(row["max_calls"])
+                if restart:
+                    if tunnel:
+                        tunnel.terminate()
+                    os.execv(sys.executable, [sys.executable, "-c", "from app.utility.helper import run_runtime; run_runtime()"])
+            except Exception as exc:
+                logger.warning("Neon heartbeat unavailable: %s", type(exc).__name__)
+            time.sleep(20)
 
-
-    if os.environ.get("PORTAL_DISABLE_NAMED_TUNNEL") != "1" and os.environ.get("CLOUDFLARED_TUNNEL_TOKEN"):
-        tunnels.append(subprocess.Popen(["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", os.environ["CLOUDFLARED_TUNNEL_TOKEN"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    threading.Thread(target=tunnel, daemon=True).start()
-    threading.Thread(target=heartbeat, daemon=True).start()
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
     try:
         uvicorn.run(app, host="0.0.0.0", port=8081)
     finally:
-        for process in tunnels:
-            process.terminate()
+        if tunnel:
+            tunnel.terminate()
             try:
-                process.wait(timeout=5)
+                tunnel.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                process.kill()
+                tunnel.kill()

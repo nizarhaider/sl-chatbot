@@ -16,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 
 from app.utility.helper import CallAudioArchive, CallAudioRecorder, call_state
 from app.utility.helper import join_transcript, pcm_rms
-from app.utility.tools import CallContext, PORTAL_TOOLS, PortalTools
+from app.utility.tools import CallContext, VOICE_TOOLS, DatabaseTools
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class GeminiLivePipeline:
 
     def __init__(self, interrupt_playback) -> None:
         self._interrupt_playback = interrupt_playback
-        self._tools = PortalTools()
+        self._tools = DatabaseTools()
         self._audio_archive = CallAudioArchive()
         self._client: genai.Client | None = None
 
@@ -117,7 +117,7 @@ class GeminiLivePipeline:
 
     def _session_config(self, agent_config: dict) -> dict:
         enabled = set(agent_config.get("enabled_tools", []))
-        declarations = [tool["function"] for tool in PORTAL_TOOLS if tool["function"]["name"] in enabled]
+        declarations = [tool["function"] for tool in VOICE_TOOLS if tool["function"]["name"] in enabled]
         config = {
             "response_modalities": ["AUDIO"],
             "system_instruction": (

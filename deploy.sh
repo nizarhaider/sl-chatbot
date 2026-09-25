@@ -16,10 +16,7 @@ case "$2" in
     [[ -f .env ]] || { echo "voice-agent/.env is missing." >&2; exit 1; }
     uv sync --no-dev
     exec uv run --no-sync python - <<'PY'
-import hashlib
 import os
-import runpy
-import secrets
 
 import psycopg
 from dotenv import load_dotenv
@@ -27,20 +24,20 @@ from dotenv import load_dotenv
 load_dotenv(".env")
 with psycopg.connect(os.environ["DATABASE_URL"]) as db:
     agent = db.execute(
-        "select id from portal_agents where phone_number_id=%s and status<>'archived' order by updated_at desc limit 1",
+        "select id,customer_id,max_calls from portal_agents where phone_number_id=%s and status<>'archived' order by updated_at desc limit 1",
         (os.environ["PHONE_NUMBER_ID"],),
     ).fetchone()
     if agent is None:
-        raise SystemExit("No portal agent matches PHONE_NUMBER_ID.")
-    token = secrets.token_urlsafe(32)
+        raise SystemExit("No voice agent matches PHONE_NUMBER_ID in Neon.")
     db.execute(
-        "update portal_agents set runtime_token_hash=%s, status='warming_up', heartbeat_at=null, telemetry='{}' where id=%s",
-        (hashlib.sha256(token.encode()).hexdigest(), agent[0]),
+        "update portal_agents set status='warming_up', heartbeat_at=null, telemetry='{}' where id=%s",
+        (agent[0],),
     )
 
-os.environ["PORTAL_URL"] = os.environ.get("PORTAL_URL", "https://portal.serendibai.lk")
-os.environ["PORTAL_RUNTIME_TOKEN"] = token
-print("Starting local voice server for portal agent", agent[0], flush=True)
+os.environ["VOICE_AGENT_ID"] = str(agent[0])
+os.environ["VOICE_CUSTOMER_ID"] = str(agent[1])
+os.environ["MAX_CALLS"] = str(agent[2])
+print("Starting local voice server for agent", agent[0], flush=True)
 from app.utility.helper import run_runtime
 run_runtime()
 PY
