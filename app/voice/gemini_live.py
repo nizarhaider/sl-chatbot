@@ -140,7 +140,7 @@ class GeminiLivePipeline:
                     + "Before booking, confirm the caller's name, service, date and time, then use book_appointment once. Before creating an order, confirm the caller's name, every item and quantity, then use create_order once. Before creating a ticket, confirm the caller's name and issue summary, then use create_ticket once. "
                     + "Only send messages when the caller explicitly asks. If a required tool is disabled, explain your limitation."
                 ),
-                "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": agent_config.get("voice", "Kore")}}},
+                "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": agent_config.get("voice", "Aoede")}}},
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
                 "realtime_input_config": {"automatic_activity_detection": {"disabled": False}},
@@ -175,7 +175,7 @@ class GeminiLivePipeline:
                 + (f"\n\nClient instructions: {custom_instructions}" if custom_instructions else "")
             ),
             "speech_config": {
-                "voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}
+                "voice_config": {"prebuilt_voice_config": {"voice_name": "Aoede"}}
             },
             "input_audio_transcription": types.AudioTranscriptionConfig(
                 language_codes=["si-LK", "en-US", "ta-LK"],

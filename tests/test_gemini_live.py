@@ -51,6 +51,7 @@ def test_gemini_instruction_leaves_language_selection_to_live_audio() -> None:
     assert "Sinhala" in instruction
     assert "Sri Lankan woman" in instruction
     assert "never wait for text input" in instruction
+    assert pipeline._session_config()["speech_config"]["voice_config"]["prebuilt_voice_config"]["voice_name"] == "Aoede"
 
 
 def test_usage_metadata_serializes_token_counts_by_modality():
