@@ -1,8 +1,17 @@
 import asyncio
 
 from app.voice.gemini_live import GeminiLivePipeline
-from app.voice.portal import PortalTools
+from app.voice.portal import PortalTools, _usage_from_events
 from app.voice.tools import CallContext
+
+
+def test_call_usage_preserves_each_provider_breakdown():
+    usage = {"total_token_count": 42, "prompt_tokens_details": [{"modality": "AUDIO", "token_count": 25}]}
+    assert _usage_from_events([
+        {"kind": "gemini_live.usage", "data": {"total_tokens": 42, "usage": usage}},
+        {"kind": "gemini_live.interrupted", "data": {}},
+    ]) == {"provider": "google_gemini_live", "requests": [usage]}
+    assert _usage_from_events([]) is None
 
 
 def test_portal_instructions_replace_legacy_business_and_disable_all_tools():

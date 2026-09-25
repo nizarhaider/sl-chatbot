@@ -28,6 +28,10 @@ MAX_PLAYBACK_BUFFER_SECONDS = 0.8
 LIVE_SESSION_ATTEMPTS = 2
 
 
+def serialize_usage_metadata(metadata) -> dict:
+    return metadata.model_dump(mode="json", exclude_none=True)
+
+
 class GeminiLivePipeline:
     """One Gemini Live session per WhatsApp call.
 
@@ -247,9 +251,15 @@ class GeminiLivePipeline:
         while True:
             async for response in session.receive():
                 if getattr(response, "usage_metadata", None):
-                    total = getattr(response.usage_metadata, "total_token_count", None)
+                    metadata = response.usage_metadata
+                    usage = serialize_usage_metadata(metadata)
+                    total = usage.get("total_token_count")
                     if total is not None:
-                        dashboard_state.emit(call_id, "gemini_live.usage", {"total_tokens": total})
+                        dashboard_state.emit(
+                            call_id,
+                            "gemini_live.usage",
+                            {"total_tokens": total, "usage": usage},
+                        )
                 if response.tool_call:
                     await self._handle_tool_calls(session, response.tool_call.function_calls, call_id, context)
                 content = response.server_content

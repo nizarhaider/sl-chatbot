@@ -1,6 +1,6 @@
 import asyncio
 
-from app.voice.gemini_live import GeminiLivePipeline
+from app.voice.gemini_live import GeminiLivePipeline, serialize_usage_metadata
 from app.voice.tools import CallContext
 
 
@@ -51,3 +51,32 @@ def test_gemini_instruction_leaves_language_selection_to_live_audio() -> None:
     assert "Sinhala" in instruction
     assert "Sri Lankan woman" in instruction
     assert "never wait for text input" in instruction
+
+
+def test_usage_metadata_serializes_token_counts_by_modality():
+    from google.genai import types
+
+    metadata = types.UsageMetadata(
+        prompt_token_count=30,
+        response_token_count=12,
+        total_token_count=42,
+        prompt_tokens_details=[
+            types.ModalityTokenCount(modality="AUDIO", token_count=25),
+            types.ModalityTokenCount(modality="TEXT", token_count=5),
+        ],
+        response_tokens_details=[
+            types.ModalityTokenCount(modality="AUDIO", token_count=12),
+        ],
+    )
+    assert serialize_usage_metadata(metadata) == {
+        "prompt_token_count": 30,
+        "response_token_count": 12,
+        "total_token_count": 42,
+        "prompt_tokens_details": [
+            {"modality": "AUDIO", "token_count": 25},
+            {"modality": "TEXT", "token_count": 5},
+        ],
+        "response_tokens_details": [
+            {"modality": "AUDIO", "token_count": 12},
+        ],
+    }

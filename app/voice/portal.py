@@ -26,6 +26,15 @@ def endpoint(operation):
     return f"{os.environ['PORTAL_URL'].rstrip('/')}/api/runtime/{operation}"
 
 
+def _usage_from_events(events):
+    requests = [
+        event["data"].get("usage")
+        for event in events
+        if event.get("kind") == "gemini_live.usage" and event.get("data", {}).get("usage")
+    ]
+    return {"provider": "google_gemini_live", "requests": requests} if requests else None
+
+
 class PortalTools:
     def __init__(self):
         self._client = httpx.AsyncClient(timeout=20)
@@ -96,6 +105,7 @@ class PortalCallStore:
     def save_call(self, call):
         events = [event for event in call.get("events", []) if event.get("kind") == "gemini_live.usage"]
         tokens = sum(event["data"].get("total_tokens", 0) for event in events) if events else None
+        usage = _usage_from_events(events)
         end = call.get("ended_at")
         payload = {
             "id": call["call_id"], "customer_phone": call.get("caller_phone", ""),
@@ -103,6 +113,7 @@ class PortalCallStore:
             "transcript": "\n\n".join(f"{e['speaker'].capitalize()}: {e['text']}" for e in call.get("transcript", [])),
             "duration_seconds": max(0, end - call["started_at"]) if end else None,
             "tokens": tokens,
+            "usage": usage,
         }
         with httpx.Client(timeout=20) as client:
             response = client.post(endpoint("calls"), headers=headers(), json=payload)
