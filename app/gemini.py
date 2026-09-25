@@ -486,5 +486,3 @@ class VoiceAgent:
 
 
 voice_agent = VoiceAgent()
-
-
