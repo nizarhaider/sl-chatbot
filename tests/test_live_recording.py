@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-from app.voice.audio_archive import S3_BUCKET
-from app.voice.gemini_live import GEMINI_LIVE_MODEL
+from app.utility.helper import S3_BUCKET
+from app.gemini import GEMINI_LIVE_MODEL
 
 
 async def _check_recording():

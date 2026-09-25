@@ -18,6 +18,10 @@ The agent starts by asking the caller to say English, Sinhala, or Tamil. Gemini
 then listens and responds in the selected language using its native audio voice.
 There is no local ASR, LLM, TTS, CUDA model download, or prerecorded greeting.
 
+`app/whatsapp.py` serves the webhook and WebRTC. `app/gemini.py` handles Live
+audio. `app/utility/helper.py` handles call state, recording, and local runtime
+startup. `app/utility/tools.py` handles portal tools and the Meta API client.
+
 ## Configuration
 
 Create `.env` with the WhatsApp, Gemini, database, AWS, and tunnel settings used

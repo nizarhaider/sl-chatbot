@@ -41,7 +41,8 @@ with psycopg.connect(os.environ["DATABASE_URL"]) as db:
 os.environ["PORTAL_URL"] = os.environ.get("PORTAL_URL", "https://portal.serendibai.lk")
 os.environ["PORTAL_RUNTIME_TOKEN"] = token
 print("Starting local voice server for portal agent", agent[0], flush=True)
-runpy.run_module("app.portal_runtime", run_name="__main__")
+from app.utility.helper import run_runtime
+run_runtime()
 PY
     ;;
   remote)
