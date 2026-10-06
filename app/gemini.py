@@ -76,8 +76,8 @@ class GeminiLivePipeline:
                                 text=(
                                 "Start the phone call now. Say exactly this language-selection greeting, "
                                 "with each option in its own language: 'Welcome to SLT-MOBITEL. "
-                                "To speak in English, say English. සිංහලෙන් කතා කිරීමට සිංහල කියන්න. "
-                                "தமிழில் பேச தமிழ் என்று சொல்லுங்கள்.' "
+                                "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழில் பேச தமிழ் என்று சொல்லுங்கள். "
+                                "To speak in English, say English.' "
                                 "Do not add anything before or after it."
                                 )
                             )
