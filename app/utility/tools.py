@@ -54,7 +54,7 @@ class DatabaseTools:
             agent_id, customer_id = agent_ids()
             with connection() as db:
                 row = db.execute(
-                    """select name,company_name,system_prompt,greeting,voice,languages,tools,max_calls,version
+                    """select name,company_name,system_prompt,voice,languages,tools,max_calls,version
                        from portal_agents
                        where id=%s and customer_id=%s and status<>'archived'""",
                     (agent_id, customer_id),
@@ -64,7 +64,7 @@ class DatabaseTools:
             return {
                 "name": row["name"], "company_name": row["company_name"],
                 "instructions": row["system_prompt"],
-                "greeting": row["greeting"], "voice": row["voice"],
+                "voice": row["voice"],
                 "languages": row["languages"], "enabled_tools": row["tools"],
                 "max_calls": row["max_calls"], "version": row["version"],
             }
