@@ -75,7 +75,7 @@ class GeminiLivePipeline:
                             await session.send_realtime_input(
                                 text=(
                                 "Start the phone call now. Say exactly this language-selection greeting, "
-                                "with each option in its own language: 'Welcome to SLT-MOBITEL. "
+                                "with each option in its own language: 'SLT-MOBITEL වෙත සාදරයෙන් පිළිගනිමු. "
                                 "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழில் பேச தமிழ் என்று சொல்லுங்கள். "
                                 "To speak in English, say English.' "
                                 "Do not add anything before or after it."
