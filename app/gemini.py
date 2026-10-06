@@ -20,7 +20,7 @@ from app.utility.tools import CallContext, VOICE_TOOLS, DatabaseTools
 
 logger = logging.getLogger(__name__)
 
-GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
+GEMINI_LIVE_MODEL = "gemini-3.8-live"
 INPUT_RATE = 16_000
 OUTPUT_RATE = 24_000
 INPUT_CHUNK_BYTES = INPUT_RATE * 2 // 10  # 100 ms of mono PCM16.
@@ -117,7 +117,11 @@ class GeminiLivePipeline:
 
     def _session_config(self, agent_config: dict) -> dict:
         enabled = set(agent_config.get("enabled_tools", []))
-        declarations = [tool["function"] for tool in VOICE_TOOLS if tool["function"]["name"] in enabled]
+        declarations = [
+            {**tool["function"], "behavior": "BLOCKING"}
+            for tool in VOICE_TOOLS
+            if tool["function"]["name"] in enabled
+        ]
         config = {
             "response_modalities": ["AUDIO"],
             "system_instruction": (
