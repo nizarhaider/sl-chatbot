@@ -21,7 +21,7 @@ from app.utility.tools import CallContext, VOICE_TOOLS, DatabaseTools
 logger = logging.getLogger(__name__)
 
 GEMINI_LIVE_MODEL = "gemini-3.8-live"
-GREETING_TEMPLATE = "{company_name} වෙත සාදරයෙන් පිළිගනිමු. සිංහලෙන් කතා කිරීමට “සිංහල” කියන්න. தமிழில் பேச, “தமிழ்” என்று சொல்லுங்கள். To speak in English, say “English.”"
+GREETING_TEMPLATE = "ආයුබෝවන්. මම {agent_name}, {company_name} වෙතින් කතා කරන්නේ. ඔබට සිංහලෙන් කතා කිරීමට “සිංහල” කියන්න. දෙමළෙන් කතා කිරීමට “தமிழ்” කියන්න. ඉංග්‍රීසියෙන් කතා කිරීමට “English” කියන්න."
 INPUT_RATE = 16_000
 OUTPUT_RATE = 24_000
 INPUT_CHUNK_BYTES = INPUT_RATE * 2 // 10  # 100 ms of mono PCM16.
@@ -37,10 +37,11 @@ def serialize_usage_metadata(metadata) -> dict:
 
 
 def opening_greeting(agent_config: dict) -> str:
+    agent_name = agent_config["name"].strip()
     company_name = agent_config["company_name"].strip()
-    if not company_name:
-        raise RuntimeError("Set the company name in the portal")
-    return GREETING_TEMPLATE.format(company_name=company_name)
+    if not agent_name or not company_name:
+        raise RuntimeError("Set the agent and company names in the portal")
+    return GREETING_TEMPLATE.format(agent_name=agent_name, company_name=company_name)
 
 
 class GeminiLivePipeline:
