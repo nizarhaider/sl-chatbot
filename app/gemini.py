@@ -35,6 +35,14 @@ def serialize_usage_metadata(metadata) -> dict:
     return metadata.model_dump(mode="json", exclude_none=True)
 
 
+def opening_greeting(agent_config: dict) -> str:
+    company_name = agent_config["company_name"].strip()
+    greeting = agent_config["greeting"]
+    if not company_name or "{company_name}" not in greeting:
+        raise RuntimeError("Set the company name and use {company_name} in the opening greeting")
+    return greeting.replace("{company_name}", company_name)
+
+
 class GeminiLivePipeline:
     """Bridge one WhatsApp call to Gemini Live."""
 
@@ -47,6 +55,7 @@ class GeminiLivePipeline:
     async def prewarm_models(self) -> None:
         client = self._get_client()
         await self._tools.ensure_ready()
+        opening_greeting(await self._tools.agent_config())
         logger.info("Voice tool service ready")
         # Check model access before a caller reaches the webhook.
         async with client.aio.live.connect(
@@ -59,6 +68,7 @@ class GeminiLivePipeline:
         client = self._get_client()
         context = CallContext(call_id=call_id, caller_phone=caller_phone)
         agent_config = await self._tools.agent_config()
+        greeting = opening_greeting(agent_config)
         call_state.emit(call_id, "gemini_live.connecting", {"model": GEMINI_LIVE_MODEL})
         try:
             for attempt in range(1, LIVE_SESSION_ATTEMPTS + 1):
@@ -68,18 +78,9 @@ class GeminiLivePipeline:
                         config=self._session_config(agent_config),
                     ) as session:
                         call_state.emit(call_id, "gemini_live.connected", {"model": GEMINI_LIVE_MODEL, "attempt": attempt})
-                        # Gemini generates the opening from this Live input.
-                        if attempt == 1 and agent_config.get("greeting"):
-                            await session.send_realtime_input(text=f"Begin this phone call with exactly this greeting: {agent_config['greeting']}")
-                        elif attempt == 1:
+                        if attempt == 1:
                             await session.send_realtime_input(
-                                text=(
-                                "Start the phone call now. Say exactly this language-selection greeting, "
-                                "with each option in its own language: 'SLT-MOBITEL වෙත සාදරයෙන් පිළිගනිමු. "
-                                "සිංහලෙන් කතා කිරීමට සිංහල කියන්න. தமிழில் பேச தமிழ் என்று சொல்லுங்கள். "
-                                "To speak in English, say English.' "
-                                "Do not add anything before or after it."
-                                )
+                                text=f"Begin this phone call with exactly this greeting: {greeting}"
                             )
                         receive_task = asyncio.create_task(
                             self._receive(session, call_id, context, output_track),
