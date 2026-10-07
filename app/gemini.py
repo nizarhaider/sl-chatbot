@@ -20,7 +20,7 @@ from app.utility.tools import CallContext, VOICE_TOOLS, DatabaseTools
 
 logger = logging.getLogger(__name__)
 
-GEMINI_LIVE_MODEL = "gemini-3.8-live"
+GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
 GREETING_TEMPLATE = "ආයුබෝවන්. මම {agent_name}, {company_name} වෙතින් කතා කරන්නේ. ඔබට සිංහලෙන් කතා කිරීමට “සිංහල” කියන්න. දෙමළෙන් කතා කිරීමට “தமிழ்” කියන්න. ඉංග්‍රීසියෙන් කතා කිරීමට “English” කියන්න."
 INPUT_RATE = 16_000
 OUTPUT_RATE = 24_000
