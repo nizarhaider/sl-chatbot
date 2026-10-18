@@ -78,6 +78,11 @@ of this runtime before connecting the production tunnel.
 
 Transcripts: https://portal.serendibai.lk/dashboard
 
+Website demo calls require `PORTAL_DEMO_ENABLED=1` and
+`PORTAL_URL=https://portal.serendibai.lk` on the runtime, plus the same
+`DEMO_SIGNING_SECRET` on the runtime and portal. Outbound audio starts after
+WhatsApp reports that the recipient answered. Demo calls are capped at three minutes.
+
 The one live test downloads a private speech clip from the recordings bucket,
 sends it to Gemini Live, and requires a spoken response. Call recordings are
 archived to the same private bucket.

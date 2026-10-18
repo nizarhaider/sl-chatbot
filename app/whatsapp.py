@@ -190,6 +190,8 @@ async def receive_webhook(request: Request):
 async def _handle_change(value: dict) -> None:
     for status in value.get("statuses", []):
         logger.info("Received status update: %s", status)
+        if status.get("status") == "ACCEPTED":
+            webrtc_service.mark_answered(status.get("id"))
 
     for message in value.get("messages", []):
         logger.info(
@@ -231,6 +233,7 @@ class WebRTCService:
         self.pcs: dict[str, RTCPeerConnection] = {}
         self._caller_phones: dict[str, str] = {}
         self._demo_timers: dict[str, asyncio.TimerHandle] = {}
+        self._demo_answered: dict[str, asyncio.Event] = {}
 
     async def start_demo(self, demo_id: str, phone: str) -> str:
         pc = RTCPeerConnection(configuration=_rtc_configuration())
@@ -239,6 +242,7 @@ class WebRTCService:
         try:
             await pc.setLocalDescription(await pc.createOffer())
             call_id = await whatsapp_api.create_call(phone, pc.localDescription.sdp, demo_id)
+            self._demo_answered[call_id] = asyncio.Event()
             self._register_peer(call_id, phone, pc, output_track)
             self._demo_timers[call_id] = asyncio.get_running_loop().call_later(
                 180, lambda: asyncio.create_task(self.end_demo(call_id)),
@@ -252,6 +256,11 @@ class WebRTCService:
     async def end_demo(self, call_id: str) -> None:
         await whatsapp_api.send_call_action(call_id, "terminate")
         await self.close_call(call_id)
+
+    def mark_answered(self, call_id: str) -> None:
+        answered = self._demo_answered.get(call_id)
+        if answered:
+            answered.set()
 
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = "") -> None:
         if call_id in self.pcs:
@@ -304,8 +313,17 @@ class WebRTCService:
             phone = self._caller_phones.get(call_id, "")
             logger.info("Received audio track from WhatsApp for %s (caller: %s)", call_id, phone)
             call_state.emit(call_id, "webrtc.audio_track", {"caller_phone": phone})
-            call_state.mark_call_active(call_id, phone)
-            asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
+            answered = self._demo_answered.get(call_id)
+
+            async def process_track():
+                if answered:
+                    await answered.wait()
+                if call_id not in self.pcs:
+                    return
+                call_state.mark_call_active(call_id, phone)
+                await voice_agent.process_audio(call_id, phone, track, output_track)
+
+            asyncio.create_task(process_track())
 
     async def close_call(self, call_id: str, close_peer: bool = True) -> None:
         timer = self._demo_timers.pop(call_id, None)
@@ -313,6 +331,8 @@ class WebRTCService:
             timer.cancel()
         self._caller_phones.pop(call_id, None)
         pc = self.pcs.pop(call_id, None)
+        self.mark_answered(call_id)
+        self._demo_answered.pop(call_id, None)
         await voice_agent.cancel_call(call_id)
         call_state.end_call(call_id)
         if close_peer and pc is not None:
