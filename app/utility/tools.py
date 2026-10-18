@@ -257,6 +257,18 @@ def _phone_number_id() -> str | None:
 
 class WhatsAppAPI:
     @staticmethod
+    async def create_call(phone: str, sdp: str, demo_id: str) -> str:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/calls",
+                headers={"Authorization": f"Bearer {_whatsapp_access_token()}"},
+                json={"messaging_product": "whatsapp", "to": phone, "action": "connect",
+                      "session": {"sdp_type": "offer", "sdp": sdp}, "biz_opaque_callback_data": demo_id},
+            )
+            response.raise_for_status()
+            return response.json()["calls"][0]["id"]
+
+    @staticmethod
     async def send_call_action(call_id: str, action: str, session: dict | None = None) -> bool:
         access_token = _whatsapp_access_token()
         phone_number_id = _phone_number_id()

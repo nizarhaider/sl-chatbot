@@ -1,7 +1,13 @@
 import asyncio
+import hashlib
 import hmac
+import json
 import logging
 import os
+import re
+import time
+
+import httpx
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 from contextlib import asynccontextmanager
@@ -11,7 +17,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 
 from app.gemini import RealtimeAudioTrack, voice_agent
 from app.utility.helper import call_state
-from app.utility.tools import whatsapp_api
+from app.utility.tools import connection, whatsapp_api
 
 
 def configure_logging() -> None:
@@ -82,6 +88,59 @@ router = APIRouter()
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secure_verify_token_123")
 
 
+@router.post("/demo/call")
+async def demo_call(request: Request):
+    secret = os.environ.get("DEMO_SIGNING_SECRET")
+    if os.environ.get("PORTAL_DEMO_ENABLED") != "1" or not secret:
+        raise HTTPException(status_code=404, detail="Demo calling is disabled")
+    body = await request.body()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, request.headers.get("x-demo-signature", "")):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+    data = json.loads(body)
+    if not re.fullmatch(r"[a-f0-9]{32}", data.get("id", "")) or abs(time.time() - data.get("timestamp", 0)) > 60:
+        raise HTTPException(status_code=400, detail="Invalid demo request")
+    if not request.app.state.voice_ready or len(webrtc_service.pcs) >= int(os.environ.get("MAX_CALLS", "20")):
+        raise HTTPException(status_code=503, detail="Voice agent unavailable")
+    with connection() as db:
+        claimed = db.execute(
+            "update portal_demo_requests set call_id='pending' where id=%s and phone=%s and state='calling' and call_id is null and expires_at>now() returning id",
+            (data["id"], data.get("phone")),
+        ).fetchone()
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Demo already handled or expired")
+    try:
+        call_id = await webrtc_service.start_demo(data["id"], data["phone"])
+        with connection() as db:
+            db.execute("update portal_demo_requests set call_id=%s where id=%s", (call_id, data["id"]))
+        return {"call_id": call_id}
+    except Exception:
+        with connection() as db:
+            db.execute("update portal_demo_requests set state='failed',call_id=null where id=%s", (data["id"],))
+        logger.exception("Could not start demo call")
+        raise HTTPException(status_code=502, detail="WhatsApp could not start the call")
+
+
+async def relay_demo_events(body: dict) -> None:
+    secret = os.environ.get("DEMO_SIGNING_SECRET")
+    if os.environ.get("PORTAL_DEMO_ENABLED") != "1" or not secret:
+        return
+    if not any(
+        value.get("messages") or value.get("statuses") or any(call.get("event") == "terminate" for call in value.get("calls", []))
+        for entry in body.get("entry", []) for change in entry.get("changes", [])
+        for value in [change.get("value", {})]
+    ):
+        return
+    payload = json.dumps(body).encode()
+    signature = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    async with httpx.AsyncClient(timeout=35) as client:
+        response = await client.post(
+            f"{os.environ['PORTAL_URL']}/api/demo/webhook", content=payload,
+            headers={"Content-Type": "application/json", "x-demo-signature": signature},
+        )
+        response.raise_for_status()
+
+
 @router.get("/webhook")
 async def verify_webhook(request: Request):
     mode = request.query_params.get("hub.mode")
@@ -121,6 +180,7 @@ async def receive_webhook(request: Request):
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
                 await _handle_change(change.get("value", {}))
+        await relay_demo_events(body)
         return Response(content="EVENT_RECEIVED", status_code=200)
     except Exception as exc:
         logger.error("Error processing webhook: %s", exc, exc_info=True)
@@ -154,7 +214,9 @@ async def _handle_call_event(call: dict) -> None:
 
     if event == "connect":
         session = call.get("session", {})
-        if session.get("sdp_type") == "offer":
+        if session.get("sdp_type") == "answer" and call_id in webrtc_service.pcs:
+            await webrtc_service.pcs[call_id].setRemoteDescription(RTCSessionDescription(sdp=session["sdp"], type="answer"))
+        elif session.get("sdp_type") == "offer":
             logger.info("Processing SDP Offer for %s", call_id)
             asyncio.create_task(
                 webrtc_service.handle_offer(call_id, session.get("sdp", ""), caller_phone)
@@ -168,6 +230,28 @@ class WebRTCService:
     def __init__(self) -> None:
         self.pcs: dict[str, RTCPeerConnection] = {}
         self._caller_phones: dict[str, str] = {}
+        self._demo_timers: dict[str, asyncio.TimerHandle] = {}
+
+    async def start_demo(self, demo_id: str, phone: str) -> str:
+        pc = RTCPeerConnection(configuration=_rtc_configuration())
+        output_track = RealtimeAudioTrack()
+        pc.addTrack(output_track)
+        try:
+            await pc.setLocalDescription(await pc.createOffer())
+            call_id = await whatsapp_api.create_call(phone, pc.localDescription.sdp, demo_id)
+            self._register_peer(call_id, phone, pc, output_track)
+            self._demo_timers[call_id] = asyncio.get_running_loop().call_later(
+                180, lambda: asyncio.create_task(self.end_demo(call_id)),
+            )
+            call_state.emit(call_id, "whatsapp.demo_dialing", {"demo_id": demo_id})
+            return call_id
+        except Exception:
+            await pc.close()
+            raise
+
+    async def end_demo(self, call_id: str) -> None:
+        await whatsapp_api.send_call_action(call_id, "terminate")
+        await self.close_call(call_id)
 
     async def handle_offer(self, call_id: str, sdp_offer: str, caller_phone: str = "") -> None:
         if call_id in self.pcs:
@@ -176,30 +260,10 @@ class WebRTCService:
             await whatsapp_api.send_call_action(call_id, "reject")
             return
         await self.close_call(call_id)
-        self._caller_phones[call_id] = caller_phone
-        call_state.start_call(call_id, caller_phone)
-
         pc = RTCPeerConnection(configuration=_rtc_configuration())
-        self.pcs[call_id] = pc
         output_track = RealtimeAudioTrack()
         pc.addTrack(output_track)
-
-        @pc.on("connectionstatechange")
-        async def on_connectionstatechange() -> None:
-            logger.info("Connection state for %s is %s", call_id, pc.connectionState)
-            call_state.emit(call_id, "webrtc.connection_state", {"state": pc.connectionState})
-            if pc.connectionState in ["failed", "closed", "disconnected"]:
-                await self.close_call(call_id, close_peer=pc.connectionState != "closed")
-
-        @pc.on("track")
-        def on_track(track) -> None:
-            if track.kind != "audio":
-                return
-            phone = self._caller_phones.get(call_id, "")
-            logger.info("Received audio track from WhatsApp for %s (caller: %s)", call_id, phone)
-            call_state.emit(call_id, "webrtc.audio_track", {"caller_phone": phone})
-            call_state.mark_call_active(call_id, phone)
-            asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
+        self._register_peer(call_id, caller_phone, pc, output_track)
 
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")
         logger.info("Incoming audio SDP for %s: %s", call_id, _summarize_audio_sdp(sdp_offer))
@@ -221,7 +285,32 @@ class WebRTCService:
         await whatsapp_api.send_call_action(call_id, "accept", session=session)
         call_state.emit(call_id, "whatsapp.accept_sent", {})
 
+    def _register_peer(self, call_id: str, caller_phone: str, pc, output_track) -> None:
+        self._caller_phones[call_id] = caller_phone
+        self.pcs[call_id] = pc
+        call_state.start_call(call_id, caller_phone)
+
+        @pc.on("connectionstatechange")
+        async def on_connectionstatechange() -> None:
+            logger.info("Connection state for %s is %s", call_id, pc.connectionState)
+            call_state.emit(call_id, "webrtc.connection_state", {"state": pc.connectionState})
+            if pc.connectionState in ["failed", "closed", "disconnected"]:
+                await self.close_call(call_id, close_peer=pc.connectionState != "closed")
+
+        @pc.on("track")
+        def on_track(track) -> None:
+            if track.kind != "audio":
+                return
+            phone = self._caller_phones.get(call_id, "")
+            logger.info("Received audio track from WhatsApp for %s (caller: %s)", call_id, phone)
+            call_state.emit(call_id, "webrtc.audio_track", {"caller_phone": phone})
+            call_state.mark_call_active(call_id, phone)
+            asyncio.create_task(voice_agent.process_audio(call_id, phone, track, output_track))
+
     async def close_call(self, call_id: str, close_peer: bool = True) -> None:
+        timer = self._demo_timers.pop(call_id, None)
+        if timer:
+            timer.cancel()
         self._caller_phones.pop(call_id, None)
         pc = self.pcs.pop(call_id, None)
         await voice_agent.cancel_call(call_id)
