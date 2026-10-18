@@ -9,7 +9,7 @@ if [[ "${1:-}" != "--env" || $# -ne 2 ]]; then
 fi
 
 case "$2" in
-  local)
+  local|remote)
     command -v uv >/dev/null || { echo "Install uv first." >&2; exit 1; }
     command -v cloudflared >/dev/null || { echo "Install cloudflared first." >&2; exit 1; }
     command -v ffmpeg >/dev/null || { echo "Install ffmpeg first." >&2; exit 1; }
@@ -37,14 +37,10 @@ with psycopg.connect(os.environ["DATABASE_URL"]) as db:
 os.environ["VOICE_AGENT_ID"] = str(agent[0])
 os.environ["VOICE_CUSTOMER_ID"] = str(agent[1])
 os.environ["MAX_CALLS"] = str(agent[2])
-print("Starting local voice server for agent", agent[0], flush=True)
+print("Starting voice server for agent", agent[0], flush=True)
 from app.utility.helper import run_runtime
 run_runtime()
 PY
-    ;;
-  remote)
-    echo "Remote deployment is not configured yet." >&2
-    exit 1
     ;;
   *)
     echo "Usage: ./deploy.sh --env local|remote" >&2

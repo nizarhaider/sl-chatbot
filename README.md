@@ -18,7 +18,7 @@ then listens and responds in the selected language using its native audio voice.
 There is no local ASR, LLM, TTS, CUDA model download, or prerecorded greeting.
 
 `app/whatsapp.py` serves the webhook and WebRTC. `app/gemini.py` handles Live
-audio. `app/utility/helper.py` handles call state, recording, and local runtime
+audio. `app/utility/helper.py` handles call state, recording, and runtime
 startup. `app/utility/tools.py` handles Neon queries and the Meta API client.
 
 ## Configuration
@@ -48,8 +48,35 @@ From the repository root, run:
 ```
 
 The local mode serves the WhatsApp webhook through the Cloudflare tunnel.
-Keep the Mac awake and the process running to
-receive calls. `--env remote` is reserved for a future server provider.
+Keep the Mac awake and the process running to receive calls.
+
+### AWS server
+
+The remote runtime runs on an Ubuntu ARM64 EC2 `t4g.small` in Mumbai
+(`ap-south-1`), instance `i-0706865fb7080934b`, with an encrypted 8 GiB gp3 disk.
+CPU credits use Standard mode
+to avoid surplus credit charges. SSH is restricted to the operator's IP;
+UDP ports 32768–60999 carry WebRTC audio. The webhook uses the existing
+Cloudflare Tunnel at `https://whatsapp.serendibai.lk/webhook`.
+
+Install Python 3.12, uv, ffmpeg, and cloudflared, then place this repository in
+`/opt/serendibai/voice-agent`, owned by `ubuntu`. Copy the runtime's required
+settings into `.env` with permissions `600`. Use the EC2 recording-storage
+role instead of AWS access keys.
+
+```bash
+sudo cp voice-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now voice-agent
+sudo systemctl status voice-agent
+sudo journalctl -u voice-agent -n 50 --no-pager
+```
+
+Run `sudo systemctl restart voice-agent` after uploading a new version.
+The service starts on boot and restarts after failures. Stop other copies
+of this runtime before connecting the production tunnel.
+
+Transcripts: https://portal.serendibai.lk/dashboard
 
 The one live test downloads a private speech clip from the recordings bucket,
 sends it to Gemini Live, and requires a spoken response. Call recordings are
