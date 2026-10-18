@@ -22,19 +22,27 @@ async def _check_recording():
     client = genai.Client()
     async with client.aio.live.connect(
         model=GEMINI_LIVE_MODEL,
-        config={"response_modalities": ["AUDIO"], "system_instruction": "Listen to this recording and reply with one short spoken sentence."},
+        config={
+            "response_modalities": ["AUDIO"],
+            "system_instruction": "Listen to this recording and reply with one short spoken sentence.",
+            "realtime_input_config": {"automatic_activity_detection": {"disabled": True}},
+        },
     ) as session:
         async def exchange():
+            await session.send_realtime_input(activity_start=types.ActivityStart())
             for offset in range(0, len(audio), 3200):
                 await session.send_realtime_input(audio=types.Blob(data=audio[offset:offset + 3200], mime_type="audio/pcm;rate=16000"))
                 await asyncio.sleep(0.1)
-            await session.send_realtime_input(audio_stream_end=True)
+            await session.send_realtime_input(activity_end=types.ActivityEnd())
+            response_audio = bytearray()
             async for response in session.receive():
                 content = response.server_content
                 if content and content.model_turn:
                     for part in content.model_turn.parts or []:
                         if part.inline_data and part.inline_data.data:
-                            return
+                            response_audio.extend(part.inline_data.data)
+                            if len(response_audio) >= 4800:
+                                return
             raise AssertionError("Gemini Live did not return audio")
 
         await asyncio.wait_for(exchange(), timeout=90)
