@@ -76,6 +76,10 @@ Run `sudo systemctl restart voice-agent` after uploading a new version.
 The service starts on boot and restarts after failures. Stop other copies
 of this runtime before connecting the production tunnel.
 
+Set `VOICE_AGENT_ID` in `.env` to pin a server to one customer's agent. Startup
+checks that this agent owns the configured `PHONE_NUMBER_ID` and derives its
+customer ID from Neon. Customer feature limits are checked on every tool execution.
+
 Transcripts: https://portal.serendibai.lk/dashboard
 
 Website demo calls require `PORTAL_DEMO_ENABLED=1` and

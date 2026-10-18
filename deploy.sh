@@ -24,8 +24,8 @@ from dotenv import load_dotenv
 load_dotenv(".env")
 with psycopg.connect(os.environ["DATABASE_URL"]) as db:
     agent = db.execute(
-        "select id,customer_id,max_calls from portal_agents where phone_number_id=%s and status<>'archived' order by updated_at desc limit 1",
-        (os.environ["PHONE_NUMBER_ID"],),
+        "select id,customer_id,max_calls from portal_agents where phone_number_id=%s and status<>'archived' and (%s::uuid is null or id=%s::uuid) order by updated_at desc limit 1",
+        (os.environ["PHONE_NUMBER_ID"], os.environ.get("VOICE_AGENT_ID"), os.environ.get("VOICE_AGENT_ID")),
     ).fetchone()
     if agent is None:
         raise SystemExit("No voice agent matches PHONE_NUMBER_ID in Neon.")

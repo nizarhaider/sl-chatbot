@@ -54,9 +54,9 @@ class DatabaseTools:
             agent_id, customer_id = agent_ids()
             with connection() as db:
                 row = db.execute(
-                    """select name,company_name,system_prompt,voice,languages,tools,max_calls,version
-                       from portal_agents
-                       where id=%s and customer_id=%s and status<>'archived'""",
+                    """select a.name,a.company_name,a.system_prompt,a.voice,a.languages,a.tools,a.max_calls,a.version,c.portal_tools
+                       from portal_agents a join customers c on c.id=a.customer_id
+                       where a.id=%s and a.customer_id=%s and a.status<>'archived'""",
                     (agent_id, customer_id),
                 ).fetchone()
             if row is None:
@@ -65,7 +65,7 @@ class DatabaseTools:
                 "name": row["name"], "company_name": row["company_name"],
                 "instructions": row["system_prompt"],
                 "voice": row["voice"],
-                "languages": row["languages"], "enabled_tools": row["tools"],
+                "languages": row["languages"], "enabled_tools": [tool for tool in row["tools"] if tool in row["portal_tools"]],
                 "max_calls": row["max_calls"], "version": row["version"],
             }
         return await asyncio.to_thread(load)
