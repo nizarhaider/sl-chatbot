@@ -32,7 +32,9 @@ def test_case_routing_is_verified_once_and_tenant_scoped(monkeypatch):
                 assert asyncio.run(tools.claim_case("repeat", phone)) is None
                 config = asyncio.run(tools.DatabaseTools().agent_config(context))
                 assert config["is_case"]
-                assert "AI " + case["slug"] + " assistant at " + config["company_name"] in opening_greeting(config)
+                assert config["company_name"] in opening_greeting(config)
+                assert "demo" not in opening_greeting(config).lower()
+                assert config["voice"] == "Aoede"
                 if case["slug"] == "marketing":
                     assert "You left your number" in opening_greeting(config)
                     assert "How can I help" not in opening_greeting(config)

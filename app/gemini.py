@@ -44,8 +44,8 @@ def opening_greeting(agent_config: dict) -> str:
         raise RuntimeError("Set the agent and company names in the portal")
     if agent_config.get("is_case"):
         if agent_config["case_slug"] == "marketing":
-            return f"Hi, I'm {agent_name}, the AI marketing assistant at {company_name}. This demo call is recorded. You left your number with one of our agents about a vacation package. Is now a good time to talk?"
-        return f"Hi, I'm {agent_name}, the AI {agent_config['case_slug']} assistant at {company_name}. This demo call is recorded. How can I help you today?"
+            return f"Hi, this is {agent_name} from {company_name}. You left your number with one of our agents about a vacation package. Is now a good time to talk?"
+        return f"Hello, {company_name}, {agent_name} speaking. How can I help you?"
     return GREETING_TEMPLATE.format(agent_name=agent_name, company_name=company_name)
 
 
@@ -139,7 +139,7 @@ class GeminiLivePipeline:
                 agent_config.get("instructions", "")
                 + f"\nToday is {datetime.now(ZoneInfo('Asia/Colombo')).date().isoformat()}. "
                 + f"Supported languages: {', '.join(agent_config.get('languages', ['English']))}. "
-                + "Before addressing the customer make sure to check with them if your pronounciation is correct of their name."
+                + ("" if agent_config.get("is_case") else "Before addressing the customer make sure to check with them if your pronounciation is correct of their name.")
                 + "Speak naturally and concisely. Listen to each caller turn. Use enabled tools for current business facts. "
                 + "When speaking English, use a natural Sri Lankan English accent with local pronunciation and rhythm, while staying clear and professional. "
                 + "Speak at a slightly brisker conversational pace in every language, with shorter pauses while keeping every word clear. "
@@ -159,6 +159,8 @@ class GeminiLivePipeline:
                 "activity_handling": "START_OF_ACTIVITY_INTERRUPTS",
             },
         }
+        if agent_config.get("is_case"):
+            config["system_instruction"] += " Perform every spoken turn as a native Sri Lankan woman speaking English as heard in Colombo, with natural Sinhala-influenced vowels and Sri Lankan English cadence. Keep the Aoede female timbre and this local accent consistent from the first hello; avoid drifting into American or British pronunciation. Use an everyday, warm business-phone delivery, not a polished international announcer voice or a caricature. Pronounce Bambalapitiya naturally as බම්බලපිටිය. Speak normal business dialogue without announcing demo, simulation, recording or role-play. If asked about being AI or this being a staged business, answer honestly."
         if declarations:
             config["tools"] = [{"function_declarations": declarations}]
         return config
