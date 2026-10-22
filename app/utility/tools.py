@@ -58,7 +58,7 @@ class DatabaseTools:
             with connection() as db:
                 row = db.execute(
                     """select a.name,a.company_name,a.system_prompt,a.voice,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
-                              exists(select 1 from portal_agent_cases where agent_id=a.id) as is_case
+                              (select slug from portal_agent_cases where agent_id=a.id) as case_slug
                        from portal_agents a join customers c on c.id=a.customer_id
                        where a.id=%s and a.customer_id=%s and a.status<>'archived'""",
                     (agent_id, customer_id),
@@ -71,7 +71,7 @@ class DatabaseTools:
                 "voice": row["voice"],
                 "languages": row["languages"], "enabled_tools": [*STANDARD_TOOLS, *(tool for tool in row["tools"] if tool in row["portal_tools"])],
                 "max_calls": row["max_calls"], "version": row["version"],
-                "is_case": row["is_case"],
+                "is_case": bool(row["case_slug"]), "case_slug": row["case_slug"],
             }
         return await asyncio.to_thread(load)
 
