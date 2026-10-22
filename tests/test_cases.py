@@ -33,6 +33,12 @@ def test_case_routing_is_verified_once_and_tenant_scoped(monkeypatch):
                 config = asyncio.run(tools.DatabaseTools().agent_config(context))
                 assert config["is_case"]
                 assert "AI " + case["slug"] + " assistant at " + config["company_name"] in opening_greeting(config)
+                if case["slug"] == "marketing":
+                    assert "You left your number" in opening_greeting(config)
+                    assert "How can I help" not in opening_greeting(config)
+                if case["slug"] == "support":
+                    order = asyncio.run(tools.DatabaseTools().execute("search_knowledge", {"query": "WL-1042"}, context))
+                    assert order["ok"] and any("https://portal.serendibai.lk/cases/order/WL-1042" in row["content"] for row in order["results"])
                 assert config["enabled_tools"]
                 result = asyncio.run(tools.DatabaseTools().execute("create_ticket", {"customer_name": "Demo Caller", "subject": "Routing test", "description": "Transactional test record"}, context))
                 assert result["ok"]

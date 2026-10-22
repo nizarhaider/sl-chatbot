@@ -43,6 +43,8 @@ def opening_greeting(agent_config: dict) -> str:
     if not agent_name or not company_name:
         raise RuntimeError("Set the agent and company names in the portal")
     if agent_config.get("is_case"):
+        if agent_config["case_slug"] == "marketing":
+            return f"Hi, I'm {agent_name}, the AI marketing assistant at {company_name}. This demo call is recorded. You left your number with one of our agents about a vacation package. Is now a good time to talk?"
         return f"Hi, I'm {agent_name}, the AI {agent_config['case_slug']} assistant at {company_name}. This demo call is recorded. How can I help you today?"
     return GREETING_TEMPLATE.format(agent_name=agent_name, company_name=company_name)
 
