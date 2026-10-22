@@ -26,6 +26,8 @@ def agent_ids():
 class CallContext:
     call_id: str
     caller_phone: str
+    agent_id: str = ""
+    customer_id: str = ""
 
 VOICE_TOOLS = [
     {"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
@@ -50,12 +52,13 @@ class DatabaseTools:
     async def ensure_ready(self):
         await self.agent_config()
 
-    async def agent_config(self):
+    async def agent_config(self, context=None):
         def load():
-            agent_id, customer_id = agent_ids()
+            agent_id, customer_id = (context.agent_id, context.customer_id) if context and context.agent_id else agent_ids()
             with connection() as db:
                 row = db.execute(
-                    """select a.name,a.company_name,a.system_prompt,a.voice,a.languages,a.tools,a.max_calls,a.version,c.portal_tools
+                    """select a.name,a.company_name,a.system_prompt,a.voice,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
+                              exists(select 1 from portal_agent_cases where agent_id=a.id) as is_case
                        from portal_agents a join customers c on c.id=a.customer_id
                        where a.id=%s and a.customer_id=%s and a.status<>'archived'""",
                     (agent_id, customer_id),
@@ -68,11 +71,12 @@ class DatabaseTools:
                 "voice": row["voice"],
                 "languages": row["languages"], "enabled_tools": [*STANDARD_TOOLS, *(tool for tool in row["tools"] if tool in row["portal_tools"])],
                 "max_calls": row["max_calls"], "version": row["version"],
+                "is_case": row["is_case"],
             }
         return await asyncio.to_thread(load)
 
     async def execute(self, name, arguments, context):
-        config = await self.agent_config()
+        config = await self.agent_config(context)
         if name not in config["enabled_tools"]:
             return {"ok": False, "error": "This tool is disabled."}
         if name == "send_whatsapp_message":
@@ -87,7 +91,7 @@ class DatabaseTools:
             return {"ok": False, "error": "The service is temporarily unavailable."}
 
     def _execute(self, name, arguments, context):
-        agent_id, customer_id = agent_ids()
+        agent_id, customer_id = (context.agent_id, context.customer_id) if context.agent_id else agent_ids()
         with connection() as db:
             if name in ("search_knowledge", "search_products"):
                 query = str(arguments.get("query", ""))[:500]
@@ -201,7 +205,7 @@ class DatabaseTools:
 
 class CallStore:
     def save_call(self, call):
-        agent_id, customer_id = agent_ids()
+        agent_id, customer_id = (call["agent_id"], call["customer_id"]) if call.get("agent_id") else agent_ids()
         events = call.get("events", [])
         usage_events = [event for event in events if event.get("kind") == "gemini_live.usage"]
         tokens = sum(event["data"].get("total_tokens", 0) for event in usage_events) if usage_events else None
@@ -243,6 +247,35 @@ def normalize_phone_number(value: str) -> str:
     if digits.startswith("0") and len(digits) == 10:
         digits = "94" + digits[1:]
     return digits if len(digits) >= 10 else ""
+
+
+async def confirm_case(phone: str, token: str):
+    def confirm():
+        with connection() as db:
+            return db.execute(
+                """update portal_case_requests q set state='active',expires_at=now()+interval '10 minutes'
+                   from portal_agent_cases c where q.id=%s and q.phone=%s and q.case_slug=c.slug
+                   and q.runtime_agent_id=%s and q.state='pending' and q.expires_at>now()
+                   returning c.title""",
+                (token, normalize_phone_number(phone), os.environ["VOICE_AGENT_ID"]),
+            ).fetchone()
+    return await asyncio.to_thread(confirm)
+
+
+async def claim_case(call_id: str, phone: str):
+    def claim():
+        with connection() as db:
+            row = db.execute(
+                """update portal_case_requests q set state='consumed',call_id=%s
+                   from portal_agent_cases c join portal_agents a on a.id=c.agent_id
+                   where q.case_slug=c.slug and q.runtime_agent_id=c.runtime_agent_id
+                   and q.runtime_agent_id=%s and q.phone=%s and q.state='active'
+                   and q.expires_at>now() and a.status<>'archived'
+                   returning a.id,a.customer_id""",
+                (call_id, os.environ["VOICE_AGENT_ID"], normalize_phone_number(phone)),
+            ).fetchone()
+            return CallContext(call_id, phone, str(row["id"]), str(row["customer_id"])) if row else None
+    return await asyncio.to_thread(claim)
 
 
 GRAPH_API_VERSION = "v25.0"

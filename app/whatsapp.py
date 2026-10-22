@@ -17,7 +17,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 
 from app.gemini import RealtimeAudioTrack, voice_agent
 from app.utility.helper import call_state
-from app.utility.tools import connection, whatsapp_api
+from app.utility.tools import claim_case, confirm_case, connection, whatsapp_api
 
 
 def configure_logging() -> None:
@@ -194,6 +194,12 @@ async def _handle_change(value: dict) -> None:
             webrtc_service.mark_answered(status.get("id"))
 
     for message in value.get("messages", []):
+        token = re.fullmatch(r"CASE ([a-f0-9]{32})", message.get("text", {}).get("body", "").strip(), re.IGNORECASE)
+        if token:
+            selected = await confirm_case(message.get("from", ""), token[1].lower())
+            if selected:
+                await whatsapp_api.send_text_message(message["from"], f"Your {selected['title']} demo is ready. Tap the voice call button in this chat within ten minutes. This AI demo call will be recorded and transcribed. Use fictional details.")
+            continue
         logger.info(
             "Ignoring unsupported WhatsApp message type: type=%s from=%s",
             message.get("type"),
@@ -269,10 +275,15 @@ class WebRTCService:
             await whatsapp_api.send_call_action(call_id, "reject")
             return
         await self.close_call(call_id)
+        context = await claim_case(call_id, caller_phone)
         pc = RTCPeerConnection(configuration=_rtc_configuration())
         output_track = RealtimeAudioTrack()
         pc.addTrack(output_track)
-        self._register_peer(call_id, caller_phone, pc, output_track)
+        self._register_peer(call_id, caller_phone, pc, output_track, context)
+        if context:
+            self._demo_timers[call_id] = asyncio.get_running_loop().call_later(
+                300, lambda: asyncio.create_task(self.end_demo(call_id)),
+            )
 
         offer = RTCSessionDescription(sdp=sdp_offer, type="offer")
         logger.info("Incoming audio SDP for %s: %s", call_id, _summarize_audio_sdp(sdp_offer))
@@ -294,10 +305,10 @@ class WebRTCService:
         await whatsapp_api.send_call_action(call_id, "accept", session=session)
         call_state.emit(call_id, "whatsapp.accept_sent", {})
 
-    def _register_peer(self, call_id: str, caller_phone: str, pc, output_track) -> None:
+    def _register_peer(self, call_id: str, caller_phone: str, pc, output_track, context=None) -> None:
         self._caller_phones[call_id] = caller_phone
         self.pcs[call_id] = pc
-        call_state.start_call(call_id, caller_phone)
+        call_state.start_call(call_id, caller_phone, context)
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
@@ -321,7 +332,7 @@ class WebRTCService:
                 if call_id not in self.pcs:
                     return
                 call_state.mark_call_active(call_id, phone)
-                await voice_agent.process_audio(call_id, phone, track, output_track)
+                await voice_agent.process_audio(call_id, phone, track, output_track, context)
 
             asyncio.create_task(process_track())
 

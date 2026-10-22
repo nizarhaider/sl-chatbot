@@ -42,6 +42,8 @@ def opening_greeting(agent_config: dict) -> str:
     company_name = agent_config["company_name"].strip()
     if not agent_name or not company_name:
         raise RuntimeError("Set the agent and company names in the portal")
+    if agent_config.get("is_case"):
+        return f"Hi, I'm {agent_name}, SerendibAI's AI {company_name} demo. This call is recorded. How can I help you today?"
     return GREETING_TEMPLATE.format(agent_name=agent_name, company_name=company_name)
 
 
@@ -66,10 +68,10 @@ class GeminiLivePipeline:
         ):
             logger.info("Gemini Live prewarm connection established")
 
-    async def run(self, call_id, caller_phone, input_track, output_track, recorder: CallAudioRecorder):
+    async def run(self, call_id, caller_phone, input_track, output_track, recorder: CallAudioRecorder, context=None):
         client = self._get_client()
-        context = CallContext(call_id=call_id, caller_phone=caller_phone)
-        agent_config = await self._tools.agent_config()
+        context = context or CallContext(call_id=call_id, caller_phone=caller_phone)
+        agent_config = await self._tools.agent_config(context)
         greeting = opening_greeting(agent_config)
         awaiting_caller = asyncio.Event()
         check_in_sent = asyncio.Event()
@@ -481,10 +483,11 @@ class VoiceAgent:
         caller_phone: str,
         input_track: MediaStreamTrack,
         output_track: RealtimeAudioTrack,
+        context=None,
     ):
         await self.cancel_call(call_id)
         task = asyncio.create_task(
-            self._run_turn_pipeline(call_id, caller_phone, input_track, output_track),
+            self._run_turn_pipeline(call_id, caller_phone, input_track, output_track, context),
             name=f"call-{call_id}",
         )
         self.active_calls[call_id] = task
@@ -515,7 +518,7 @@ class VoiceAgent:
         if output_track is not None:
             output_track.clear_buffer()
 
-    async def _run_turn_pipeline(self, call_id, caller_phone, input_track, output_track):
+    async def _run_turn_pipeline(self, call_id, caller_phone, input_track, output_track, context=None):
         recorder = CallAudioRecorder()
         output_track.set_recording_callback(recorder.add_agent_pcm)
         try:
@@ -525,6 +528,7 @@ class VoiceAgent:
                 input_track=input_track,
                 output_track=output_track,
                 recorder=recorder,
+                context=context,
             )
         except asyncio.CancelledError:
             logger.info("Gemini Live pipeline cancelled for %s", call_id)

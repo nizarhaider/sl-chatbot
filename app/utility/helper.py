@@ -63,6 +63,8 @@ class TranscriptEvent:
 class LiveCall:
     call_id: str
     caller_phone: str
+    agent_id: str = ""
+    customer_id: str = ""
     status: str = "connecting"
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -74,6 +76,8 @@ class LiveCall:
         return {
             "call_id": self.call_id,
             "caller_phone": self.caller_phone,
+            "agent_id": self.agent_id,
+            "customer_id": self.customer_id,
             "status": self.status,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
@@ -90,8 +94,9 @@ class CallState:
         self._write_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="neon-call-writer") if self._call_store else None
         self._calls: dict[str, LiveCall] = {}
 
-    def start_call(self, call_id: str, caller_phone: str = "") -> None:
-        self._calls[call_id] = LiveCall(call_id=call_id, caller_phone=caller_phone)
+    def start_call(self, call_id: str, caller_phone: str = "", context=None) -> None:
+        self._calls[call_id] = LiveCall(call_id=call_id, caller_phone=caller_phone,
+            agent_id=context.agent_id if context else "", customer_id=context.customer_id if context else "")
         self.emit(call_id, "call.connected", {"caller_phone": caller_phone})
         self._persist(self._calls[call_id])
 
@@ -306,6 +311,7 @@ def run_runtime():
             try:
                 status = "error" if getattr(app.state, "voice_startup_error", "") else "ready" if getattr(app.state, "voice_ready", False) else "warming_up"
                 telemetry = {
+                    "case_routing": True,
                     "active_calls": len(voice_agent.active_calls),
                     "cpu_percent": psutil.cpu_percent(),
                     "memory_mb": round(process.memory_info().rss / 1048576, 1),
