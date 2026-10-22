@@ -17,7 +17,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 
 from app.gemini import RealtimeAudioTrack, voice_agent
 from app.utility.helper import call_state
-from app.utility.tools import claim_case, confirm_case, connection, whatsapp_api
+from app.utility.tools import CallContext, claim_case, confirm_case, connection, whatsapp_api
 
 
 def configure_logging() -> None:
@@ -121,6 +121,32 @@ async def demo_call(request: Request):
         raise HTTPException(status_code=502, detail="WhatsApp could not start the call")
 
 
+@router.post("/cases/call")
+async def case_call(request: Request):
+    secret = os.environ.get("DEMO_SIGNING_SECRET")
+    if not secret or os.environ.get("PORTAL_DEMO_ENABLED") != "1":
+        raise HTTPException(status_code=404, detail="Demo calling is disabled")
+    body = await request.body()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, request.headers.get("x-demo-signature", "")):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+    data = json.loads(body)
+    if not re.fullmatch(r"[a-f0-9]{32}", data.get("id", "")) or abs(time.time() - data.get("timestamp", 0)) > 60:
+        raise HTTPException(status_code=400, detail="Invalid demo request")
+    if not request.app.state.voice_ready:
+        raise HTTPException(status_code=503, detail="Voice agent unavailable")
+    with connection() as db:
+        row = db.execute(
+            """update portal_case_requests set state='preparing' where id=%s and phone=%s
+               and runtime_agent_id=%s and direction='outbound' and state='pending' and expires_at>now() returning id""",
+            (data["id"], data.get("phone"), os.environ["VOICE_AGENT_ID"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=409, detail="Demo already handled or expired")
+    await webrtc_service.request_case(data["id"])
+    return {"ok": True}
+
+
 async def relay_demo_events(body: dict) -> None:
     secret = os.environ.get("DEMO_SIGNING_SECRET")
     if os.environ.get("PORTAL_DEMO_ENABLED") != "1" or not secret:
@@ -192,8 +218,28 @@ async def _handle_change(value: dict) -> None:
         logger.info("Received status update: %s", status)
         if status.get("status") == "ACCEPTED":
             webrtc_service.mark_answered(status.get("id"))
+        if status.get("status") in ("failed", "REJECTED"):
+            with connection() as db:
+                db.execute(
+                    """update portal_case_requests set state='failed',error='WhatsApp could not deliver the permission request or call. Please try again later.'
+                       where runtime_agent_id=%s and direction='outbound' and state in ('permission','calling') and (message_id=%s or call_id=%s)""",
+                    (os.environ["VOICE_AGENT_ID"], status.get("id"), status.get("id")),
+                )
 
     for message in value.get("messages", []):
+        reply = message.get("interactive", {}).get("call_permission_reply", {})
+        if reply.get("response_source") == "user_action" and message.get("context", {}).get("id"):
+            with connection() as db:
+                row = db.execute(
+                    """select id from portal_case_requests where phone=%s and message_id=%s
+                       and runtime_agent_id=%s and direction='outbound' and state='permission' and expires_at>now()""",
+                    (message.get("from"), message["context"]["id"], os.environ["VOICE_AGENT_ID"]),
+                ).fetchone()
+                if row and reply.get("response") == "reject":
+                    db.execute("update portal_case_requests set state='declined' where id=%s", (row["id"],))
+            if row and reply.get("response") == "accept":
+                await webrtc_service.start_case(row["id"])
+            continue
         token = re.fullmatch(r"CASE ([a-f0-9]{32})", message.get("text", {}).get("body", "").strip(), re.IGNORECASE)
         if token:
             selected = await confirm_case(message.get("from", ""), token[1].lower())
@@ -207,6 +253,12 @@ async def _handle_change(value: dict) -> None:
         )
 
     for call in value.get("calls", []):
+        if call.get("event") == "terminate":
+            with connection() as db:
+                db.execute(
+                    "update portal_case_requests set state=%s where call_id=%s and runtime_agent_id=%s and direction='outbound' and state='calling'",
+                    ("failed" if call.get("status") == "FAILED" else "completed", call.get("id"), os.environ["VOICE_AGENT_ID"]),
+                )
         await _handle_call_event(call)
 
 
@@ -224,6 +276,7 @@ async def _handle_call_event(call: dict) -> None:
         session = call.get("session", {})
         if session.get("sdp_type") == "answer" and call_id in webrtc_service.pcs:
             await webrtc_service.pcs[call_id].setRemoteDescription(RTCSessionDescription(sdp=session["sdp"], type="answer"))
+            webrtc_service.mark_answered(call_id)
         elif session.get("sdp_type") == "offer":
             logger.info("Processing SDP Offer for %s", call_id)
             asyncio.create_task(
@@ -241,17 +294,75 @@ class WebRTCService:
         self._demo_timers: dict[str, asyncio.TimerHandle] = {}
         self._demo_answered: dict[str, asyncio.Event] = {}
 
-    async def start_demo(self, demo_id: str, phone: str) -> str:
+    def _case_request(self, request_id: str):
+        with connection() as db:
+            return db.execute(
+                """select q.*,a.id as agent_id,a.customer_id from portal_case_requests q
+                   join portal_agent_cases c on c.slug=q.case_slug and c.runtime_agent_id=q.runtime_agent_id
+                   join portal_agents a on a.id=c.agent_id where q.id=%s and q.runtime_agent_id=%s
+                   and q.direction='outbound' and q.expires_at>now() and a.status<>'archived'""",
+                (request_id, os.environ["VOICE_AGENT_ID"]),
+            ).fetchone()
+
+    def _fail_case(self, request_id: str, message: str):
+        with connection() as db:
+            db.execute("update portal_case_requests set state='failed',error=%s where id=%s and runtime_agent_id=%s", (message, request_id, os.environ["VOICE_AGENT_ID"]))
+
+    async def request_case(self, request_id: str):
+        row = self._case_request(request_id)
+        if not row or row["state"] != "preparing":
+            return
+        try:
+            permission = await whatsapp_api.call_permissions(row["phone"])
+            allowed = {a["action_name"] for a in permission.get("actions", []) if a.get("can_perform_action")}
+            if "start_call" in allowed:
+                await self.start_case(request_id)
+            elif "send_call_permission_request" in allowed:
+                message_id = await whatsapp_api.request_call_permission(row["phone"])
+                with connection() as db:
+                    db.execute("update portal_case_requests set state='permission',message_id=%s where id=%s and state='preparing'", (message_id, request_id))
+            else:
+                self._fail_case(request_id, "WhatsApp cannot request call permission for this number right now. Please try again later.")
+        except Exception:
+            logger.exception("Could not prepare case callback")
+            self._fail_case(request_id, "WhatsApp could not prepare your callback. Please check your number and try again.")
+
+    async def start_case(self, request_id: str):
+        row = self._case_request(request_id)
+        if not row or row["state"] not in ("preparing", "permission"):
+            return
+        try:
+            permission = await whatsapp_api.call_permissions(row["phone"])
+            if not any(a.get("action_name") == "start_call" and a.get("can_perform_action") for a in permission.get("actions", [])):
+                return
+            if len(self.pcs) >= int(os.environ.get("MAX_CALLS", "20")):
+                self._fail_case(request_id, "Our demo agents are busy. Please try again shortly.")
+                return
+            with connection() as db:
+                claimed = db.execute("update portal_case_requests set state='calling' where id=%s and state in ('preparing','permission') and expires_at>now() returning id", (request_id,)).fetchone()
+            if not claimed:
+                return
+            context = CallContext("", row["phone"], str(row["agent_id"]), str(row["customer_id"]))
+            call_id = await self.start_demo(request_id, row["phone"], context)
+            with connection() as db:
+                db.execute("update portal_case_requests set call_id=%s where id=%s", (call_id, request_id))
+        except Exception:
+            logger.exception("Could not start case callback")
+            self._fail_case(request_id, "WhatsApp could not place your callback. Please try again shortly.")
+
+    async def start_demo(self, demo_id: str, phone: str, context=None) -> str:
         pc = RTCPeerConnection(configuration=_rtc_configuration())
         output_track = RealtimeAudioTrack()
         pc.addTrack(output_track)
         try:
             await pc.setLocalDescription(await pc.createOffer())
             call_id = await whatsapp_api.create_call(phone, pc.localDescription.sdp, demo_id)
+            if context:
+                context = CallContext(call_id, phone, context.agent_id, context.customer_id)
             self._demo_answered[call_id] = asyncio.Event()
-            self._register_peer(call_id, phone, pc, output_track)
+            self._register_peer(call_id, phone, pc, output_track, context)
             self._demo_timers[call_id] = asyncio.get_running_loop().call_later(
-                180, lambda: asyncio.create_task(self.end_demo(call_id)),
+                300 if context else 180, lambda: asyncio.create_task(self.end_demo(call_id)),
             )
             call_state.emit(call_id, "whatsapp.demo_dialing", {"demo_id": demo_id})
             return call_id
@@ -342,6 +453,14 @@ class WebRTCService:
             timer.cancel()
         self._caller_phones.pop(call_id, None)
         pc = self.pcs.pop(call_id, None)
+        answered = self._demo_answered.get(call_id)
+        if pc is not None and answered is not None:
+            with connection() as db:
+                db.execute(
+                    """update portal_case_requests set state=%s,error=%s where call_id=%s
+                       and runtime_agent_id=%s and direction='outbound' and state='calling'""",
+                    ("completed" if answered.is_set() else "failed", "" if answered.is_set() else "The call was not answered. Please try again when you are ready.", call_id, os.environ["VOICE_AGENT_ID"]),
+                )
         self.mark_answered(call_id)
         self._demo_answered.pop(call_id, None)
         await voice_agent.cancel_call(call_id)

@@ -312,6 +312,7 @@ def run_runtime():
                 status = "error" if getattr(app.state, "voice_startup_error", "") else "ready" if getattr(app.state, "voice_ready", False) else "warming_up"
                 telemetry = {
                     "case_routing": True,
+                    "case_callbacks": True,
                     "active_calls": len(voice_agent.active_calls),
                     "cpu_percent": psutil.cpu_percent(),
                     "memory_mb": round(process.memory_info().rss / 1048576, 1),

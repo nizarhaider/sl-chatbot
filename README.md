@@ -82,15 +82,17 @@ customer ID from Neon. Customer feature limits are checked on every tool executi
 
 Transcripts: https://portal.serendibai.lk/dashboard
 
-### Inbound case demos
+### Case demo callbacks
 
-The portal's `/cases` page selects Support, Sales, Operations, Marketing or Talent.
-Apply the portal repository's `db/cases.sql` migration before starting this version.
-The caller confirms the generated `CASE` message from their WhatsApp number, then
-calls the same chat within ten minutes. The selection is used once; calls without
-a verified selection use the configured runtime agent. Demo calls are capped at
-five minutes. Each demo has its own agent and tenant for tools, transcripts and
-recordings; the existing Talent 360 configuration is unchanged.
+The temporary portal `/cases` page selects Support, Sales, Operations, Marketing
+or Talent. Apply the portal repository's `db/cases.sql` migration before starting
+this version. Submitting a number requests an outbound callback. Existing WhatsApp
+call permission means immediate dialing; otherwise the approved
+`serendibai_demo_call` template requests permission, and accepting it triggers the
+call automatically. Calls last at most five minutes. Each demo has its own agent
+and tenant for tools, transcripts and recordings. Talent 360 configuration is
+unchanged. The temporary portal setup will be removed after recording, with the
+showcase and callback form moving to the website.
 
 Website demo calls require `PORTAL_DEMO_ENABLED=1` and
 `PORTAL_URL=https://portal.serendibai.lk` on the runtime, plus the same

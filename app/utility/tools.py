@@ -255,7 +255,7 @@ async def confirm_case(phone: str, token: str):
             return db.execute(
                 """update portal_case_requests q set state='active',expires_at=now()+interval '10 minutes'
                    from portal_agent_cases c where q.id=%s and q.phone=%s and q.case_slug=c.slug
-                   and q.runtime_agent_id=%s and q.state='pending' and q.expires_at>now()
+                   and q.runtime_agent_id=%s and q.direction='inbound' and q.state='pending' and q.expires_at>now()
                    returning c.title""",
                 (token, normalize_phone_number(phone), os.environ["VOICE_AGENT_ID"]),
             ).fetchone()
@@ -269,7 +269,7 @@ async def claim_case(call_id: str, phone: str):
                 """update portal_case_requests q set state='consumed',call_id=%s
                    from portal_agent_cases c join portal_agents a on a.id=c.agent_id
                    where q.case_slug=c.slug and q.runtime_agent_id=c.runtime_agent_id
-                   and q.runtime_agent_id=%s and q.phone=%s and q.state='active'
+                   and q.runtime_agent_id=%s and q.phone=%s and q.direction='inbound' and q.state='active'
                    and q.expires_at>now() and a.status<>'archived'
                    returning a.id,a.customer_id""",
                 (call_id, os.environ["VOICE_AGENT_ID"], normalize_phone_number(phone)),
@@ -290,6 +290,28 @@ def _phone_number_id() -> str | None:
 
 
 class WhatsAppAPI:
+    @staticmethod
+    async def call_permissions(phone: str) -> dict:
+        async with httpx.AsyncClient(timeout=12) as client:
+            response = await client.get(
+                f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/call_permissions",
+                params={"user_wa_id": phone}, headers={"Authorization": f"Bearer {_whatsapp_access_token()}"},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    @staticmethod
+    async def request_call_permission(phone: str) -> str:
+        async with httpx.AsyncClient(timeout=12) as client:
+            response = await client.post(
+                f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/messages",
+                headers={"Authorization": f"Bearer {_whatsapp_access_token()}"},
+                json={"messaging_product": "whatsapp", "to": phone, "type": "template",
+                      "template": {"name": "serendibai_demo_call", "language": {"code": "en"}}},
+            )
+            response.raise_for_status()
+            return response.json()["messages"][0]["id"]
+
     @staticmethod
     async def create_call(phone: str, sdp: str, demo_id: str) -> str:
         async with httpx.AsyncClient(timeout=15) as client:
