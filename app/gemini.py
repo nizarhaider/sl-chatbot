@@ -160,6 +160,7 @@ class GeminiLivePipeline:
             },
         }
         if agent_config.get("is_case"):
+            config["speech_config"]["language_code"] = "en-IN"
             config["system_instruction"] += " Perform every spoken turn as a native Sri Lankan woman speaking English as heard in Colombo, with natural Sinhala-influenced vowels and Sri Lankan English cadence. Keep the Aoede female timbre and this local accent consistent from the first hello; avoid drifting into American or British pronunciation. Use an everyday, warm business-phone delivery, not a polished international announcer voice or a caricature. Pronounce Bambalapitiya naturally as බම්බලපිටිය. Speak normal business dialogue without announcing demo, simulation, recording or role-play. If asked about being AI or this being a staged business, answer honestly."
         if declarations:
             config["tools"] = [{"function_declarations": declarations}]

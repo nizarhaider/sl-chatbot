@@ -7,7 +7,7 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-from app.gemini import GREETING_TEMPLATE, opening_greeting
+from app.gemini import GREETING_TEMPLATE, opening_greeting, voice_agent
 from app.utility import tools
 
 
@@ -35,6 +35,7 @@ def test_case_routing_is_verified_once_and_tenant_scoped(monkeypatch):
                 assert config["company_name"] in opening_greeting(config)
                 assert "demo" not in opening_greeting(config).lower()
                 assert config["voice"] == "Aoede"
+                assert voice_agent.turn_pipeline._session_config(config)["speech_config"]["language_code"] == "en-IN"
                 if case["slug"] == "marketing":
                     assert "You left your number" in opening_greeting(config)
                     assert "How can I help" not in opening_greeting(config)
@@ -62,6 +63,7 @@ def test_case_routing_is_verified_once_and_tenant_scoped(monkeypatch):
 def test_existing_greeting_is_unchanged():
     config = {"name": "Samantha", "company_name": "Talent 360", "is_case": False}
     assert opening_greeting(config) == GREETING_TEMPLATE.format(agent_name="Samantha", company_name="Talent 360")
+    assert "language_code" not in voice_agent.turn_pipeline._session_config(config)["speech_config"]
 
 
 def test_callbacks_dial_immediately_or_after_permission(monkeypatch):
