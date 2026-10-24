@@ -145,7 +145,8 @@ class Calls:
             """select q.*,a.id as agent_id,a.customer_id from portal_case_requests q
                join portal_agent_cases c on c.slug=q.case_slug and c.runtime_agent_id=q.runtime_agent_id
                join portal_agents a on a.id=c.agent_id where q.id=%s and q.runtime_agent_id=%s
-               and q.direction='outbound' and q.expires_at>now() and a.status<>'archived'""",
+               and q.case_slug='sales' and q.direction='outbound' and q.expires_at>now()
+               and a.status<>'archived'""",
             (request_id, os.environ["VOICE_AGENT_ID"]),
         )
 
