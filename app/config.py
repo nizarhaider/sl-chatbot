@@ -1,7 +1,7 @@
 import os
 
 GEMINI_LIVE_MODEL = "gemini-3.8-live"
-DEFAULT_VOICE = "Aoede"
+DEFAULT_VOICE = "Fola"
 LANGUAGE_CODE = None
 TIME_ZONE = "Asia/Colombo"
 INPUT_SAMPLE_RATE = 16_000
