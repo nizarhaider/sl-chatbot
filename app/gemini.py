@@ -43,9 +43,7 @@ def opening_greeting(agent_config: dict) -> str:
     if not agent_name or not company_name:
         raise RuntimeError("Set the agent and company names in the portal")
     if agent_config.get("is_case"):
-        if agent_config["case_slug"] == "marketing":
-            return f"Hi, this is {agent_name} from {company_name}. You left your number with one of our agents about a vacation package. Is now a good time to talk?"
-        return f"Hello, {company_name}, {agent_name} speaking. How can I help you?"
+        return f"Hello, this is {agent_name} from {company_name}. To speak in English, say 'English'. සිංහලෙන් කතා කිරීමට ‘සිංහල’ කියන්න. தமிழில் பேச, ‘தமிழ்’ என்று சொல்லுங்கள்."
     return GREETING_TEMPLATE.format(agent_name=agent_name, company_name=company_name)
 
 
@@ -161,6 +159,7 @@ class GeminiLivePipeline:
         }
         if agent_config.get("is_case"):
             config["speech_config"]["language_code"] = "en-IN"
+            config["system_instruction"] += " Begin with the supplied language-selection greeting, then stop and wait for the caller to choose English, Sinhala or Tamil. Do not start the business conversation before their choice. Continue in the selected language and follow any later language switch. After selection, ask how you can help. For Ruhunu Holidays instead lead with: You left your number with one of our agents about a vacation package. Is now a good time to talk? Say that in the selected language."
             config["system_instruction"] += " Perform every spoken turn as a native Sri Lankan woman speaking English as heard in Colombo, with natural Sinhala-influenced vowels and Sri Lankan English cadence. Keep the Aoede female timbre and this local accent consistent from the first hello; avoid drifting into American or British pronunciation. Use an everyday, warm business-phone delivery, not a polished international announcer voice or a caricature. Pronounce Bambalapitiya naturally as බම්බලපිටිය. Speak normal business dialogue without announcing demo, simulation, recording or role-play. If asked about being AI or this being a staged business, answer honestly."
         if declarations:
             config["tools"] = [{"function_declarations": declarations}]

@@ -34,11 +34,14 @@ def test_case_routing_is_verified_once_and_tenant_scoped(monkeypatch):
                 assert config["is_case"]
                 assert config["company_name"] in opening_greeting(config)
                 assert "demo" not in opening_greeting(config).lower()
+                assert "To speak in English" in opening_greeting(config)
+                assert "සිංහල" in opening_greeting(config)
+                assert "தமிழ்" in opening_greeting(config)
+                assert "How can I help" not in opening_greeting(config)
                 assert config["voice"] == "Aoede"
                 assert voice_agent.turn_pipeline._session_config(config)["speech_config"]["language_code"] == "en-IN"
                 if case["slug"] == "marketing":
-                    assert "You left your number" in opening_greeting(config)
-                    assert "How can I help" not in opening_greeting(config)
+                    assert "You left your number" in voice_agent.turn_pipeline._session_config(config)["system_instruction"]
                 if case["slug"] == "support":
                     order = asyncio.run(tools.DatabaseTools().execute("search_knowledge", {"query": "WL-1042"}, context))
                     assert order["ok"] and any("https://portal.serendibai.lk/cases/order/WL-1042" in row["content"] for row in order["results"])
