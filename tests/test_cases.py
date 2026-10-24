@@ -39,7 +39,7 @@ def test_case_routing_is_verified_once_and_tenant_scoped(monkeypatch):
                 assert "தமிழ்" in opening_greeting(config)
                 assert "How can I help" not in opening_greeting(config)
                 assert config["voice"] == "Aoede"
-                assert voice_agent.turn_pipeline._session_config(config)["speech_config"]["language_code"] == "en-IN"
+                assert "language_code" not in voice_agent.turn_pipeline._session_config(config)["speech_config"]
                 if case["slug"] == "marketing":
                     assert "You left your number" in voice_agent.turn_pipeline._session_config(config)["system_instruction"]
                 if case["slug"] == "support":
