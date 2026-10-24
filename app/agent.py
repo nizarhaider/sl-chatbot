@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from google import genai
@@ -23,6 +24,7 @@ from pipecat.workers.runner import WorkerRunner
 from app.config import (
     DEFAULT_VOICE,
     GEMINI_LIVE_MODEL,
+    GREETING_DELAY_SECONDS,
     INPUT_SAMPLE_RATE,
     LANGUAGE_CODE,
     OUTPUT_SAMPLE_RATE,
@@ -180,6 +182,7 @@ async def run_agent(connection, context, ready, state=call_state):
         await ready.wait()
         state.active(context.call_id)
         await recording.start_recording()
+        await asyncio.sleep(GREETING_DELAY_SECONDS)
         await worker.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
