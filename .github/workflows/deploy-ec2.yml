@@ -15,6 +15,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -33,8 +34,9 @@ jobs:
           --exclude=.env
           --exclude=.venv
           --exclude=.pytest_cache
-          -e 'ssh -i ~/.ssh/ec2_key'
+          --exclude=.git
+          -e "ssh -i $HOME/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15"
           ./ ubuntu@13.207.194.210:/opt/serendibai/voice-agent/
 
       - name: Restart voice agent
-        run: ssh -i ~/.ssh/ec2_key ubuntu@13.207.194.210 'sudo systemctl restart voice-agent.service'
+        run: ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'sudo systemctl restart voice-agent.service'
