@@ -9,7 +9,7 @@ CASE_PROMPTS = {
     },
     "electronics_repair": {
         "solution": "outbound_cx_support",
-        "name": "Prasan",
+        "name": "Harini",
         "company": "Electronics.lk",
         "greeting": "Hi, this is Prasan from Electronics.lk. Your laptop repair is complete and ready for collection. Is now a good time to go through the collection details?",
         "instructions": "You are Prasan from Electronics.lk. The customer's laptop repair is complete and ready for collection. Ask when they plan to collect it. Check collection details with search_knowledge; do not invent opening hours, charges or an address.",
