@@ -51,8 +51,7 @@ Callbacks are limited to five minutes. Ordinary inbound calls use the host agent
 The older generic demo API and text-based CASE selection have been removed.
 Historical database tables and records remain untouched.
 
-`uv sync --locked` installs dependencies. `uv run pytest` runs checks, including a
-private S3 recording through Pipecat/Gemini without dialing a real number.
+`uv sync --locked` installs dependencies. `uv run ruff check .` validates Python code.
 `./deploy.sh --env local` starts on port 8081 and may connect the production tunnel;
 do not start it alongside the hosted service. `--env remote` is used by
 `voice-agent.service` on the existing Mumbai EC2 host. Production requires uv,

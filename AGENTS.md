@@ -16,8 +16,6 @@ permission checks, tenant boundaries, tool permissions and private recordings.
 Use background database writes and uploads; drain them on shutdown.
 The narrow Gemini usage-metadata override is tied to pinned Pipecat 1.14.0.
 
-Run `uv run pytest` after runtime changes. The live test sends a private S3
-speech fixture through the actual Pipecat/Gemini pipeline and requires audio,
-transcripts, usage and a stereo recording. It does not place a WhatsApp call.
+Do not create or keep tests. Use `uv run ruff check .` for Python validation.
 `./deploy.sh --env local` starts the local runtime and production tunnel, so do
 not run it beside the hosted service. Never print credentials.
