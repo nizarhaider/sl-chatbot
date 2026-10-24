@@ -17,5 +17,7 @@ LOG_LEVEL = "INFO"
 ICE_SERVERS = ["stun:stun.l.google.com:19302"]
 GRAPH_API_VERSION = "v25.0"
 PERMISSION_TEMPLATE = "serendibai_demo_call"
-S3_BUCKET = os.environ.get("CALL_RECORDINGS_BUCKET", "serendibai-call-recordings-744861799976")
+S3_BUCKET = os.environ.get(
+    "CALL_RECORDINGS_BUCKET", "serendibai-call-recordings-744861799976"
+)
 MP3_BITRATE = "64k"

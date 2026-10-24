@@ -6,23 +6,40 @@ from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
-from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiVADParams
+from pipecat.services.google.gemini_live.llm import (
+    GeminiLiveLLMService,
+    GeminiVADParams,
+)
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-from pipecat.workers.runner import WorkerRunner
 from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
+from pipecat.workers.runner import WorkerRunner
 
-from app.config import GEMINI_LIVE_MODEL, DEFAULT_VOICE, LANGUAGE_CODE, INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE, RECORDING_SAMPLE_RATE
-from app.prompts import opening_greeting, system_prompt, START_CALL, AUDITION_PROMPT
+from app.config import (
+    DEFAULT_VOICE,
+    GEMINI_LIVE_MODEL,
+    INPUT_SAMPLE_RATE,
+    LANGUAGE_CODE,
+    OUTPUT_SAMPLE_RATE,
+    RECORDING_SAMPLE_RATE,
+)
+from app.prompts import AUDITION_PROMPT, START_CALL, opening_greeting, system_prompt
 from app.store import call_state
-from app.tools import DatabaseTools, VOICE_TOOLS
+from app.tools import VOICE_TOOLS, DatabaseTools
+
 
 def agent_settings(agent_config):
     return GeminiLiveLLMService.Settings(
-        model=GEMINI_LIVE_MODEL, voice=agent_config.get("voice", DEFAULT_VOICE), language=LANGUAGE_CODE,
-        system_instruction=system_prompt(agent_config), vad=GeminiVADParams(disabled=False),
+        model=GEMINI_LIVE_MODEL,
+        voice=agent_config.get("voice", DEFAULT_VOICE),
+        language=LANGUAGE_CODE,
+        system_instruction=system_prompt(agent_config),
+        vad=GeminiVADParams(disabled=False),
     )
 
 
@@ -50,14 +67,20 @@ async def prewarm():
         model=GEMINI_LIVE_MODEL,
         config={
             "response_modalities": ["AUDIO"],
-            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": config["voice"]}}},
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {"voice_name": config["voice"]}
+                }
+            },
         },
     ):
         pass
 
 
 def build_pipeline(transport, config, context, state=call_state, greet=True):
-    enabled = [tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])]
+    enabled = [
+        tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])
+    ]
     schemas = ToolsSchema(standard_tools=enabled)
     llm = CallGeminiService(
         context,
@@ -80,22 +103,39 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
     user, assistant = LLMContextAggregatorPair(
         history,
         realtime_service_mode=True,
-        user_params=LLMUserAggregatorParams(user_turn_strategies=ExternalUserTurnStrategies()),
+        user_params=LLMUserAggregatorParams(
+            user_turn_strategies=ExternalUserTurnStrategies()
+        ),
     )
     recording = AudioBufferProcessor(sample_rate=RECORDING_SAMPLE_RATE, num_channels=2)
     worker = PipelineWorker(
-        Pipeline([transport.input(), user, llm, transport.output(), recording, assistant]),
+        Pipeline(
+            [transport.input(), user, llm, transport.output(), recording, assistant]
+        ),
         params=PipelineParams(
-            audio_in_sample_rate=INPUT_SAMPLE_RATE, audio_out_sample_rate=OUTPUT_SAMPLE_RATE, enable_metrics=True, enable_usage_metrics=True
+            audio_in_sample_rate=INPUT_SAMPLE_RATE,
+            audio_out_sample_rate=OUTPUT_SAMPLE_RATE,
+            enable_metrics=True,
+            enable_usage_metrics=True,
         ),
         enable_rtvi=False,
         idle_timeout_secs=None,
     )
 
     async def execute(params):
-        state.emit(context.call_id, "tool.call", {"name": params.function_name, "arguments": params.arguments})
-        result = await DatabaseTools().execute(params.function_name, params.arguments, context)
-        state.emit(context.call_id, "tool.result", {"name": params.function_name, "result": result})
+        state.emit(
+            context.call_id,
+            "tool.call",
+            {"name": params.function_name, "arguments": params.arguments},
+        )
+        result = await DatabaseTools().execute(
+            params.function_name, params.arguments, context
+        )
+        state.emit(
+            context.call_id,
+            "tool.result",
+            {"name": params.function_name, "result": result},
+        )
         state.persist(context.call_id)
         await params.result_callback(result)
 
@@ -112,7 +152,11 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
 
     @worker.event_handler("on_pipeline_error")
     async def failed(worker, frame):
-        state.emit(context.call_id, "pipeline.error", {"error": "Voice processing failed", "fatal": frame.fatal})
+        state.emit(
+            context.call_id,
+            "pipeline.error",
+            {"error": "Voice processing failed", "fatal": frame.fatal},
+        )
 
     @recording.event_handler("on_audio_data")
     async def archive(processor, audio, sample_rate, channels):
@@ -124,7 +168,10 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
 async def run_agent(connection, context, ready, state=call_state):
     config = await DatabaseTools().agent_config(context)
     transport = SmallWebRTCTransport(
-        connection, TransportParams(audio_in_enabled=True, audio_out_enabled=True, audio_out_10ms_chunks=2)
+        connection,
+        TransportParams(
+            audio_in_enabled=True, audio_out_enabled=True, audio_out_10ms_chunks=2
+        ),
     )
     worker, recording = build_pipeline(transport, config, context, state)
     runner = WorkerRunner(handle_sigint=False)

@@ -19,8 +19,8 @@ from pipecat.transports.whatsapp.client import WhatsAppClient
 
 load_dotenv()
 
-from app.config import CASE_CALL_SECONDS, DEFAULT_MAX_CALLS, ICE_SERVERS
 from app.agent import prewarm, run_agent
+from app.config import CASE_CALL_SECONDS, DEFAULT_MAX_CALLS, ICE_SERVERS
 from app.store import call_state
 from app.tools import CallContext, connection, whatsapp_api
 
@@ -69,9 +69,15 @@ class Calls:
 
     async def reserve(self, key):
         async with self.lock:
-            if key in self.connections or key in self.reservations or key in call_state.calls:
+            if (
+                key in self.connections
+                or key in self.reservations
+                or key in call_state.calls
+            ):
                 return False
-            if len(self.connections) + len(self.reservations) >= int(os.environ.get("MAX_CALLS", str(DEFAULT_MAX_CALLS))):
+            if len(self.connections) + len(self.reservations) >= int(
+                os.environ.get("MAX_CALLS", str(DEFAULT_MAX_CALLS))
+            ):
                 raise HTTPException(503, "Voice agents are busy")
             self.reservations.add(key)
             return True
@@ -85,7 +91,8 @@ class Calls:
         call.task = self.spawn(self.run(call))
         if outbound:
             call.timer = asyncio.get_running_loop().call_later(
-                CASE_CALL_SECONDS, lambda: self.spawn(self.close_call(context.call_id, terminate=True))
+                CASE_CALL_SECONDS,
+                lambda: self.spawn(self.close_call(context.call_id, terminate=True)),
             )
         return call
 
@@ -95,7 +102,11 @@ class Calls:
         except Exception:
             call.failed = True
             logger.exception("Voice pipeline failed")
-            call_state.emit(call.context.call_id, "pipeline.error", {"error": "Voice pipeline failed"})
+            call_state.emit(
+                call.context.call_id,
+                "pipeline.error",
+                {"error": "Voice pipeline failed"},
+            )
         finally:
             await self.close_call(call.context.call_id, terminate=True)
 
@@ -121,7 +132,9 @@ class Calls:
                    and runtime_agent_id=%s and direction='outbound' and state='calling'""",
                 (
                     "completed" if call.answered and not call.failed else "failed",
-                    "" if call.answered else "The call was not answered. Please try again.",
+                    ""
+                    if call.answered
+                    else "The call was not answered. Please try again.",
                     call_id,
                     os.environ["VOICE_AGENT_ID"],
                 ),
@@ -149,15 +162,26 @@ class Calls:
         reserved = False
         try:
             permission = await whatsapp_api.call_permissions(row["phone"])
-            allowed = {a["action_name"] for a in permission.get("actions", []) if a.get("can_perform_action")}
+            allowed = {
+                a["action_name"]
+                for a in permission.get("actions", [])
+                if a.get("can_perform_action")
+            }
             if "start_call" not in allowed:
                 if row["state"] == "preparing":
                     if "send_call_permission_request" in allowed:
-                        message_id = await whatsapp_api.request_call_permission(row["phone"])
-                        await query("update portal_case_requests set state='permission',message_id=%s where id=%s and state='preparing'",
-                                    (message_id, request_id))
+                        message_id = await whatsapp_api.request_call_permission(
+                            row["phone"]
+                        )
+                        await query(
+                            "update portal_case_requests set state='permission',message_id=%s where id=%s and state='preparing'",
+                            (message_id, request_id),
+                        )
                     else:
-                        await self.fail_case(request_id, "WhatsApp cannot request call permission right now. Please try again later.")
+                        await self.fail_case(
+                            request_id,
+                            "WhatsApp cannot request call permission right now. Please try again later.",
+                        )
                 return
             reserved = await self.reserve(request_id)
             if not reserved:
@@ -168,12 +192,20 @@ class Calls:
                 (request_id, os.environ["VOICE_AGENT_ID"]),
             )
             if claimed:
-                context = CallContext("", row["phone"], str(row["agent_id"]), str(row["customer_id"]))
+                context = CallContext(
+                    "", row["phone"], str(row["agent_id"]), str(row["customer_id"])
+                )
                 call_id = await self.dial(request_id, context)
-                await query("update portal_case_requests set call_id=%s where id=%s", (call_id, request_id))
+                await query(
+                    "update portal_case_requests set call_id=%s where id=%s",
+                    (call_id, request_id),
+                )
         except Exception:
             logger.exception("Callback failed")
-            await self.fail_case(request_id, "WhatsApp could not place your callback. Please try again shortly.")
+            await self.fail_case(
+                request_id,
+                "WhatsApp could not place your callback. Please try again shortly.",
+            )
         finally:
             if reserved:
                 self.reservations.discard(request_id)
@@ -183,9 +215,15 @@ class Calls:
         peer.pc.addTransceiver("audio", direction="sendrecv")
         try:
             await peer.pc.setLocalDescription(await peer.pc.createOffer())
-            call_id = await whatsapp_api.create_call(context.caller_phone, peer.pc.localDescription.sdp, request_id)
+            call_id = await whatsapp_api.create_call(
+                context.caller_phone, peer.pc.localDescription.sdp, request_id
+            )
             self.register(
-                CallContext(call_id, context.caller_phone, context.agent_id, context.customer_id), peer, outbound=True
+                CallContext(
+                    call_id, context.caller_phone, context.agent_id, context.customer_id
+                ),
+                peer,
+                outbound=True,
             )
             return call_id
         except Exception:
@@ -203,17 +241,26 @@ class Calls:
                 await self.close_call(status.get("id"))
         for message in value.get("messages", []):
             reply = message.get("interactive", {}).get("call_permission_reply", {})
-            if reply.get("response_source") != "user_action" or not message.get("context", {}).get("id"):
+            if reply.get("response_source") != "user_action" or not message.get(
+                "context", {}
+            ).get("id"):
                 continue
             row = await query(
                 """select id from portal_case_requests where phone=%s and message_id=%s and runtime_agent_id=%s
                                and direction='outbound' and state='permission' and expires_at>now()""",
-                (message.get("from"), message["context"]["id"], os.environ["VOICE_AGENT_ID"]),
+                (
+                    message.get("from"),
+                    message["context"]["id"],
+                    os.environ["VOICE_AGENT_ID"],
+                ),
             )
             if row and reply.get("response") == "accept":
                 await self.request_case(row["id"])
             elif row and reply.get("response") == "reject":
-                await query("update portal_case_requests set state='declined' where id=%s", (row["id"],))
+                await query(
+                    "update portal_case_requests set state='declined' where id=%s",
+                    (row["id"],),
+                )
         for event in value.get("calls", []):
             await self.call_event(event, value)
 
@@ -250,7 +297,15 @@ class Calls:
                         {
                             "object": "whatsapp_business_account",
                             "entry": [
-                                {"id": "", "changes": [{"field": "calls", "value": {**value, "calls": [event]}}]}
+                                {
+                                    "id": "",
+                                    "changes": [
+                                        {
+                                            "field": "calls",
+                                            "value": {**value, "calls": [event]},
+                                        }
+                                    ],
+                                }
                             ],
                         }
                     )
@@ -262,7 +317,8 @@ class Calls:
 
     async def close(self):
         await asyncio.gather(
-            *(self.close_call(key, terminate=True) for key in list(self.connections)), return_exceptions=True
+            *(self.close_call(key, terminate=True) for key in list(self.connections)),
+            return_exceptions=True,
         )
         if self.tasks:
             await asyncio.gather(*list(self.tasks), return_exceptions=True)
@@ -271,19 +327,26 @@ class Calls:
 
 @asynccontextmanager
 async def lifespan(app):
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15)
+    ) as session:
         app.state.calls.client = WhatsAppClient(
-            whatsapp_token=os.environ.get("WHATSAPP_ACCESS_TOKEN") or os.environ.get("WHATSAPP_TOKEN", ""),
+            whatsapp_token=os.environ.get("WHATSAPP_ACCESS_TOKEN")
+            or os.environ.get("WHATSAPP_TOKEN", ""),
             phone_number_id=os.environ.get("PHONE_NUMBER_ID", ""),
             session=session,
         )
+
         async def warmup():
             try:
                 await prewarm()
                 app.state.voice_ready = True
             except Exception:
                 logger.exception("Gemini prewarm failed")
-                app.state.voice_startup_error = "Gemini startup failed. Check the API key and model."
+                app.state.voice_startup_error = (
+                    "Gemini startup failed. Check the API key and model."
+                )
+
         startup = asyncio.create_task(warmup())
         try:
             yield
@@ -302,7 +365,13 @@ def create_app():
 
     @app.get("/")
     def readiness():
-        status = "error" if app.state.voice_startup_error else "ready" if app.state.voice_ready else "warming_up"
+        status = (
+            "error"
+            if app.state.voice_startup_error
+            else "ready"
+            if app.state.voice_ready
+            else "warming_up"
+        )
         return {"status": status, "message": "WhatsApp Webhook Server is running"}
 
     @app.get("/webhook")
@@ -310,18 +379,25 @@ def create_app():
         if (
             request.query_params.get("hub.mode") != "subscribe"
             or not os.environ.get("VERIFY_TOKEN")
-            or request.query_params.get("hub.verify_token") != os.environ["VERIFY_TOKEN"]
+            or request.query_params.get("hub.verify_token")
+            != os.environ["VERIFY_TOKEN"]
         ):
             raise HTTPException(403, "Verification failed")
-        return Response(request.query_params.get("hub.challenge", ""), media_type="text/plain")
+        return Response(
+            request.query_params.get("hub.challenge", ""), media_type="text/plain"
+        )
 
     @app.post("/webhook")
     async def webhook(request: Request):
         body = await request.body()
         secret = os.environ.get("WHATSAPP_APP_SECRET")
         if secret:
-            expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(expected, request.headers.get("x-hub-signature-256", "")):
+            expected = (
+                "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            )
+            if not hmac.compare_digest(
+                expected, request.headers.get("x-hub-signature-256", "")
+            ):
                 raise HTTPException(403, "Invalid signature")
         data = json.loads(body)
         if data.get("object") != "whatsapp_business_account":
@@ -329,7 +405,9 @@ def create_app():
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                if value.get("metadata", {}).get("phone_number_id", os.environ.get("PHONE_NUMBER_ID")) != os.environ.get("PHONE_NUMBER_ID"):
+                if value.get("metadata", {}).get(
+                    "phone_number_id", os.environ.get("PHONE_NUMBER_ID")
+                ) != os.environ.get("PHONE_NUMBER_ID"):
                     raise HTTPException(400, "Wrong business phone")
                 if value.get("calls") and not app.state.voice_ready:
                     raise HTTPException(503, "Voice agent unavailable")
@@ -343,13 +421,15 @@ def create_app():
             raise HTTPException(404, "Case calling is disabled")
         body = await request.body()
         if not hmac.compare_digest(
-            hmac.new(secret.encode(), body, hashlib.sha256).hexdigest(), request.headers.get("x-demo-signature", "")
+            hmac.new(secret.encode(), body, hashlib.sha256).hexdigest(),
+            request.headers.get("x-demo-signature", ""),
         ):
             raise HTTPException(403, "Invalid signature")
         try:
             data = json.loads(body)
             valid = (
-                re.fullmatch(r"[a-f0-9]{32}", data.get("id", "")) and abs(time.time() - data.get("timestamp", 0)) <= 60
+                re.fullmatch(r"[a-f0-9]{32}", data.get("id", ""))
+                and abs(time.time() - data.get("timestamp", 0)) <= 60
             )
         except (ValueError, TypeError, AttributeError):
             valid = False

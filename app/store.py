@@ -13,11 +13,20 @@ from datetime import UTC, datetime
 
 import boto3
 import psutil
+import psycopg
 import uvicorn
 from loguru import logger as pipecat_logger
 from psycopg.types.json import Jsonb
 
-from app.config import S3_BUCKET, RECORDING_SAMPLE_RATE, MP3_BITRATE, PORT, HEARTBEAT_SECONDS, SHUTDOWN_SECONDS, LOG_LEVEL
+from app.config import (
+    HEARTBEAT_SECONDS,
+    LOG_LEVEL,
+    MP3_BITRATE,
+    PORT,
+    RECORDING_SAMPLE_RATE,
+    S3_BUCKET,
+    SHUTDOWN_SECONDS,
+)
 from app.tools import agent_ids, connection
 
 logger = logging.getLogger(__name__)
@@ -25,15 +34,38 @@ logger = logging.getLogger(__name__)
 
 class CallStore:
     def save_call(self, call):
-        agent_id, customer_id = (call["agent_id"], call["customer_id"]) if call.get("agent_id") else agent_ids()
+        agent_id, customer_id = (
+            (call["agent_id"], call["customer_id"])
+            if call.get("agent_id")
+            else agent_ids()
+        )
         events = call.get("events", [])
-        usage_events = [event for event in events if event.get("kind") == "gemini_live.usage"]
+        usage_events = [
+            event for event in events if event.get("kind") == "gemini_live.usage"
+        ]
         totals = [event["data"].get("total_tokens") for event in usage_events]
-        tokens = sum(totals) if totals and all(value is not None for value in totals) else None
-        requests = [event["data"]["usage"] for event in usage_events if event["data"].get("usage")]
-        usage = {"provider": "google_gemini_live", "requests": requests} if requests else None
+        tokens = (
+            sum(totals)
+            if totals and all(value is not None for value in totals)
+            else None
+        )
+        requests = [
+            event["data"]["usage"]
+            for event in usage_events
+            if event["data"].get("usage")
+        ]
+        usage = (
+            {"provider": "google_gemini_live", "requests": requests}
+            if requests
+            else None
+        )
         recording = next(
-            (event["data"] for event in reversed(events) if event.get("kind") == "recording.archived"), None
+            (
+                event["data"]
+                for event in reversed(events)
+                if event.get("kind") == "recording.archived"
+            ),
+            None,
         )
         end = call.get("ended_at")
         with connection() as db:
@@ -56,13 +88,16 @@ class CallStore:
                     call.get("caller_phone", ""),
                     call.get("status", "connecting"),
                     "\n\n".join(
-                        f"{event['speaker'].capitalize()}: {event['text']}" for event in call.get("transcript", [])
+                        f"{event['speaker'].capitalize()}: {event['text']}"
+                        for event in call.get("transcript", [])
                     ),
                     max(0, end - call["started_at"]) if end else None,
                     tokens,
                     Jsonb(usage) if usage else None,
                     Jsonb(events),
-                    f"s3://{recording['bucket']}/{recording['key']}" if recording else None,
+                    f"s3://{recording['bucket']}/{recording['key']}"
+                    if recording
+                    else None,
                     call["started_at"],
                 ),
             )
@@ -78,10 +113,15 @@ class CallState:
         self.trim()
         now = time.time()
         self.calls[context.call_id] = {
-            "call_id": context.call_id, "caller_phone": context.caller_phone,
-            "agent_id": context.agent_id, "customer_id": context.customer_id,
-            "status": "connecting", "started_at": now, "ended_at": None,
-            "transcript": [], "events": [],
+            "call_id": context.call_id,
+            "caller_phone": context.caller_phone,
+            "agent_id": context.agent_id,
+            "customer_id": context.customer_id,
+            "status": "connecting",
+            "started_at": now,
+            "ended_at": None,
+            "transcript": [],
+            "events": [],
         }
         self.emit(context.call_id, "call.connected")
         self.persist(context.call_id)
@@ -89,13 +129,22 @@ class CallState:
     def emit(self, call_id, kind, data=None):
         call = self.calls.get(call_id)
         if call:
-            call["events"].append({"id": uuid.uuid4().hex, "kind": kind, "timestamp": time.time(), "data": data or {}})
+            call["events"].append(
+                {
+                    "id": uuid.uuid4().hex,
+                    "kind": kind,
+                    "timestamp": time.time(),
+                    "data": data or {},
+                }
+            )
             call["events"] = call["events"][-500:]
 
     def transcript(self, call_id, speaker, text):
         call = self.calls.get(call_id)
         if call and text.strip():
-            call["transcript"].append({"speaker": speaker, "text": text.strip(), "timestamp": time.time()})
+            call["transcript"].append(
+                {"speaker": speaker, "text": text.strip(), "timestamp": time.time()}
+            )
             self.emit(call_id, f"transcript.{speaker}", {"text": text.strip()})
             self.persist(call_id)
 
@@ -116,7 +165,12 @@ class CallState:
         if self.writer and call_id in self.calls:
             call = self.calls[call_id]
             self.writer.submit(
-                self._save, {**call, "events": list(call["events"]), "transcript": list(call["transcript"])}
+                self._save,
+                {
+                    **call,
+                    "events": list(call["events"]),
+                    "transcript": list(call["transcript"]),
+                },
             )
 
     @staticmethod
@@ -152,9 +206,11 @@ class CallState:
             logger.exception("Call recording archival failed")
 
     def trim(self):
-        removable = [key for key, call in self.calls.items() if call["ended_at"] is not None]
+        removable = [
+            key for key, call in self.calls.items() if call["ended_at"] is not None
+        ]
         if not self.archive_tasks:
-            for key in removable[:max(0, len(self.calls) - 99)]:
+            for key in removable[: max(0, len(self.calls) - 99)]:
                 del self.calls[key]
 
     async def close(self):
@@ -169,11 +225,12 @@ call_state = CallState()
 
 def _pcm16_stereo_to_mp3(pcm: bytes) -> bytes:
     result = subprocess.run(
-        shlex.split(f"ffmpeg -nostdin -hide_banner -loglevel error -f s16le -ar {RECORDING_SAMPLE_RATE} "
-                    f"-ac 2 -i pipe:0 -codec:a libmp3lame -b:a {MP3_BITRATE} -f mp3 pipe:1"),
+        shlex.split(
+            f"ffmpeg -nostdin -hide_banner -loglevel error -f s16le -ar {RECORDING_SAMPLE_RATE} "
+            f"-ac 2 -i pipe:0 -codec:a libmp3lame -b:a {MP3_BITRATE} -f mp3 pipe:1"
+        ),
         input=pcm,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if result.returncode or not result.stdout:
@@ -201,7 +258,14 @@ def run_runtime():
     tunnel = None
     if os.environ.get("CLOUDFLARED_TUNNEL_TOKEN"):
         tunnel = subprocess.Popen(
-            ["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", os.environ["CLOUDFLARED_TUNNEL_TOKEN"]],
+            [
+                "cloudflared",
+                "tunnel",
+                "--no-autoupdate",
+                "run",
+                "--token",
+                os.environ["CLOUDFLARED_TUNNEL_TOKEN"],
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -227,30 +291,45 @@ def run_runtime():
                     "cpu_percent": psutil.cpu_percent(),
                     "memory_mb": round(process.memory_info().rss / 1048576, 1),
                     "status": status,
-                    "runtime_url": "https://whatsapp.serendibai.lk" if tunnel and tunnel.poll() is None else "",
+                    "runtime_url": "https://whatsapp.serendibai.lk"
+                    if tunnel and tunnel.poll() is None
+                    else "",
                     "error": "Gemini startup failed. Check the configured API key and model."
                     if status == "error"
                     else "",
                 }
                 with connection() as db:
                     current = db.execute(
-                        "select max_calls,deployed_version from portal_agents where id=%s for update", (agent_id,)
+                        "select max_calls,deployed_version from portal_agents where id=%s for update",
+                        (agent_id,),
                     ).fetchone()
                     restart = current is not None and current["deployed_version"] == -1
                     row = db.execute(
                         "update portal_agents set heartbeat_at=now(),telemetry=%s,status=%s,deployed_version=version where id=%s returning max_calls",
-                        (Jsonb(telemetry), "restarting" if restart else status, agent_id),
+                        (
+                            Jsonb(telemetry),
+                            "restarting" if restart else status,
+                            agent_id,
+                        ),
                     ).fetchone()
                 if row:
                     os.environ["MAX_CALLS"] = str(row["max_calls"])
                 if restart and not app.state.calls.connections:
                     restart_requested.set()
                     server.should_exit = True
-            except Exception as exc:
+            except psycopg.Error as exc:
                 logger.warning("Neon heartbeat unavailable: %s", type(exc).__name__)
             stopped.wait(HEARTBEAT_SECONDS)
 
-    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=PORT, access_log=False, timeout_graceful_shutdown=SHUTDOWN_SECONDS))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=PORT,
+            access_log=False,
+            timeout_graceful_shutdown=SHUTDOWN_SECONDS,
+        )
+    )
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
     try:
