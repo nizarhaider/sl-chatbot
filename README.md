@@ -58,8 +58,7 @@ Python 3.12, ffmpeg and cloudflared. Upload source, run `uv sync --locked`, and
 restart the service only during the agreed cutover. Remove deleted application
 files from the deployment directory as part of that cutover.
 
-EC2 checks the public `main` branch every minute and deploys new commits by
-syncing this directory and restarting `voice-agent.service`.
+Pushes to `main` deploy this directory to EC2 and restart `voice-agent.service`.
 
 Shutdown stops calls, flushes recordings and drains database writes before closing
 HTTP clients. Recordings remain MP3 in private S3, caller left and agent right.

@@ -1,0 +1,28 @@
+name: Deploy voice agent
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-agent-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, ARM64, serendibai-voice-agent]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy and restart
+        run: |
+          sudo rsync -az --delete \
+            --exclude=.env \
+            --exclude=.venv \
+            --exclude=.pytest_cache \
+            --exclude=.git \
+            ./ /opt/serendibai/voice-agent/
+          sudo systemctl restart voice-agent.service
