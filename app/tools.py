@@ -11,7 +11,12 @@ from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.config import GRAPH_API_VERSION, HTTP_TIMEOUT, PERMISSION_TEMPLATE
+from app.config import (
+    DEFAULT_VOICE,
+    GRAPH_API_VERSION,
+    HTTP_TIMEOUT,
+    PERMISSION_TEMPLATE,
+)
 
 logger = logging.getLogger(__name__)
 STANDARD_TOOLS = ("search_knowledge", "search_products", "send_whatsapp_message")
@@ -114,7 +119,7 @@ class DatabaseTools:
             )
             with connection() as db:
                 row = db.execute(
-                    """select a.name,a.company_name,a.system_prompt,a.voice,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
+                    """select a.name,a.company_name,a.system_prompt,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
                               (select slug from portal_agent_cases where agent_id=a.id) as case_slug
                        from portal_agents a join customers c on c.id=a.customer_id
                        where a.id=%s and a.customer_id=%s and a.status<>'archived'""",
@@ -126,7 +131,7 @@ class DatabaseTools:
                 "name": row["name"],
                 "company_name": row["company_name"],
                 "instructions": row["system_prompt"],
-                "voice": row["voice"],
+                "voice": DEFAULT_VOICE,
                 "languages": row["languages"],
                 "enabled_tools": [
                     *STANDARD_TOOLS,

@@ -68,9 +68,7 @@ async def prewarm():
         config={
             "response_modalities": ["AUDIO"],
             "speech_config": {
-                "voice_config": {
-                    "prebuilt_voice_config": {"voice_name": config["voice"]}
-                }
+                "voice_config": {"prebuilt_voice_config": {"voice_name": DEFAULT_VOICE}}
             },
         },
     ):

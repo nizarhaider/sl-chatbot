@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 
 from app import store, tools
 from app.agent import agent_settings
+from app.config import DEFAULT_VOICE
 from app.prompts import GREETING_TEMPLATE, opening_greeting
 from app.store import CallStore
 
@@ -45,7 +46,8 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
             assert "සිංහල" in opening_greeting(config)
             assert "தமிழ்" in opening_greeting(config)
             assert "How can I help" not in opening_greeting(config)
-            assert config["voice"] == "Leda"
+            assert config["voice"] == DEFAULT_VOICE
+            assert agent_settings(config).voice == DEFAULT_VOICE
             assert agent_settings(config).language is None
             if case["slug"] == "marketing":
                 assert (
