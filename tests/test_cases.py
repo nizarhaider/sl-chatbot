@@ -11,7 +11,9 @@ from psycopg.rows import dict_row
 from app import store, tools
 from app.agent import agent_settings
 from app.config import DEFAULT_VOICE
-from app.prompts import AGENT_IDENTITIES, INBOUND_SYSTEM_PROMPT, opening_greeting
+from app.case_prompt import OUTBOUND_CASES
+from app.prompts import case_profile, opening_greeting
+from app.solution_prompts import SOLUTION_PROMPTS
 from app.store import CallStore
 
 
@@ -35,23 +37,31 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
                 phone,
                 str(case["agent_id"]),
                 str(case["customer_id"]),
+                outbound=case["slug"] in OUTBOUND_CASES,
             )
             assert context.agent_id == str(case["agent_id"])
             assert context.customer_id == str(case["customer_id"])
             config = asyncio.run(tools.DatabaseTools().agent_config(context))
             assert config["case_slug"] == case["slug"]
-            company = AGENT_IDENTITIES.get(
-                case["slug"], (None, config["company_name"])
-            )[1]
-            assert company in opening_greeting(config)
-            assert "demo" not in opening_greeting(config).lower()
-            assert "To speak in English" in opening_greeting(config)
-            assert "සිංහල" in opening_greeting(config)
-            assert "தமிழ்" in opening_greeting(config)
-            assert "How can I help" not in opening_greeting(config)
+            greeting = opening_greeting(config)
+            assert case_profile(config)["name"] in greeting
+            assert "demo" not in greeting.lower()
+            if context.outbound:
+                assert "say 'English'" not in greeting
+            else:
+                assert "To speak in English" in greeting
+                assert "සිංහල" in greeting and "தமிழ்" in greeting
             assert config["voice"] == DEFAULT_VOICE
             assert agent_settings(config).voice == DEFAULT_VOICE
             assert agent_settings(config).language is None
+            instruction = agent_settings(config).system_instruction
+            assert "profile එකක්" in instruction
+            assert "send_whatsapp_message succeeds" in instruction
+            if context.outbound:
+                assert "without a language selector" in instruction
+                assert "language-selection greeting" not in instruction
+            else:
+                assert "stop and wait for the caller's choice" in instruction
             if case["slug"] == "sales":
                 assert "Electronics.lk" in agent_settings(config).system_instruction
             if case["slug"] == "support":
@@ -122,13 +132,31 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
             assert stored["recording_url"] == "s3://test-bucket/test-recording.mp3"
 
 
-def test_inbound_greeting_uses_language_selection():
-    config = {"name": "Samantha", "company_name": "Talent360", "case_slug": None}
-    greeting = opening_greeting(config)
-    assert greeting.startswith("Hello, this is Samantha from Talent360.")
-    assert "English" in greeting and "සිංහල" in greeting and "தமிழ்" in greeting
-    assert agent_settings(config).language is None
-    assert INBOUND_SYSTEM_PROMPT in agent_settings(config).system_instruction
+def test_inbound_defaults_to_talent_qualification(monkeypatch):
+    from app import server
+
+    load_dotenv(".env")
+    with psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row) as db:
+        case = db.execute(
+            "select * from portal_agent_cases where slug='talent'"
+        ).fetchone()
+        monkeypatch.setenv("VOICE_AGENT_ID", str(case["runtime_agent_id"]))
+        monkeypatch.setattr(server, "connection", lambda: nullcontext(db))
+        monkeypatch.setattr(tools, "connection", lambda: nullcontext(db))
+        context = asyncio.run(server.Calls().inbound_context("default-inbound", ""))
+        config = asyncio.run(tools.DatabaseTools().agent_config(context))
+        assert context.agent_id == str(case["agent_id"])
+        assert not context.outbound
+        assert "create_ticket" in config["enabled_tools"]
+        greeting = opening_greeting(config)
+        assert greeting.startswith("ආයුබෝවන්!")
+        assert "Samantha" in greeting and "Talent360" in greeting
+        assert "English" in greeting and "සිංහල" in greeting and "தமிழ்" in greeting
+        instruction = agent_settings(config).system_instruction
+        assert SOLUTION_PROMPTS["lead_qualification"] in instruction
+        assert "Qualify applicants" in instruction
+        assert "stop and wait for the caller's choice" in instruction
+        assert "profile එකක්" in instruction
 
 
 def test_callbacks_dial_immediately_or_after_permission(monkeypatch):
@@ -307,11 +335,11 @@ def test_callback_endpoint_rejects_unsigned_replayed_and_mismatched_requests(
         db.transaction(force_rollback=True),
     ):
         case = db.execute(
-            "select * from portal_agent_cases where slug='support'"
+            "select * from portal_agent_cases where slug='sales'"
         ).fetchone()
         request_id, phone = f"{200:032x}", "12025550149"
         db.execute(
-            "insert into portal_case_requests(id,phone,case_slug,runtime_agent_id,direction) values(%s,%s,'support',%s,'outbound')",
+            "insert into portal_case_requests(id,phone,case_slug,runtime_agent_id,direction) values(%s,%s,'sales',%s,'outbound')",
             (request_id, phone, case["runtime_agent_id"]),
         )
         monkeypatch.setenv("VOICE_AGENT_ID", str(case["runtime_agent_id"]))

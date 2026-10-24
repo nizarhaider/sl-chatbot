@@ -6,11 +6,12 @@ application has no local speech models and sends no explicit language locale.
 
 ## Editable settings
 
-Edit `app/prompts.py` for shared instructions and greetings. Edit `app/config.py`
-for model, default voice, locale, audio rates, limits and other runtime settings.
-Per-agent business instructions and selected voices remain in Neon/the portal,
-and override the shared defaults. Keep credentials in `.env`. Restart the runtime
-after changing either Python settings file.
+Edit `app/solution_prompts.py` for the four general solution prompts and language
+style. Edit `app/case_prompt.py` for short example instructions, fixed identities
+and outbound case mappings. Inbound calls default to Talent360 lead qualification.
+`app/prompts.py` combines the selected solution and example and supplies greetings.
+Edit `app/config.py` for model, voice, audio rates and runtime limits. Credentials
+stay in `.env`; agent ownership and tool permissions stay in Neon.
 
 ## Four runtime modules
 
@@ -26,8 +27,9 @@ function-call responses and Gemini reconnection. A small outbound signaling adap
 uses SmallWebRTCConnection's public peer connection. Raw Gemini usage metadata is
 preserved by one service override because the portal displays provider-specific fields.
 
-The greeting asks for English, Sinhala or Tamil. Showcase agents use Leda and
-Sri Lankan accent instructions; Talent360 retains its own settings. Timed local
+Inbound greetings offer English, Sinhala or Tamil. Outbound examples start in
+English and follow the recipient’s language. Demo agents use Leda and Sri Lankan
+accent instructions. Timed local
 speech detection has been removed; Gemini controls turn detection and interruptions.
 The prompt retains the instruction to check in when a caller goes silent, but there
 is no guaranteed five-second check-in with server-only VAD.

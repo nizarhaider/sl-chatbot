@@ -140,12 +140,24 @@ class Calls:
                 ),
             )
 
+    async def inbound_context(self, call_id, phone):
+        row = await query(
+            """select a.id,a.customer_id from portal_agent_cases c
+               join portal_agents a on a.id=c.agent_id where c.slug='talent'
+               and c.runtime_agent_id=%s and a.status<>'archived'""",
+            (os.environ["VOICE_AGENT_ID"],),
+        )
+        if not row:
+            raise HTTPException(503, "Default inbound agent unavailable")
+        return CallContext(call_id, phone, str(row["id"]), str(row["customer_id"]))
+
     async def case_request(self, request_id):
         return await query(
             """select q.*,a.id as agent_id,a.customer_id from portal_case_requests q
                join portal_agent_cases c on c.slug=q.case_slug and c.runtime_agent_id=q.runtime_agent_id
                join portal_agents a on a.id=c.agent_id where q.id=%s and q.runtime_agent_id=%s
-               and q.case_slug='sales' and q.direction='outbound' and q.expires_at>now()
+               and q.case_slug in ('sales','talent','operations','marketing')
+               and q.direction='outbound' and q.expires_at>now()
                and a.status<>'archived'""",
             (request_id, os.environ["VOICE_AGENT_ID"]),
         )
@@ -296,7 +308,10 @@ class Calls:
                         return
 
                     async def connected(peer, metadata):
-                        self.register(CallContext(call_id, event.get("from", "")), peer)
+                        context = await self.inbound_context(
+                            call_id, event.get("from", "")
+                        )
+                        self.register(context, peer)
 
                     payload = WhatsAppWebhookRequest.model_validate(
                         {
@@ -444,7 +459,8 @@ def create_app():
             raise HTTPException(503, "Voice agent unavailable")
         row = await query(
             """update portal_case_requests set state='preparing' where id=%s and phone=%s
-                           and runtime_agent_id=%s and direction='outbound' and state='pending' and expires_at>now() returning id""",
+                           and runtime_agent_id=%s and case_slug in ('sales','talent','operations','marketing')
+                           and direction='outbound' and state='pending' and expires_at>now() returning id""",
             (data["id"], data.get("phone"), os.environ["VOICE_AGENT_ID"]),
         )
         if not row:
