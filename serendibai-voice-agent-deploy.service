@@ -1,0 +1,8 @@
+[Unit]
+Description=Deploy latest SerendibAI voice agent from main
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/serendibai/voice-agent/deploy-latest.sh
