@@ -1,106 +1,75 @@
-# SerendibAI Gemini Live voice runtime
+# SerendibAI Pipecat voice runtime
 
-This service answers WhatsApp calls with Gemini Live. Gemini handles speech
-recognition, multilingual conversation, turn-taking, and speech synthesis. The
-service bridges WebRTC audio, runs database-backed tools, and archives calls.
+WhatsApp calls use Pipecat 1.14.0 SmallWebRTC and Gemini 3.8 Live. Gemini handles
+speech understanding, server-side turn detection and speech generation. The
+application has no local speech models and sends no explicit language locale.
 
-## Runtime path
+## Editable settings
 
-```text
-WhatsApp Call -> aiortc -> Gemini Live -> aiortc -> WhatsApp Call
-                              |
-                          Neon tools
-                    (knowledge, orders, booking)
-```
+Edit `app/prompts.py` for shared instructions and greetings. Edit `app/config.py`
+for model, default voice, locale, audio rates, limits and other runtime settings.
+Per-agent business instructions and selected voices remain in Neon/the portal,
+and override the shared defaults. Keep credentials in `.env`. Restart the runtime
+after changing either Python settings file.
 
-The agent starts by asking the caller to say English, Sinhala, or Tamil. Gemini
-then listens and responds in the selected language using its native audio voice.
-There is no local ASR, LLM, TTS, CUDA model download, or prerecorded greeting.
+## Four runtime modules
 
-`app/whatsapp.py` serves the webhook and WebRTC. `app/gemini.py` handles Live
-audio. `app/utility/helper.py` handles call state, recording, and runtime
-startup. `app/utility/tools.py` handles Neon queries and the Meta API client.
+- `app/server.py`: FastAPI webhooks, incoming WhatsApp calls and outbound case callbacks.
+- `app/agent.py`: standard Pipecat pipeline, Gemini settings, greetings and tool hooks.
+- `app/store.py`: tenant-scoped call reports, private stereo recordings and heartbeat.
+- `app/tools.py`: business tools, permissions, Neon queries and Meta requests.
 
-## Configuration
+The pipeline follows the [Pipecat WhatsApp example](https://github.com/pipecat-ai/pipecat-examples/tree/main/whatsapp):
+transport input -> user context -> Gemini Live -> transport output -> audio buffer
+-> assistant context. Pipecat handles audio conversion, pacing, interruptions,
+function-call responses and Gemini reconnection. A small outbound signaling adapter
+uses SmallWebRTCConnection's public peer connection. Raw Gemini usage metadata is
+preserved by one service override because the portal displays provider-specific fields.
 
-Create `.env` with the WhatsApp, Gemini, database, AWS, and tunnel settings used
-by the runtime. `GEMINI_API_KEY`, `DATABASE_URL`, and `PHONE_NUMBER_ID` are
-required. The runtime reads its agent settings and stores call reports directly
-in Neon. Meta should send calls to `https://whatsapp.serendibai.lk/webhook`.
+The greeting asks for English, Sinhala or Tamil. Showcase agents use Leda and
+Sri Lankan accent instructions; Talent360 retains its own settings. Timed local
+speech detection has been removed; Gemini controls turn detection and interruptions.
+The prompt retains the instruction to check in when a caller goes silent, but there
+is no guaranteed five-second check-in with server-only VAD.
 
-## Local development
+## Configuration and operation
 
-```bash
-./deploy.sh --env local
-uv run --with pytest python -m pytest -q
-```
+Keep credentials in `.env`: `GEMINI_API_KEY`, `DATABASE_URL`, `PHONE_NUMBER_ID`,
+`WHATSAPP_ACCESS_TOKEN`, `VERIFY_TOKEN`, and AWS recording access. Set
+`WHATSAPP_APP_SECRET` to verify Meta webhook signatures. Never print credentials.
+`VOICE_AGENT_ID` pins the runtime to an agent owning the configured phone number;
+startup derives its tenant and concurrency limit from Neon.
 
-The health endpoint returns `warming_up`, `ready`, or `error`. Startup opens a
-Gemini Live connection and checks Neon before marking
-the runtime ready.
+`/` reports warming_up, ready or error. Meta calls `/webhook`. The temporary
+portal `/cases` page submits signed `/cases/call` requests with
+`PORTAL_DEMO_ENABLED=1` and the same `DEMO_SIGNING_SECRET` in the runtime and portal.
+Existing permission starts the selected callback immediately; otherwise the approved
+`serendibai_demo_call` template requests permission, and acceptance starts it.
+Callbacks are limited to five minutes. Ordinary inbound calls use the host agent.
+The older generic demo API and text-based CASE selection have been removed.
+Historical database tables and records remain untouched.
 
-## Deployment
+`uv sync --locked` installs dependencies. `uv run pytest` runs checks, including a
+private S3 recording through Pipecat/Gemini without dialing a real number.
+`./deploy.sh --env local` starts on port 8081 and may connect the production tunnel;
+do not start it alongside the hosted service. `--env remote` is used by
+`voice-agent.service` on the existing Mumbai EC2 host. Production requires uv,
+Python 3.12, ffmpeg and cloudflared. Upload source, run `uv sync --locked`, and
+restart the service only during the agreed cutover. Remove deleted application
+files from the deployment directory as part of that cutover.
 
-From the repository root, run:
+Shutdown stops calls, flushes recordings and drains database writes before closing
+HTTP clients. Recordings remain MP3 in private S3, caller left and agent right.
 
-```bash
-./deploy.sh --env local
-```
+## Deferred live validation
 
-The local mode serves the WhatsApp webhook through the Cloudflare tunnel.
-Keep the Mac awake and the process running to receive calls.
+This restructure is not a hosted runtime deployment. Before cutover acceptance:
 
-### AWS server
-
-The remote runtime runs on an Ubuntu ARM64 EC2 `t4g.small` in Mumbai
-(`ap-south-1`), instance `i-0706865fb7080934b`, with an encrypted 8 GiB gp3 disk.
-CPU credits use Standard mode
-to avoid surplus credit charges. SSH is restricted to the operator's IP;
-UDP ports 32768–60999 carry WebRTC audio. The webhook uses the existing
-Cloudflare Tunnel at `https://whatsapp.serendibai.lk/webhook`.
-
-Install Python 3.12, uv, ffmpeg, and cloudflared, then place this repository in
-`/opt/serendibai/voice-agent`, owned by `ubuntu`. Copy the runtime's required
-settings into `.env` with permissions `600`. Use the EC2 recording-storage
-role instead of AWS access keys.
-
-```bash
-sudo cp voice-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now voice-agent
-sudo systemctl status voice-agent
-sudo journalctl -u voice-agent -n 50 --no-pager
-```
-
-Run `sudo systemctl restart voice-agent` after uploading a new version.
-The service starts on boot and restarts after failures. Stop other copies
-of this runtime before connecting the production tunnel.
-
-Set `VOICE_AGENT_ID` in `.env` to pin a server to one customer's agent. Startup
-checks that this agent owns the configured `PHONE_NUMBER_ID` and derives its
-customer ID from Neon. Customer feature limits are checked on every tool execution.
+1. Call Talent360 inbound; confirm its original greeting and selected language.
+2. Request one showcase callback, testing existing permission and permission acceptance.
+3. Confirm Leda, all three language choices and silence behavior.
+4. Interrupt a long response and check that queued speech stops promptly.
+5. Complete a ticket or appointment; inspect the persisted tenant record.
+6. Open the transcript and recording; check both speakers, timing and usage fields.
 
 Transcripts: https://portal.serendibai.lk/dashboard
-
-### Case demo callbacks
-
-The temporary portal `/cases` page selects Support, Sales, Operations, Marketing
-or Talent. Apply the portal repository's `db/cases.sql` migration before starting
-this version. Submitting a number requests an outbound callback. Existing WhatsApp
-call permission means immediate dialing; otherwise the approved
-`serendibai_demo_call` template requests permission, and accepting it triggers the
-call automatically. Calls last at most five minutes. Each demo has its own agent
-and tenant for tools, transcripts and recordings. Talent 360 configuration is
-unchanged. The temporary portal setup will be removed after recording, with the
-showcase and callback form moving to the website.
-
-Website demo calls require `PORTAL_DEMO_ENABLED=1` and
-`PORTAL_URL=https://portal.serendibai.lk` on the runtime, plus the same
-`DEMO_SIGNING_SECRET` on the runtime and portal. Outbound audio starts after
-WhatsApp reports that the recipient answered. Demo calls are capped at three minutes.
-
-The one live test downloads a private speech clip from the recordings bucket,
-sends it to Gemini Live, and requires a spoken response. Call recordings are
-archived to the same private bucket.
-
-Call transcripts and event history are stored in Neon.

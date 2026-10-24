@@ -10,7 +10,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/opt/serendibai/voice-agent/deploy.sh --env remote
 Restart=always
 RestartSec=5
-TimeoutStopSec=30
+TimeoutStopSec=90
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

@@ -2,52 +2,89 @@ import asyncio
 import subprocess
 
 import boto3
+from botocore.config import Config
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from pipecat.frames.frames import EndFrame, InputAudioRawFrame, OutputAudioRawFrame, LLMRunFrame
+from pipecat.processors.filters.identity_filter import IdentityFilter
+from pipecat.workers.runner import WorkerRunner
 
-from app.utility.helper import S3_BUCKET
-from app.gemini import GEMINI_LIVE_MODEL
+from app.agent import build_pipeline
+from app.store import CallState, S3_BUCKET
+from app.tools import CallContext
 
 
-async def _check_recording():
-    recording = boto3.client("s3").get_object(
-        Bucket=S3_BUCKET, Key="test-fixtures/gemini-live-input.wav"
-    )["Body"].read()
+class TestTransport:
+    __test__ = False
+
+    def __init__(self):
+        self.source = IdentityFilter()
+        self.sink = IdentityFilter()
+
+    def input(self):
+        return self.source
+
+    def output(self):
+        return self.sink
+
+
+async def check_recording():
+    def download():
+        client = boto3.client("s3", config=Config(connect_timeout=10, read_timeout=20))
+        with client.get_object(Bucket=S3_BUCKET, Key="test-fixtures/gemini-live-input.wav")["Body"] as body:
+            return body.read()
+    recording = await asyncio.to_thread(download)
     audio = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "s16le", "-ar", "16000", "-ac", "1", "pipe:1"],
         input=recording, capture_output=True, check=True,
     ).stdout
-    assert audio
-    client = genai.Client()
-    async with client.aio.live.connect(
-        model=GEMINI_LIVE_MODEL,
-        config={
-            "response_modalities": ["AUDIO"],
-            "system_instruction": "Listen to this recording and reply with one short spoken sentence.",
-            "realtime_input_config": {"automatic_activity_detection": {"disabled": True}},
-        },
-    ) as session:
-        async def exchange():
-            await session.send_realtime_input(activity_start=types.ActivityStart())
-            for offset in range(0, len(audio), 3200):
-                await session.send_realtime_input(audio=types.Blob(data=audio[offset:offset + 3200], mime_type="audio/pcm;rate=16000"))
-                await asyncio.sleep(0.1)
-            await session.send_realtime_input(activity_end=types.ActivityEnd())
-            response_audio = bytearray()
-            async for response in session.receive():
-                content = response.server_content
-                if content and content.model_turn:
-                    for part in content.model_turn.parts or []:
-                        if part.inline_data and part.inline_data.data:
-                            response_audio.extend(part.inline_data.data)
-                            if len(response_audio) >= 4800:
-                                return
-            raise AssertionError("Gemini Live did not return audio")
+    state, context = CallState(persist=False), CallContext("fixture", "")
+    state.start_call(context)
+    archived = []
+    state.archive = lambda call_id, pcm: archived.append(pcm)
+    worker, recorder = build_pipeline(TestTransport(), {
+        "name": "Samantha", "company_name": "SerendibAI", "voice": "Leda",
+        "instructions": "Listen to the caller and reply with one short spoken sentence.",
+        "languages": ["English"],
+    }, context, state, greet=False)
+    heard, started = asyncio.Event(), asyncio.Event()
+    returned = bytearray()
+    worker.set_reached_downstream_filter((OutputAudioRawFrame,))
 
-        await asyncio.wait_for(exchange(), timeout=90)
+    @worker.event_handler("on_frame_reached_downstream")
+    async def output(worker, frame):
+        returned.extend(frame.audio)
+        if len(returned) >= 4800:
+            heard.set()
+
+    @worker.event_handler("on_pipeline_started")
+    async def ready(worker, frame):
+        await recorder.start_recording()
+        await worker.queue_frames([LLMRunFrame()])
+        started.set()
+
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    task = asyncio.create_task(runner.run())
+    try:
+        await asyncio.wait_for(started.wait(), 30)
+        await asyncio.sleep(3)
+        for offset in range(0, len(audio), 3200):
+            await worker.queue_frames([InputAudioRawFrame(audio[offset:offset + 3200], 16000, 1)])
+            await asyncio.sleep(0.1)
+        await worker.queue_frames([InputAudioRawFrame(bytes(32000), 16000, 1)])
+        await asyncio.wait_for(heard.wait(), 60)
+        await worker.queue_frames([EndFrame()])
+        await asyncio.wait_for(task, 20)
+    finally:
+        await runner.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await state.close()
+    assert returned
+    assert archived and len(archived[0]) % 4 == 0
+    assert any(e["kind"] == "gemini_live.usage" for e in state.calls[context.call_id]["events"])
+    assert state.calls[context.call_id]["transcript"]
 
 
-def test_gemini_live_returns_audio_from_s3_recording():
+def test_pipecat_returns_audio_from_s3_recording():
     load_dotenv(".env")
-    asyncio.run(_check_recording())
+    asyncio.run(check_recording())

@@ -38,7 +38,7 @@ os.environ["VOICE_AGENT_ID"] = str(agent[0])
 os.environ["VOICE_CUSTOMER_ID"] = str(agent[1])
 os.environ["MAX_CALLS"] = str(agent[2])
 print("Starting voice server for agent", agent[0], flush=True)
-from app.utility.helper import run_runtime
+from app.store import run_runtime
 run_runtime()
 PY
     ;;
