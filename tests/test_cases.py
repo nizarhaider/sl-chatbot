@@ -39,7 +39,7 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
             assert context.agent_id == str(case["agent_id"])
             assert context.customer_id == str(case["customer_id"])
             config = asyncio.run(tools.DatabaseTools().agent_config(context))
-            assert config["is_case"]
+            assert config["case_slug"] == case["slug"]
             assert config["company_name"] in opening_greeting(config)
             assert "demo" not in opening_greeting(config).lower()
             assert "To speak in English" in opening_greeting(config)
@@ -122,7 +122,7 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
 
 
 def test_existing_greeting_is_unchanged():
-    config = {"name": "Samantha", "company_name": "Talent 360", "is_case": False}
+    config = {"name": "Samantha", "company_name": "Talent 360", "case_slug": None}
     assert opening_greeting(config) == GREETING_TEMPLATE.format(
         agent_name="Samantha", company_name="Talent 360"
     )

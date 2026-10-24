@@ -139,7 +139,6 @@ class DatabaseTools:
                 ],
                 "max_calls": row["max_calls"],
                 "version": row["version"],
-                "is_case": bool(row["case_slug"]),
                 "case_slug": row["case_slug"],
             }
 

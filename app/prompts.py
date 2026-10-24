@@ -8,18 +8,43 @@ GREETING_TEMPLATE = (
     "தமிழில் பேச, “தமிழ்” என்று சொல்லுங்கள். To speak in English, say 'English'. "
 )
 
+OUTBOUND_PROMPTS = {
+    "support": "After the caller chooses a language, acknowledge their order concern and ask for the order reference.",
+    "sales": "After the caller chooses a language, ask about their electricity bill and what they want to learn about solar.",
+    "operations": "After the caller chooses a language, ask which area or clinic branch suits them for the consultation.",
+    "marketing": "After the caller chooses a language, lead with: You left your number with one of our agents about a vacation package. Is now a good time to talk? Say that in the selected language.",
+    "talent": "After the caller chooses a language, ask what kind of role they are looking for.",
+}
+
+OUTBOUND_LANGUAGE_PROMPT = (
+    " Begin with the supplied language-selection greeting, then stop and wait for the caller to choose "
+    "English, Sinhala or Tamil. Do not start the business conversation before their choice. Continue in the "
+    "selected language and follow any later language switch. "
+)
+
+OUTBOUND_VOICE_PROMPT = (
+    " Perform every spoken turn as a native Sri Lankan woman speaking English as heard in Colombo, with "
+    "natural Sinhala-influenced vowels and Sri Lankan English cadence. Keep the selected female voice and this "
+    "Sri Lankan accent consistent from the first hello. Use Sri Lankan English, not an Indian English accent; "
+    "avoid drifting into American or British pronunciation. Use an everyday, warm business-phone delivery, "
+    "not a polished international announcer voice or a caricature. Pronounce Bambalapitiya naturally as "
+    "බම්බලපිටිය. Speak normal business dialogue without announcing demo, simulation, recording or role-play. "
+    "If asked about being AI or this being a staged business, answer honestly."
+)
+
 
 def opening_greeting(agent_config: dict) -> str:
     agent_name = agent_config["name"].strip()
     company_name = agent_config["company_name"].strip()
     if not agent_name or not company_name:
         raise RuntimeError("Set the agent and company names in the portal")
-    if agent_config.get("is_case"):
+    if agent_config.get("case_slug"):
         return f"Hello, this is {agent_name} from {company_name}. To speak in English, say 'English'. සිංහලෙන් කතා කිරීමට ‘සිංහල’ කියන්න. தமிழில் பேச, ‘தமிழ்’ என்று சொல்லுங்கள்."
     return GREETING_TEMPLATE.format(agent_name=agent_name, company_name=company_name)
 
 
 def system_prompt(agent_config):
+    case_slug = agent_config.get("case_slug")
     instructions = (
         (agent_config.get("instructions", ""))
         + (f"\nToday is {datetime.now(ZoneInfo(TIME_ZONE)).date().isoformat()}. ")
@@ -28,7 +53,7 @@ def system_prompt(agent_config):
         )
         + (
             ""
-            if agent_config.get("is_case")
+            if case_slug
             else "Before addressing the customer make sure to check with them if your pronounciation is correct of their name."
         )
         + "Speak naturally and concisely. Listen to each caller turn. Use enabled tools for current business facts. "
@@ -54,22 +79,11 @@ def system_prompt(agent_config):
         "asked. If a required tool is disabled, explain your limitation."
         + "Keep your responses concise and helpful."
     )
-    if agent_config.get("is_case"):
+    if case_slug in OUTBOUND_PROMPTS:
         instructions += (
-            " Begin with the supplied language-selection greeting, then stop and wait for the caller to choose "
-            "English, Sinhala or Tamil. Do not start the business conversation before their choice. Continue in the "
-            "selected language and follow any later language switch. After selection, ask how you can help. For Ruhunu"
-            " Holidays instead lead with: You left your number with one of our agents about a vacation package. Is now"
-            " a good time to talk? Say that in the selected language."
-        )
-        instructions += (
-            " Perform every spoken turn as a native Sri Lankan woman speaking English as heard in Colombo, with "
-            "natural Sinhala-influenced vowels and Sri Lankan English cadence. Keep the selected female voice and this"
-            " Sri Lankan accent consistent from the first hello. Use Sri Lankan English, not an Indian English accent;"
-            " avoid drifting into American or British pronunciation. Use an everyday, warm business-phone delivery, "
-            "not a polished international announcer voice or a caricature. Pronounce Bambalapitiya naturally as "
-            "බම්බලපිටිය. Speak normal business dialogue without announcing demo, simulation, recording or role-play. "
-            "If asked about being AI or this being a staged business, answer honestly."
+            OUTBOUND_LANGUAGE_PROMPT
+            + OUTBOUND_PROMPTS[case_slug]
+            + OUTBOUND_VOICE_PROMPT
         )
     return instructions
 
