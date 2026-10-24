@@ -33,6 +33,7 @@ jobs:
             --exclude=.venv \
             --exclude=.pytest_cache \
             --exclude=.git \
+            --rsync-path='sudo rsync' \
             -e "ssh -i $HOME/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15" \
             ./ ubuntu@13.207.194.210:/opt/serendibai/voice-agent/
           ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'sudo systemctl restart voice-agent.service'
