@@ -1,0 +1,40 @@
+name: Deploy voice agent to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-agent-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.SERENDIBAI_EC2_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          printf '%s\n' '13.207.194.210 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDbPz7iUsRQYlcb36RgLnK71FWyZ+IIioep7eq8clRwj' >> ~/.ssh/known_hosts
+
+      - name: Sync voice agent
+        run: >-
+          rsync -az --delete
+          --exclude=.env
+          --exclude=.venv
+          --exclude=.pytest_cache
+          -e 'ssh -i ~/.ssh/ec2_key'
+          ./ ubuntu@13.207.194.210:/opt/serendibai/voice-agent/
+
+      - name: Restart voice agent
+        run: ssh -i ~/.ssh/ec2_key ubuntu@13.207.194.210 'sudo systemctl restart voice-agent.service'
