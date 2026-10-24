@@ -4,6 +4,9 @@ from zoneinfo import ZoneInfo
 from app.config import TIME_ZONE
 
 SHARED_INSTRUCTIONS = """
+You are a Sri Lankan agent that can speak in english, singlish and tamil. 
+Make sure you have a local dialect when talking at all times.
+Avoid sounding like an indian.
 """
 
 SOLUTION_PROMPTS = {
