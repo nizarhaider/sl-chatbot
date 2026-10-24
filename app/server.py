@@ -220,7 +220,11 @@ class Calls:
             )
             self.register(
                 CallContext(
-                    call_id, context.caller_phone, context.agent_id, context.customer_id
+                    call_id,
+                    context.caller_phone,
+                    context.agent_id,
+                    context.customer_id,
+                    outbound=True,
                 ),
                 peer,
                 outbound=True,

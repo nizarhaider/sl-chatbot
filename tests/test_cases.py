@@ -11,7 +11,7 @@ from psycopg.rows import dict_row
 from app import store, tools
 from app.agent import agent_settings
 from app.config import DEFAULT_VOICE
-from app.prompts import GREETING_TEMPLATE, opening_greeting
+from app.prompts import AGENT_IDENTITIES, INBOUND_SYSTEM_PROMPT, opening_greeting
 from app.store import CallStore
 
 
@@ -40,7 +40,10 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
             assert context.customer_id == str(case["customer_id"])
             config = asyncio.run(tools.DatabaseTools().agent_config(context))
             assert config["case_slug"] == case["slug"]
-            assert config["company_name"] in opening_greeting(config)
+            company = AGENT_IDENTITIES.get(
+                case["slug"], (None, config["company_name"])
+            )[1]
+            assert company in opening_greeting(config)
             assert "demo" not in opening_greeting(config).lower()
             assert "To speak in English" in opening_greeting(config)
             assert "සිංහල" in opening_greeting(config)
@@ -49,18 +52,16 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
             assert config["voice"] == DEFAULT_VOICE
             assert agent_settings(config).voice == DEFAULT_VOICE
             assert agent_settings(config).language is None
-            if case["slug"] == "marketing":
-                assert (
-                    "You left your number" in agent_settings(config).system_instruction
-                )
+            if case["slug"] == "sales":
+                assert "Electronics.lk" in agent_settings(config).system_instruction
             if case["slug"] == "support":
                 order = asyncio.run(
                     tools.DatabaseTools().execute(
-                        "search_knowledge", {"query": "WL-1042"}, context
+                        "search_knowledge", {"query": "RS-1042"}, context
                     )
                 )
                 assert order["ok"] and any(
-                    "https://portal.serendibai.lk/cases/order/WL-1042" in row["content"]
+                    "https://portal.serendibai.lk/cases/order/RS-1042" in row["content"]
                     for row in order["results"]
                 )
             assert config["enabled_tools"]
@@ -121,12 +122,13 @@ def test_case_tools_and_call_records_are_tenant_scoped(monkeypatch):
             assert stored["recording_url"] == "s3://test-bucket/test-recording.mp3"
 
 
-def test_existing_greeting_is_unchanged():
-    config = {"name": "Samantha", "company_name": "Talent 360", "case_slug": None}
-    assert opening_greeting(config) == GREETING_TEMPLATE.format(
-        agent_name="Samantha", company_name="Talent 360"
-    )
+def test_inbound_greeting_uses_language_selection():
+    config = {"name": "Samantha", "company_name": "Talent360", "case_slug": None}
+    greeting = opening_greeting(config)
+    assert greeting.startswith("Hello, this is Samantha from Talent360.")
+    assert "English" in greeting and "සිංහල" in greeting and "தமிழ்" in greeting
     assert agent_settings(config).language is None
+    assert INBOUND_SYSTEM_PROMPT in agent_settings(config).system_instruction
 
 
 def test_callbacks_dial_immediately_or_after_permission(monkeypatch):
