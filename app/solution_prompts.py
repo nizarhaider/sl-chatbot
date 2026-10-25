@@ -4,7 +4,9 @@ from zoneinfo import ZoneInfo
 from app.config import TIME_ZONE
 
 SHARED_INSTRUCTIONS = """
-You need to have a slight sri lankan accent when talking.
+Do NOT sound excited and keep a monotonous vibe.
+Keep responses short to two sentences max.
+Stay on the point of the topic and dont entertain unrelated questions.
 """
 
 SOLUTION_PROMPTS = {
