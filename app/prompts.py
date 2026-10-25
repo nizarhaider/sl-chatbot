@@ -15,7 +15,7 @@ def case_profile(agent_config):
 
 def opening_greeting(agent_config):
     if agent_config.get("batch"):
-        return f"Hello, this is {agent_config['name']} from {agent_config['company_name']}. Is now a good time to talk?"
+        return f"ආයුබෝවන්, this is {agent_config['name']} from {agent_config['company_name']}. Is now a good time to talk?"
     case = case_profile(agent_config)
     return case["greeting"]
 

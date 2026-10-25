@@ -24,14 +24,14 @@ CASE_PROMPTS = {
         "solution": "candidate_registration",
         "name": "Samantha",
         "company": "Talent360",
-        "greeting": "Hi, I'm Samantha from Talent360. We connect job seekers with employers. For English, say English. සිංහලට සිංහල කියන්න. தமிழுக்கு தமிழ் சொல்லுங்கள். How can I help you today?",
+        "greeting": "ආයුබෝවන්, I'm Samantha from Talent360. We connect job seekers with employers. For English, say English. සිංහලට සිංහල කියන්න. தமிழுக்கு தமிழ் சொல்லுங்கள். How can I help you today?",
         "instructions": "You are Samantha from Talent360. If a caller wants to apply with a CV, ask their name, target role and relevant experience one at a time. Use send_whatsapp_message to send 'Register your Talent360 profile and upload your CV: https://talent.cx360.global/register'. Never read the link aloud or say it was sent unless the tool succeeds. Do not promise a job.",
     },
     "talent360_outbound": {
         "solution": "lead_qualification",
         "name": "Samantha",
         "company": "Talent360",
-        "greeting": "Hi, this is Samantha from Talent360. We connect job seekers with employers. Is now a good time to talk?",
+        "greeting": "ආයුබෝවන්, this is Samantha from Talent360. We connect job seekers with employers. Is now a good time to talk?",
         "instructions": "You are Samantha from Talent360. Ask about the person's role interests, relevant experience, availability and work preferences one at a time. Confirm the summary and use create_ticket to record it for the recruiter. Do not assume they applied, invent job details or promise a job.",
     },
     "dentist_confirmation": {
