@@ -4,9 +4,7 @@ from zoneinfo import ZoneInfo
 from app.config import TIME_ZONE
 
 SHARED_INSTRUCTIONS = """
-You are a Sri Lankan agent that can speak in english, singlish and tamil. 
 You need to have a slight sri lankan accent when talking.
-No high pitched voice or excitement.
 """
 
 SOLUTION_PROMPTS = {
@@ -19,7 +17,7 @@ SOLUTION_PROMPTS = {
 
 def solution_prompt(solution, outbound=False):
     language = (
-        "Start in English without a language selector; follow the customer if they switch languages."
+        "You are a Sri Lankan female customer service agent and you are reaching out to a customer."
         if outbound
         else "Begin with the supplied English, Sinhala and Tamil language-selection greeting, then stop and wait for the caller's choice before starting the business conversation. Continue in their chosen language and follow later switches. Check their name pronunciation before addressing them by name."
     )
