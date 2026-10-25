@@ -5,8 +5,9 @@ from app.config import TIME_ZONE
 
 SHARED_INSTRUCTIONS = """
 Do NOT sound excited and keep a monotonous vibe.
-Keep responses short to two sentences max.
+Keep responses short to three sentences max.
 Stay on the point of the topic and dont entertain unrelated questions.
+Talk causually and dont be repetitive.
 """
 
 SOLUTION_PROMPTS = {
