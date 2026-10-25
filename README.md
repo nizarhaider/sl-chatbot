@@ -6,9 +6,10 @@ application has no local speech models and sends no explicit language locale.
 
 ## Editable settings
 
-Edit `app/solution_prompts.py` for the four general solution prompts and language
+Edit `app/solution_prompts.py` for the general solution prompts and language
 style. Edit `app/case_prompt.py` for short example instructions, fixed identities
-and outbound case mappings. Inbound calls default to Talent360 lead qualification.
+and outbound case mappings. Inbound Talent360 handles applicant registration;
+outbound Talent360 qualifies candidates.
 `app/prompts.py` combines the selected solution and example and supplies greetings.
 Edit `app/config.py` for model, voice, audio rates and runtime limits. Credentials
 stay in `.env`; agent ownership and tool permissions stay in Neon.

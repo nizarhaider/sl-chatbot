@@ -22,7 +22,7 @@ load_dotenv()
 from app.agent import prewarm, run_agent
 from app.config import CASE_CALL_SECONDS, DEFAULT_MAX_CALLS, ICE_SERVERS
 from app.store import call_state
-from app.tools import CallContext, connection, whatsapp_api
+from app.tools import CallContext, DatabaseTools, connection, whatsapp_api
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ async def query(sql, params=()):
 class Call:
     context: CallContext
     connection: SmallWebRTCConnection
+    config: dict | None = None
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
     timer: asyncio.TimerHandle | None = None
@@ -82,8 +83,8 @@ class Calls:
             self.reservations.add(key)
             return True
 
-    def register(self, context, peer, outbound=False):
-        call = Call(context, peer, outbound=outbound)
+    def register(self, context, peer, outbound=False, config=None):
+        call = Call(context, peer, config=config, outbound=outbound)
         self.connections[context.call_id] = call
         call_state.start_call(context)
         if not outbound:
@@ -98,7 +99,7 @@ class Calls:
 
     async def run(self, call):
         try:
-            await run_agent(call.connection, call.context, call.ready)
+            await run_agent(call.connection, call.context, call.ready, config=call.config)
         except Exception:
             call.failed = True
             logger.exception("Voice pipeline failed")
@@ -303,15 +304,22 @@ class Calls:
                     call.answered = True
                     call.ready.set()
             elif session.get("sdp_type") == "offer":
+                prepared = None
                 try:
                     if not await self.reserve(call_id):
                         return
 
-                    async def connected(peer, metadata):
+                    async def prepare():
                         context = await self.inbound_context(
                             call_id, event.get("from", "")
                         )
-                        self.register(context, peer)
+                        return context, await DatabaseTools().agent_config(context)
+
+                    prepared = asyncio.create_task(prepare())
+
+                    async def connected(peer, metadata):
+                        context, config = await prepared
+                        self.register(context, peer, config=config)
 
                     payload = WhatsAppWebhookRequest.model_validate(
                         {
@@ -333,6 +341,9 @@ class Calls:
                 except HTTPException:
                     await whatsapp_api.send_call_action(call_id, "reject")
                 finally:
+                    if prepared:
+                        prepared.cancel()
+                        await asyncio.gather(prepared, return_exceptions=True)
                     self.reservations.discard(call_id)
 
     async def close(self):

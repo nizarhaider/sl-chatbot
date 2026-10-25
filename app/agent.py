@@ -1,4 +1,3 @@
-import asyncio
 import os
 
 from google import genai
@@ -24,7 +23,6 @@ from pipecat.workers.runner import WorkerRunner
 from app.config import (
     DEFAULT_VOICE,
     GEMINI_LIVE_MODEL,
-    GREETING_DELAY_SECONDS,
     INPUT_SAMPLE_RATE,
     LANGUAGE_CODE,
     OUTPUT_SAMPLE_RATE,
@@ -165,8 +163,8 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
     return worker, recording
 
 
-async def run_agent(connection, context, ready, state=call_state):
-    config = await DatabaseTools().agent_config(context)
+async def run_agent(connection, context, ready, state=call_state, config=None):
+    config = config or await DatabaseTools().agent_config(context)
     transport = SmallWebRTCTransport(
         connection,
         TransportParams(
@@ -182,8 +180,6 @@ async def run_agent(connection, context, ready, state=call_state):
         await ready.wait()
         state.active(context.call_id)
         await recording.start_recording()
-        if context.outbound:
-            await asyncio.sleep(GREETING_DELAY_SECONDS)
         await worker.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")

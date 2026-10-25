@@ -13,13 +13,7 @@ def case_profile(agent_config):
 
 def opening_greeting(agent_config):
     case = case_profile(agent_config)
-    if agent_config.get("outbound"):
-        return case["greeting"]
-    return (
-        f"ආයුබෝවන්!. මම {case['name']}, {case['company']} වෙතින් කතා කරන්නේ. "
-        "ඔබට සිංහලෙන් කතා කිරීමට ‘සිංහල’ කියන්න. தமிழில் பேச, ‘தமிழ்’ என்று சொல்லுங்கள். "
-        "To speak in English, say 'English'."
-    )
+    return case["greeting"]
 
 
 def system_prompt(agent_config):
