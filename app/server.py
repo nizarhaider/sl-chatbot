@@ -154,12 +154,14 @@ class Calls:
 
     async def case_request(self, request_id):
         return await query(
-            """select q.*,a.id as agent_id,a.customer_id from portal_case_requests q
-               join portal_agent_cases c on c.slug=q.case_slug and c.runtime_agent_id=q.runtime_agent_id
-               join portal_agents a on a.id=c.agent_id where q.id=%s and q.runtime_agent_id=%s
-               and q.case_slug in ('sales','talent','operations','marketing')
+            """select q.*,a.id as agent_id,a.customer_id,b.instructions,r.data as row_data from portal_case_requests q
+               left join portal_agent_cases c on c.slug=q.case_slug and c.runtime_agent_id=q.runtime_agent_id
+               left join portal_outbound_rows r on r.id=q.outbound_row_id
+               left join portal_outbound_batches b on b.id=r.batch_id
+               join portal_agents a on a.id=coalesce(b.agent_id,c.agent_id) where q.id=%s and q.runtime_agent_id=%s
+               and (q.case_slug in ('sales','talent','operations','marketing') or q.outbound_row_id is not null)
                and q.direction='outbound' and q.expires_at>now()
-               and a.status<>'archived'""",
+               and a.status<>'archived' and (b.id is null or b.customer_id=a.customer_id)""",
             (request_id, os.environ["VOICE_AGENT_ID"]),
         )
 
@@ -209,7 +211,15 @@ class Calls:
                 context = CallContext(
                     "", row["phone"], str(row["agent_id"]), str(row["customer_id"])
                 )
-                call_id = await self.dial(request_id, context)
+                config = None
+                if row["outbound_row_id"]:
+                    config = await DatabaseTools().agent_config(context)
+                    config["outbound"] = True
+                    config["batch"] = {
+                        "instructions": row["instructions"],
+                        "data": row["row_data"],
+                    }
+                call_id = await self.dial(request_id, context, config=config)
                 await query(
                     "update portal_case_requests set call_id=%s where id=%s",
                     (call_id, request_id),
@@ -224,7 +234,7 @@ class Calls:
             if reserved:
                 self.reservations.discard(request_id)
 
-    async def dial(self, request_id, context):
+    async def dial(self, request_id, context, config=None):
         peer = SmallWebRTCConnection(ice_servers=ICE_SERVERS)
         peer.pc.addTransceiver("audio", direction="sendrecv")
         try:
@@ -242,6 +252,7 @@ class Calls:
                 ),
                 peer,
                 outbound=True,
+                config=config,
             )
             return call_id
         except Exception:
@@ -446,9 +457,11 @@ def create_app():
         return Response("EVENT_RECEIVED")
 
     @app.post("/cases/call")
+    @app.post("/outbound/call")
     async def callback(request: Request):
         secret = os.environ.get("DEMO_SIGNING_SECRET")
-        if not secret or os.environ.get("PORTAL_DEMO_ENABLED") != "1":
+        batch = request.url.path == "/outbound/call"
+        if not secret or (not batch and os.environ.get("PORTAL_DEMO_ENABLED") != "1"):
             raise HTTPException(404, "Case calling is disabled")
         body = await request.body()
         if not hmac.compare_digest(
@@ -470,9 +483,11 @@ def create_app():
             raise HTTPException(503, "Voice agent unavailable")
         row = await query(
             """update portal_case_requests set state='preparing' where id=%s and phone=%s
-                           and runtime_agent_id=%s and case_slug in ('sales','talent','operations','marketing')
+                           and runtime_agent_id=%s and
+                           ((%s and outbound_row_id is not null) or
+                            (not %s and case_slug in ('sales','talent','operations','marketing')))
                            and direction='outbound' and state='pending' and expires_at>now() returning id""",
-            (data["id"], data.get("phone"), os.environ["VOICE_AGENT_ID"]),
+            (data["id"], data.get("phone"), os.environ["VOICE_AGENT_ID"], batch, batch),
         )
         if not row:
             raise HTTPException(409, "Callback already handled or expired")
