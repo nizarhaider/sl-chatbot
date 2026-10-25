@@ -87,6 +87,7 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
         state,
         api_key=os.environ["GEMINI_API_KEY"],
         settings=agent_settings(config),
+        tools=schemas,
         inference_on_context_initialization=greet,
     )
     history = LLMContext(
@@ -98,7 +99,6 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
                 else AUDITION_PROMPT,
             }
         ],
-        tools=schemas,
     )
     user, assistant = LLMContextAggregatorPair(
         history,
@@ -182,7 +182,8 @@ async def run_agent(connection, context, ready, state=call_state):
         await ready.wait()
         state.active(context.call_id)
         await recording.start_recording()
-        await asyncio.sleep(GREETING_DELAY_SECONDS)
+        if context.outbound:
+            await asyncio.sleep(GREETING_DELAY_SECONDS)
         await worker.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
