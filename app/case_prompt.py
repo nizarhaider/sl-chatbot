@@ -31,7 +31,7 @@ CASE_PROMPTS = {
         "solution": "lead_qualification",
         "name": "Samantha",
         "company": "Talent360",
-        "greeting": "ආයුබෝවන්, this is Samantha from Talent360. We connect job seekers with employers. Is now a good time to talk?",
+        "greeting": "Hello, this is Samantha from Talent360. We connect job seekers with employers. Is now a good time to talk?",
         "instructions": "You are Samantha from Talent360. Ask about the person's role interests, relevant experience, availability and work preferences one at a time. Confirm the summary and use create_ticket to record it for the recruiter. Do not assume they applied, invent job details or promise a job.",
     },
     "dentist_confirmation": {
