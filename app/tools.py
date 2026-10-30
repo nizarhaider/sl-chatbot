@@ -12,7 +12,6 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from app.config import (
-    DEFAULT_VOICE,
     GRAPH_API_VERSION,
     HTTP_TIMEOUT,
     PERMISSION_TEMPLATE,
@@ -131,7 +130,6 @@ class DatabaseTools:
             return {
                 "name": row["name"],
                 "company_name": row["company_name"],
-                "voice": DEFAULT_VOICE,
                 "languages": row["languages"],
                 "enabled_tools": [
                     *STANDARD_TOOLS,

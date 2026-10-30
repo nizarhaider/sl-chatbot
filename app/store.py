@@ -305,7 +305,7 @@ def run_runtime():
                     ).fetchone()
                     restart = current is not None and current["deployed_version"] == -1
                     row = db.execute(
-                        "update portal_agents set heartbeat_at=now(),telemetry=%s,status=%s,deployed_version=version where id=%s returning max_calls",
+                        "update portal_agents set heartbeat_at=now(),telemetry=%s,status=%s,deployed_version=version where id=%s and status<>'archived' returning max_calls",
                         (
                             Jsonb(telemetry),
                             "restarting" if restart else status,
