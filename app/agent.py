@@ -61,8 +61,7 @@ class CallGeminiService(GeminiLiveLLMService):
 
 
 async def prewarm():
-    config = await DatabaseTools().agent_config()
-    opening_greeting(config)
+    await DatabaseTools().agent_config()
     async with genai.Client(api_key=os.environ["GEMINI_API_KEY"]).aio.live.connect(
         model=GEMINI_LIVE_MODEL,
         config={

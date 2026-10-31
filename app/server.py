@@ -154,7 +154,7 @@ class Calls:
 
     async def case_request(self, request_id):
         return await query(
-            """select q.*,a.id as agent_id,a.customer_id,b.instructions,r.data as row_data from portal_case_requests q
+            """select q.*,a.id as agent_id,a.customer_id,b.instructions from portal_case_requests q
                left join portal_agent_cases c on c.slug=q.case_slug and c.runtime_agent_id=q.runtime_agent_id
                left join portal_outbound_rows r on r.id=q.outbound_row_id
                left join portal_outbound_batches b on b.id=r.batch_id
@@ -215,10 +215,7 @@ class Calls:
                 if row["outbound_row_id"]:
                     config = await DatabaseTools().agent_config(context)
                     config["outbound"] = True
-                    config["batch"] = {
-                        "instructions": row["instructions"],
-                        "data": row["row_data"],
-                    }
+                    config["batch"] = {"instructions": row["instructions"]}
                 call_id = await self.dial(request_id, context, config=config)
                 await query(
                     "update portal_case_requests set call_id=%s where id=%s",
