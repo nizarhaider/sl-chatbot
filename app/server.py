@@ -260,9 +260,8 @@ class Calls:
         for status in value.get("statuses", []):
             if status.get("status") in ("failed", "REJECTED"):
                 await query(
-                    """update portal_case_requests set state='failed',error='WhatsApp could not deliver the permission request or call.'
-                            where runtime_agent_id=%s and state in ('permission','calling') and (message_id=%s or call_id=%s)""",
-                    (os.environ["VOICE_AGENT_ID"], status.get("id"), status.get("id")),
+                    "update portal_case_requests set state='failed',error=%s where runtime_agent_id=%s and state in ('permission','calling') and (message_id=%s or call_id=%s)",
+                    (json.dumps(status.get("errors") or "WhatsApp delivery failed")[:400], os.environ["VOICE_AGENT_ID"], status.get("id"), status.get("id")),
                 )
                 await self.close_call(status.get("id"))
         for message in value.get("messages", []):
