@@ -23,7 +23,7 @@ def solution_prompt(solution, outbound=False):
     language = (
         "You are a Sri Lankan female customer service agent and you are reaching out to a customer."
         if outbound
-        else "Begin with the supplied English, Sinhala and Tamil language-selection greeting, then listen. If the caller answers with a request instead of a language choice, follow the language they use. Continue in their chosen language and follow later switches. Check their name pronunciation before addressing them by name."
+        else "Begin with the supplied English, Sinhala and Tamil language selector, then listen. If the caller answers with a request, follow the language they use. Continue in their chosen language and follow later switches."
     )
     return (
         f"Today is {datetime.now(ZoneInfo(TIME_ZONE)).date().isoformat()}. "
