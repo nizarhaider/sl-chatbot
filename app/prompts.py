@@ -30,4 +30,3 @@ def system_prompt(agent_config):
 
 
 START_CALL = "Begin this phone call with exactly this greeting: {greeting}"
-AUDITION_PROMPT = "Listen to the caller and respond to their recording."

@@ -1,8 +1,9 @@
+import asyncio
 import os
 
 from google import genai
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import LLMMessagesAppendFrame, LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -28,7 +29,7 @@ from app.config import (
     OUTPUT_SAMPLE_RATE,
     RECORDING_SAMPLE_RATE,
 )
-from app.prompts import AUDITION_PROMPT, START_CALL, opening_greeting, system_prompt
+from app.prompts import START_CALL, opening_greeting, system_prompt
 from app.store import call_state
 from app.tools import VOICE_TOOLS, DatabaseTools
 
@@ -47,6 +48,12 @@ class CallGeminiService(GeminiLiveLLMService):
     def __init__(self, context, state=call_state, **kwargs):
         super().__init__(**kwargs)
         self.call_context, self.call_state = context, state
+        self.first_speech = asyncio.Event()
+
+    async def _handle_msg_input_transcription(self, message):
+        if message.server_content and message.server_content.input_transcription and message.server_content.input_transcription.text:
+            self.first_speech.set()
+        await super()._handle_msg_input_transcription(message)
 
     async def _handle_msg_usage_metadata(self, message):
         if message.usage_metadata:
@@ -74,33 +81,20 @@ async def prewarm():
         pass
 
 
-def build_pipeline(transport, config, context, state=call_state, greet=True):
+def build_pipeline(transport, config, context, state=call_state):
     enabled = [tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])]
-    schemas = ToolsSchema(standard_tools=enabled)
     llm = CallGeminiService(
         context,
         state,
         api_key=os.environ["GEMINI_API_KEY"],
         settings=agent_settings(config),
-        tools=schemas,
-        inference_on_context_initialization=greet,
+        tools=ToolsSchema(standard_tools=enabled),
+        inference_on_context_initialization=not context.outbound,
     )
-    history = LLMContext(
-        messages=[
-            {
-                "role": "user",
-                "content": START_CALL.format(greeting=opening_greeting(config))
-                if greet
-                else AUDITION_PROMPT,
-            }
-        ],
-    )
+    history = LLMContext(messages=[{"role": "user", "content": START_CALL.format(greeting=opening_greeting(config))}])
     user, assistant = LLMContextAggregatorPair(
-        history,
-        realtime_service_mode=True,
-        user_params=LLMUserAggregatorParams(
-            user_turn_strategies=ExternalUserTurnStrategies()
-        ),
+        history, realtime_service_mode=True,
+        user_params=LLMUserAggregatorParams(user_turn_strategies=ExternalUserTurnStrategies()),
     )
     recording = AudioBufferProcessor(sample_rate=RECORDING_SAMPLE_RATE, num_channels=2)
     worker = PipelineWorker(
@@ -118,19 +112,11 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
     )
 
     async def execute(params):
-        state.emit(
-            context.call_id,
-            "tool.call",
-            {"name": params.function_name, "arguments": params.arguments},
-        )
+        state.emit(context.call_id, "tool.call", {"name": params.function_name, "arguments": params.arguments})
         result = await DatabaseTools().execute(
             params.function_name, params.arguments, context
         )
-        state.emit(
-            context.call_id,
-            "tool.result",
-            {"name": params.function_name, "result": result},
-        )
+        state.emit(context.call_id, "tool.result", {"name": params.function_name, "result": result})
         state.persist(context.call_id)
         await params.result_callback(result)
         if params.function_name == "end_call":
@@ -159,7 +145,7 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
     async def archive(processor, audio, sample_rate, channels):
         state.archive(context.call_id, audio)
 
-    return worker, recording
+    return worker, recording, llm
 
 
 async def run_agent(connection, context, ready, state=call_state, config=None):
@@ -170,16 +156,25 @@ async def run_agent(connection, context, ready, state=call_state, config=None):
             audio_in_enabled=True, audio_out_enabled=True, audio_out_10ms_chunks=2
         ),
     )
-    worker, recording = build_pipeline(transport, config, context, state)
+    worker, recording, llm = build_pipeline(transport, config, context, state)
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
+    greeting_timer = None
 
     @transport.event_handler("on_client_connected")
     async def connected(transport, client):
+        nonlocal greeting_timer
         await ready.wait()
         state.active(context.call_id)
         await recording.start_recording()
-        await worker.queue_frames([LLMRunFrame()])
+        if context.outbound:
+            greeting_timer = asyncio.get_running_loop().call_later(
+                5, lambda: not llm.first_speech.is_set() and asyncio.create_task(
+                    worker.queue_frames([LLMMessagesAppendFrame(messages=[{"role": "user", "content": "Start now with the supplied greeting."}], run_llm=True)])
+                ),
+            )
+        else:
+            await worker.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def disconnected(transport, client):
@@ -188,5 +183,7 @@ async def run_agent(connection, context, ready, state=call_state, config=None):
     try:
         await runner.run()
     finally:
+        if greeting_timer:
+            greeting_timer.cancel()
         await recording.stop_recording()
         state.end_call(context.call_id)
