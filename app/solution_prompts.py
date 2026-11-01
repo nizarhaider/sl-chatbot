@@ -8,6 +8,7 @@ Do NOT sound excited and keep a monotonous vibe.
 Keep responses short to three sentences max.
 Stay on the point of the topic and dont entertain unrelated questions.
 Talk causually and dont be repetitive.
+When finished or the caller declines, say a brief goodbye, then use end_call.
 """
 
 SOLUTION_PROMPTS = {

@@ -18,7 +18,7 @@ from app.config import (
 )
 
 logger = logging.getLogger(__name__)
-STANDARD_TOOLS = ("search_knowledge", "search_products", "send_whatsapp_message")
+STANDARD_TOOLS = ("search_knowledge", "search_products", "send_whatsapp_message", "end_call")
 
 
 def connection():
@@ -106,6 +106,7 @@ VOICE_TOOLS = [
         {"message": {"type": "string"}},
         ["message"],
     ),
+    FunctionSchema("end_call", "End the call after saying goodbye.", {}, []),
 ]
 
 
@@ -147,13 +148,11 @@ class DatabaseTools:
         config = await self.agent_config(context)
         if name not in config["enabled_tools"]:
             return {"ok": False, "error": "This tool is disabled."}
+        if name == "end_call":
+            return {"ok": True}
         if name == "send_whatsapp_message":
             message = str(arguments.get("message", ""))[:4000]
-            return {
-                "ok": await whatsapp_api.send_text_message(
-                    context.caller_phone, message
-                )
-            }
+            return {"ok": await whatsapp_api.send_text_message(context.caller_phone, message)}
         try:
             return await asyncio.to_thread(self._execute, name, arguments, context)
         except (TypeError, ValueError):
@@ -376,14 +375,14 @@ class WhatsAppAPI:
     async def call_permissions(self, phone):
         return await self.request("call_permissions", params={"user_wa_id": phone})
 
-    async def request_call_permission(self, phone):
+    async def request_call_permission(self, phone, template=PERMISSION_TEMPLATE):
         result = await self.request(
             "messages",
             {
                 "messaging_product": "whatsapp",
                 "to": phone,
                 "type": "template",
-                "template": {"name": PERMISSION_TEMPLATE, "language": {"code": "en"}},
+                "template": {"name": template or PERMISSION_TEMPLATE, "language": {"code": "en"}},
             },
         )
         return result["messages"][0]["id"]

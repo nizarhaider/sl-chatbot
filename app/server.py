@@ -44,7 +44,6 @@ class Call:
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
     timer: asyncio.TimerHandle | None = None
-    outbound: bool = False
     answered: bool = False
     failed: bool = False
 
@@ -83,14 +82,14 @@ class Calls:
             self.reservations.add(key)
             return True
 
-    def register(self, context, peer, outbound=False, config=None):
-        call = Call(context, peer, config=config, outbound=outbound)
+    def register(self, context, peer, config=None):
+        call = Call(context, peer, config=config)
         self.connections[context.call_id] = call
         call_state.start_call(context)
-        if not outbound:
+        if not context.outbound:
             call.ready.set()
         call.task = self.spawn(self.run(call))
-        if outbound:
+        if context.outbound:
             call.timer = asyncio.get_running_loop().call_later(
                 CASE_CALL_SECONDS,
                 lambda: self.spawn(self.close_call(context.call_id, terminate=True)),
@@ -127,7 +126,7 @@ class Calls:
             call.task.cancel()
             await asyncio.gather(call.task, return_exceptions=True)
         call_state.end_call(call_id)
-        if call.outbound:
+        if call.context.outbound:
             await query(
                 """update portal_case_requests set state=%s,error=%s where call_id=%s
                    and runtime_agent_id=%s and direction='outbound' and state='calling'""",
@@ -187,7 +186,10 @@ class Calls:
                 if row["state"] == "preparing":
                     if "send_call_permission_request" in allowed:
                         message_id = await whatsapp_api.request_call_permission(
-                            row["phone"]
+                            row["phone"],
+                            "talent360_resume_call"
+                            if row["outbound_row_id"] or row["case_slug"] == "talent"
+                            else None,
                         )
                         await query(
                             "update portal_case_requests set state='permission',message_id=%s where id=%s and state='preparing'",
@@ -248,7 +250,6 @@ class Calls:
                     outbound=True,
                 ),
                 peer,
-                outbound=True,
                 config=config,
             )
             return call_id
@@ -303,7 +304,7 @@ class Calls:
             await self.close_call(call_id)
         elif event.get("event") == "connect":
             session = event.get("session", {})
-            if session.get("sdp_type") == "answer" and call and call.outbound:
+            if session.get("sdp_type") == "answer" and call and call.context.outbound:
                 if not call.ready.is_set():
                     await call.connection.pc.setRemoteDescription(
                         RTCSessionDescription(sdp=session["sdp"], type="answer")

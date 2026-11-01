@@ -75,9 +75,7 @@ async def prewarm():
 
 
 def build_pipeline(transport, config, context, state=call_state, greet=True):
-    enabled = [
-        tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])
-    ]
+    enabled = [tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])]
     schemas = ToolsSchema(standard_tools=enabled)
     llm = CallGeminiService(
         context,
@@ -135,6 +133,8 @@ def build_pipeline(transport, config, context, state=call_state, greet=True):
         )
         state.persist(context.call_id)
         await params.result_callback(result)
+        if params.function_name == "end_call":
+            await worker.stop_when_done()
 
     for tool in enabled:
         llm.register_function(tool.name, execute, cancel_on_interruption=False)
