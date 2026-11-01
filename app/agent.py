@@ -135,11 +135,7 @@ def build_pipeline(transport, config, context, state=call_state):
 
     @worker.event_handler("on_pipeline_error")
     async def failed(worker, frame):
-        state.emit(
-            context.call_id,
-            "pipeline.error",
-            {"error": "Voice processing failed", "fatal": frame.fatal},
-        )
+        state.emit(context.call_id, "pipeline.error", {"error": "Voice processing failed", "fatal": frame.fatal})
 
     @recording.event_handler("on_audio_data")
     async def archive(processor, audio, sample_rate, channels):
@@ -159,20 +155,23 @@ async def run_agent(connection, context, ready, state=call_state, config=None):
     worker, recording, llm = build_pipeline(transport, config, context, state)
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
-    greeting_timer = None
+    greeting_task = None
+
+    async def begin_outbound():
+        try:
+            await asyncio.wait_for(llm.first_speech.wait(), 5)
+        except TimeoutError:
+            pass
+        await worker.queue_frames([LLMMessagesAppendFrame(messages=[{"role": "user", "content": "Start now with the supplied greeting."}], run_llm=True)])
 
     @transport.event_handler("on_client_connected")
     async def connected(transport, client):
-        nonlocal greeting_timer
+        nonlocal greeting_task
         await ready.wait()
         state.active(context.call_id)
         await recording.start_recording()
         if context.outbound:
-            greeting_timer = asyncio.get_running_loop().call_later(
-                5, lambda: not llm.first_speech.is_set() and asyncio.create_task(
-                    worker.queue_frames([LLMMessagesAppendFrame(messages=[{"role": "user", "content": "Start now with the supplied greeting."}], run_llm=True)])
-                ),
-            )
+            greeting_task = asyncio.create_task(begin_outbound())
         else:
             await worker.queue_frames([LLMRunFrame()])
 
@@ -183,7 +182,7 @@ async def run_agent(connection, context, ready, state=call_state, config=None):
     try:
         await runner.run()
     finally:
-        if greeting_timer:
-            greeting_timer.cancel()
+        if greeting_task:
+            greeting_task.cancel()
         await recording.stop_recording()
         state.end_call(context.call_id)
