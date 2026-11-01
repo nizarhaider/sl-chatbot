@@ -177,11 +177,7 @@ class Calls:
         reserved = False
         try:
             permission = await whatsapp_api.call_permissions(row["phone"])
-            allowed = {
-                a["action_name"]
-                for a in permission.get("actions", [])
-                if a.get("can_perform_action")
-            }
+            allowed = {a["action_name"] for a in permission.get("actions", []) if a.get("can_perform_action")}
             if "start_call" not in allowed:
                 if row["state"] == "preparing":
                     if "send_call_permission_request" in allowed:
@@ -198,7 +194,7 @@ class Calls:
                     else:
                         await self.fail_case(
                             request_id,
-                            "WhatsApp cannot request call permission right now. Please try again later.",
+                            "WhatsApp is not allowing another permission request to this number right now. No call was placed. Try again later.",
                         )
                 return
             reserved = await self.reserve(request_id)
