@@ -128,16 +128,18 @@ class Calls:
         call_state.end_call(call_id)
         if call.context.outbound:
             await query(
-                """update portal_case_requests set state=%s,error=%s where call_id=%s
-                   and runtime_agent_id=%s and direction='outbound' and state='calling'""",
-                (
-                    "completed" if call.answered and not call.failed else "failed",
-                    ""
-                    if call.answered
-                    else "The call was not answered. Please try again.",
-                    call_id,
-                    os.environ["VOICE_AGENT_ID"],
-                ),
+                """update portal_case_requests q set
+                   state=case when %s and not %s then 'completed'
+                     when not %s and q.outbound_row_id is not null and q.retries_used <
+                       (select b.max_retries from portal_outbound_rows r join portal_outbound_batches b on b.id=r.batch_id where r.id=q.outbound_row_id)
+                     then 'scheduled' else 'failed' end,
+                   retry_at=case when not %s and q.outbound_row_id is not null and q.retries_used <
+                       (select b.max_retries from portal_outbound_rows r join portal_outbound_batches b on b.id=r.batch_id where r.id=q.outbound_row_id)
+                     then now() + (select b.retry_hours * interval '1 hour' from portal_outbound_rows r join portal_outbound_batches b on b.id=r.batch_id where r.id=q.outbound_row_id) else null end,
+                   error=case when %s then '' else 'The call was not answered.' end
+                   where q.call_id=%s and q.runtime_agent_id=%s and q.direction='outbound' and q.state='calling'""",
+                (call.answered, call.failed, call.answered, call.answered, call.answered,
+                 call_id, os.environ["VOICE_AGENT_ID"]),
             )
 
     async def inbound_context(self, call_id, phone):
@@ -164,10 +166,17 @@ class Calls:
             (request_id, os.environ["VOICE_AGENT_ID"]),
         )
 
-    async def fail_case(self, request_id, message):
+    async def fail_case(self, request_id, message, retry=False):
         await query(
-            "update portal_case_requests set state='failed',error=%s where id=%s and runtime_agent_id=%s",
-            (message, request_id, os.environ["VOICE_AGENT_ID"]),
+            """update portal_case_requests q set error=%s,
+               state=case when %s and q.outbound_row_id is not null and q.retries_used <
+                 (select b.max_retries from portal_outbound_rows r join portal_outbound_batches b on b.id=r.batch_id where r.id=q.outbound_row_id)
+                 then 'scheduled' else 'failed' end,
+               retry_at=case when %s and q.outbound_row_id is not null and q.retries_used <
+                 (select b.max_retries from portal_outbound_rows r join portal_outbound_batches b on b.id=r.batch_id where r.id=q.outbound_row_id)
+                 then now() + (select b.retry_hours * interval '1 hour' from portal_outbound_rows r join portal_outbound_batches b on b.id=r.batch_id where r.id=q.outbound_row_id) else null end
+               where q.id=%s and q.runtime_agent_id=%s""",
+            (message, retry, retry, request_id, os.environ["VOICE_AGENT_ID"]),
         )
 
     async def request_case(self, request_id):
@@ -224,6 +233,7 @@ class Calls:
             await self.fail_case(
                 request_id,
                 "WhatsApp could not place your callback. Please try again shortly.",
+                retry=True,
             )
         finally:
             if reserved:
@@ -256,11 +266,11 @@ class Calls:
     async def handle_change(self, value):
         for status in value.get("statuses", []):
             if status.get("status") in ("failed", "REJECTED"):
+                await self.close_call(status.get("id"))
                 await query(
                     "update portal_case_requests set state='failed',error=%s where runtime_agent_id=%s and state in ('permission','calling') and (message_id=%s or call_id=%s)",
                     (json.dumps(status.get("errors") or "WhatsApp delivery failed")[:400], os.environ["VOICE_AGENT_ID"], status.get("id"), status.get("id")),
                 )
-                await self.close_call(status.get("id"))
         for message in value.get("messages", []):
             reply = message.get("interactive", {}).get("call_permission_reply", {})
             if reply.get("response_source") != "user_action" or not message.get(
@@ -292,11 +302,6 @@ class Calls:
             return
         call = self.connections.get(call_id)
         if event.get("event") == "terminate":
-            if event.get("status") == "FAILED":
-                await query(
-                    "update portal_case_requests set state='failed' where call_id=%s and runtime_agent_id=%s and state='calling'",
-                    (call_id, os.environ["VOICE_AGENT_ID"]),
-                )
             await self.close_call(call_id)
         elif event.get("event") == "connect":
             session = event.get("session", {})
@@ -350,6 +355,28 @@ class Calls:
                         await asyncio.gather(prepared, return_exceptions=True)
                     self.reservations.discard(call_id)
 
+    async def retry_loop(self, app):
+        while True:
+            try:
+                if app.state.voice_ready and len(self.connections) + len(self.reservations) < int(os.environ.get("MAX_CALLS", str(DEFAULT_MAX_CALLS))):
+                    row = await query(
+                        """update portal_case_requests q set state='preparing', retries_used=q.retries_used+1,
+                           retry_at=null, call_id=null, message_id=null, error='', expires_at=now()+interval '10 minutes'
+                           where q.id=(select q2.id from portal_case_requests q2
+                             join portal_outbound_rows r on r.id=q2.outbound_row_id
+                             join portal_outbound_batches b on b.id=r.batch_id
+                             where q2.runtime_agent_id=%s and q2.state='scheduled' and q2.retry_at<=now()
+                               and q2.retries_used<b.max_retries order by q2.retry_at limit 1
+                             for update of q2 skip locked) returning q.id""",
+                        (os.environ["VOICE_AGENT_ID"],),
+                    )
+                    if row:
+                        await self.request_case(row["id"])
+                        continue
+            except Exception:
+                logger.exception("Retry worker failed")
+            await asyncio.sleep(10)
+
     async def close(self):
         await asyncio.gather(
             *(self.close_call(key, terminate=True) for key in list(self.connections)),
@@ -383,12 +410,14 @@ async def lifespan(app):
                 )
 
         startup = asyncio.create_task(warmup())
+        retries = asyncio.create_task(app.state.calls.retry_loop(app))
         try:
             yield
         finally:
             app.state.voice_ready = False
             startup.cancel()
-            await asyncio.gather(startup, return_exceptions=True)
+            retries.cancel()
+            await asyncio.gather(startup, retries, return_exceptions=True)
             await app.state.calls.close()
             await call_state.close()
 
