@@ -29,10 +29,11 @@ with psycopg.connect(os.environ["DATABASE_URL"]) as db:
     ).fetchone()
     if agent is None:
         raise SystemExit("No voice agent matches PHONE_NUMBER_ID in Neon.")
-    db.execute(
-        "update portal_agents set status='warming_up', heartbeat_at=null, telemetry='{}' where id=%s",
-        (agent[0],),
-    )
+    if os.environ.get("SERENDIB_INBOUND") != "1":
+        db.execute(
+            "update portal_agents set status='warming_up', heartbeat_at=null, telemetry='{}' where id=%s",
+            (agent[0],),
+        )
 
 os.environ["VOICE_AGENT_ID"] = str(agent[0])
 os.environ["VOICE_CUSTOMER_ID"] = str(agent[1])
