@@ -3,7 +3,14 @@ import os
 
 from google import genai
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import LLMMessagesAppendFrame, LLMRunFrame
+from pipecat.frames.frames import (
+    LLMMessagesAppendFrame,
+    LLMRunFrame,
+    TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+    TTSTextFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -12,10 +19,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.google.gemini_live.llm import (
     GeminiLiveLLMService,
     GeminiVADParams,
 )
+from pipecat.services.google.tts import GeminiTTSService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
@@ -67,6 +76,16 @@ class CallGeminiService(GeminiLiveLLMService):
         await super()._handle_msg_usage_metadata(message)
 
 
+class LiveSpeechFilter(FrameProcessor):
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM and isinstance(
+            frame, (TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSTextFrame)
+        ):
+            return
+        await self.push_frame(frame, direction)
+
+
 async def prewarm():
     await DatabaseTools().agent_config()
     async with genai.Client(api_key=os.environ["GEMINI_API_KEY"]).aio.live.connect(
@@ -97,10 +116,21 @@ def build_pipeline(transport, config, context, state=call_state):
         user_params=LLMUserAggregatorParams(user_turn_strategies=ExternalUserTurnStrategies()),
     )
     recording = AudioBufferProcessor(sample_rate=RECORDING_SAMPLE_RATE, num_channels=2)
+    processors = [transport.input(), user, llm]
+    voice = os.environ.get("REPLICATED_VOICE_ID")
+    if voice and os.environ.get("SERENDIB_INBOUND") == "1":
+        processors.extend([
+            LiveSpeechFilter(),
+            GeminiTTSService(
+                api_key=os.environ["GEMINI_API_KEY"],
+                settings=GeminiTTSService.Settings(
+                    model="gemini-3.8-flash-tts", voice=voice, language=None
+                ),
+            ),
+        ])
+    processors.extend([transport.output(), recording, assistant])
     worker = PipelineWorker(
-        Pipeline(
-            [transport.input(), user, llm, transport.output(), recording, assistant]
-        ),
+        Pipeline(processors),
         params=PipelineParams(
             audio_in_sample_rate=INPUT_SAMPLE_RATE,
             audio_out_sample_rate=OUTPUT_SAMPLE_RATE,
