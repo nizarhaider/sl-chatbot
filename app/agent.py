@@ -1,9 +1,15 @@
 import asyncio
+import io
+import logging
 import os
+import re
+import wave
 
 from google import genai
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     LLMMessagesAppendFrame,
     LLMRunFrame,
     TTSAudioRawFrame,
@@ -42,14 +48,23 @@ from app.prompts import START_CALL, opening_greeting, system_prompt
 from app.store import call_state
 from app.tools import VOICE_TOOLS, DatabaseTools
 
+greeting_audio = {}
+
+
+def greeting_key(text):
+    return re.sub(r"[^\w]+", "", text.casefold())
+
 
 def agent_settings(agent_config):
+    replicated = bool(os.environ.get("REPLICATED_VOICE_ID"))
     return GeminiLiveLLMService.Settings(
         model=GEMINI_LIVE_MODEL,
         voice=agent_config.get("voice", DEFAULT_VOICE),
         language=LANGUAGE_CODE,
-        system_instruction=system_prompt(agent_config),
-        vad=GeminiVADParams(disabled=False),
+        system_instruction=system_prompt(agent_config) + (
+            " If the caller is unclear, ask them to repeat rather than guessing." if replicated else ""
+        ),
+        vad=GeminiVADParams(disabled=False, silence_duration_ms=750 if replicated else None),
     )
 
 
@@ -58,10 +73,24 @@ class CallGeminiService(GeminiLiveLLMService):
         super().__init__(**kwargs)
         self.call_context, self.call_state = context, state
         self.first_speech = asyncio.Event()
+        self.replicated = bool(os.environ.get("REPLICATED_VOICE_ID"))
+        self.speaking = False
+        self.interrupted = False
+
+    async def process_frame(self, frame, direction):
+        if self.replicated and isinstance(frame, BotStartedSpeakingFrame):
+            self.speaking, self.interrupted = True, False
+        elif self.replicated and isinstance(frame, BotStoppedSpeakingFrame):
+            self.speaking, self.interrupted = False, False
+        await super().process_frame(frame, direction)
 
     async def _handle_msg_input_transcription(self, message):
         if message.server_content and message.server_content.input_transcription and message.server_content.input_transcription.text:
             self.first_speech.set()
+            if self.replicated and self.speaking and not self.interrupted:
+                self.interrupted = True
+                await self._handle_interruption()
+                await self.broadcast_interruption()
         await super()._handle_msg_input_transcription(message)
 
     async def _handle_msg_usage_metadata(self, message):
@@ -86,8 +115,46 @@ class LiveSpeechFilter(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class CachedGeminiTTSService(GeminiTTSService):
+    async def run_tts(self, text, context_id):
+        audio = greeting_audio.get(greeting_key(text))
+        if audio:
+            yield TTSAudioRawFrame(audio, OUTPUT_SAMPLE_RATE, 1, context_id=context_id)
+        else:
+            async for frame in super().run_tts(text, context_id):
+                yield frame
+
+
 async def prewarm():
-    await DatabaseTools().agent_config()
+    config = await DatabaseTools().agent_config()
+    voice = os.environ.get("REPLICATED_VOICE_ID")
+    if voice and os.environ.get("SERENDIB_INBOUND") == "1":
+        try:
+            client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+            sentences = re.findall(r"[^.!?]+[.!?]?", opening_greeting(config))
+
+            async def synthesize(text):
+                result = await client.aio.models.generate_content(
+                    model="gemini-3.8-flash-tts", contents=text,
+                    config={"response_modalities": ["AUDIO"], "speech_config": {
+                        "voice_config": {"prebuilt_voice_config": {"voice_name": voice}}
+                    }},
+                )
+                audio = result.candidates[0].content.parts[0].inline_data.data
+                if audio.startswith(b"RIFF"):
+                    with wave.open(io.BytesIO(audio), "rb") as wav:
+                        if (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) != (OUTPUT_SAMPLE_RATE, 1, 2):
+                            raise ValueError("Unexpected greeting audio format")
+                        audio = wav.readframes(wav.getnframes())
+                greeting_audio[greeting_key(text)] = audio
+
+            results = await asyncio.wait_for(
+                asyncio.gather(*(synthesize(t.strip()) for t in sentences), return_exceptions=True), 15
+            )
+            if any(isinstance(result, BaseException) for result in results):
+                logging.getLogger(__name__).warning("Greeting audio prewarm failed")
+        except TimeoutError:
+            logging.getLogger(__name__).warning("Greeting audio prewarm timed out")
     async with genai.Client(api_key=os.environ["GEMINI_API_KEY"]).aio.live.connect(
         model=GEMINI_LIVE_MODEL,
         config={
@@ -118,10 +185,10 @@ def build_pipeline(transport, config, context, state=call_state):
     recording = AudioBufferProcessor(sample_rate=RECORDING_SAMPLE_RATE, num_channels=2)
     processors = [transport.input(), user, llm]
     voice = os.environ.get("REPLICATED_VOICE_ID")
-    if voice and os.environ.get("SERENDIB_INBOUND") == "1":
+    if voice:
         processors.extend([
             LiveSpeechFilter(),
-            GeminiTTSService(
+            CachedGeminiTTSService(
                 api_key=os.environ["GEMINI_API_KEY"],
                 settings=GeminiTTSService.Settings(
                     model="gemini-3.8-flash-tts", voice=voice, language=None
