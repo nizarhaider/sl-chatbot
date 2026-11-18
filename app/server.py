@@ -143,6 +143,8 @@ class Calls:
             )
 
     async def inbound_context(self, call_id, phone):
+        if os.environ.get("SERENDIB_INBOUND") == "1":
+            return CallContext(call_id, phone, os.environ["VOICE_AGENT_ID"], os.environ["VOICE_CUSTOMER_ID"])
         row = await query(
             """select a.id,a.customer_id from portal_agent_cases c
                join portal_agents a on a.id=c.agent_id where c.slug='talent'
@@ -410,14 +412,15 @@ async def lifespan(app):
                 )
 
         startup = asyncio.create_task(warmup())
-        retries = asyncio.create_task(app.state.calls.retry_loop(app))
+        retries = asyncio.create_task(app.state.calls.retry_loop(app)) if os.environ.get("SERENDIB_INBOUND") != "1" else None
         try:
             yield
         finally:
             app.state.voice_ready = False
             startup.cancel()
-            retries.cancel()
-            await asyncio.gather(startup, retries, return_exceptions=True)
+            if retries:
+                retries.cancel()
+            await asyncio.gather(startup, *([retries] if retries else []), return_exceptions=True)
             await app.state.calls.close()
             await call_state.close()
 

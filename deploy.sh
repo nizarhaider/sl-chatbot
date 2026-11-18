@@ -13,7 +13,7 @@ case "$2" in
     command -v uv >/dev/null || { echo "Install uv first." >&2; exit 1; }
     command -v cloudflared >/dev/null || { echo "Install cloudflared first." >&2; exit 1; }
     command -v ffmpeg >/dev/null || { echo "Install ffmpeg first." >&2; exit 1; }
-    [[ -f .env ]] || { echo "voice-agent/.env is missing." >&2; exit 1; }
+    [[ -f "${VOICE_ENV_FILE:-.env}" ]] || { echo "Voice environment file is missing." >&2; exit 1; }
     uv sync --no-dev
     exec uv run --no-sync python - <<'PY'
 import os
@@ -21,7 +21,7 @@ import os
 import psycopg
 from dotenv import load_dotenv
 
-load_dotenv(".env")
+load_dotenv(os.environ.get("VOICE_ENV_FILE", ".env"))
 with psycopg.connect(os.environ["DATABASE_URL"]) as db:
     agent = db.execute(
         "select id,customer_id,max_calls from portal_agents where phone_number_id=%s and status<>'archived' and (%s::uuid is null or id=%s::uuid) order by updated_at desc limit 1",

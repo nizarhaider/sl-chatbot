@@ -330,13 +330,15 @@ def run_runtime():
             timeout_graceful_shutdown=SHUTDOWN_SECONDS,
         )
     )
-    thread = threading.Thread(target=heartbeat, daemon=True)
-    thread.start()
+    thread = threading.Thread(target=heartbeat, daemon=True) if os.environ.get("SERENDIB_INBOUND") != "1" else None
+    if thread:
+        thread.start()
     try:
         server.run()
     finally:
         stopped.set()
-        thread.join(timeout=15)
+        if thread:
+            thread.join(timeout=15)
         if tunnel:
             tunnel.terminate()
             try:

@@ -36,4 +36,4 @@ jobs:
             --rsync-path='sudo rsync' \
             -e "ssh -i $HOME/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15" \
             ./ ubuntu@13.207.194.210:/opt/serendibai/voice-agent/
-          ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'sudo systemctl restart voice-agent.service'
+          ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'cd /opt/serendibai/voice-agent && if .venv/bin/python -c "from dotenv import dotenv_values; import psycopg; psycopg.connect(dotenv_values(\".env\")[\"DATABASE_URL\"], connect_timeout=5).close()" >/dev/null 2>&1; then sudo systemctl restart voice-agent.service; else echo "Existing voice service left running: database unavailable"; fi'
