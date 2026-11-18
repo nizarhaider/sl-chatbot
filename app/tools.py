@@ -118,10 +118,12 @@ class DatabaseTools:
                 if context and context.agent_id
                 else agent_ids()
             )
+            direct = os.environ.get("SERENDIB_INBOUND") == "1"
+            case = "null" if direct else "(select slug from portal_agent_cases where agent_id=a.id)"
             with connection() as db:
                 row = db.execute(
-                    """select a.name,a.company_name,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
-                              (select slug from portal_agent_cases where agent_id=a.id) as case_slug
+                    f"""select a.name,a.company_name,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
+                              {case} as case_slug
                        from portal_agents a join customers c on c.id=a.customer_id
                        where a.id=%s and a.customer_id=%s and a.status<>'archived'""",
                     (agent_id, customer_id),
@@ -133,7 +135,7 @@ class DatabaseTools:
                 "company_name": row["company_name"],
                 "languages": row["languages"],
                 "enabled_tools": [
-                    *STANDARD_TOOLS,
+                    *(["send_whatsapp_message", "end_call"] if direct else STANDARD_TOOLS),
                     *(tool for tool in row["tools"] if tool in row["portal_tools"]),
                 ],
                 "max_calls": row["max_calls"],
