@@ -16,6 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: linked-device/go.mod
+
+      - name: Build linked-device adapter
+        working-directory: linked-device
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/serendib-linked-device .
 
       - name: Configure SSH
         env:
@@ -36,5 +43,6 @@ jobs:
             --rsync-path='sudo rsync' \
             -e "ssh -i $HOME/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15" \
             ./ ubuntu@13.207.194.210:/opt/serendibai/voice-agent/
-          ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'cd /opt/serendibai/voice-agent && if .venv/bin/python -c "from dotenv import dotenv_values; import psycopg; psycopg.connect(dotenv_values(\".env\")[\"DATABASE_URL\"], connect_timeout=5).close()" >/dev/null 2>&1; then sudo systemctl restart voice-agent.service; else echo "Existing voice service left running: database unavailable"; fi'
+          scp -i ~/.ssh/ec2_key -o BatchMode=yes /tmp/serendib-linked-device ubuntu@13.207.194.210:/opt/serendibai/linked-device/linked-device.next
+          ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'mv /opt/serendibai/linked-device/linked-device.next /opt/serendibai/linked-device/linked-device && sudo install -m 644 /opt/serendibai/voice-agent/linked-device/*.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now serendib-linked-audio.service serendib-linked-device.service serendib-linked-tunnel.service && sudo systemctl try-restart serendib-linked-audio.service serendib-linked-device.service && sudo systemctl try-restart voice-agent.service'
           ssh -i ~/.ssh/ec2_key -o BatchMode=yes -o ConnectTimeout=15 ubuntu@13.207.194.210 'sudo systemctl try-restart serendib-inbound.service'

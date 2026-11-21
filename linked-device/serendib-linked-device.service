@@ -1,0 +1,18 @@
+[Unit]
+Description=SerendibAI linked-device adapter
+After=network-online.target serendib-linked-audio.service
+Wants=network-online.target serendib-linked-audio.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/serendibai/linked-device
+EnvironmentFile=/opt/serendibai/inbound.env
+EnvironmentFile=/opt/serendibai/linked-device/bridge.env
+ExecStart=/opt/serendibai/linked-device/linked-device
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

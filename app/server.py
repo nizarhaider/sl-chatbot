@@ -12,8 +12,19 @@ from dataclasses import dataclass, field
 import aiohttp
 from aiortc import RTCSessionDescription
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+from pipecat.audio.utils import create_stream_resampler
+from pipecat.frames.frames import (
+    InputAudioRawFrame,
+    InterruptionFrame,
+    OutputAudioRawFrame,
+)
+from pipecat.serializers.base_serializer import FrameSerializer
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 from pipecat.transports.whatsapp.api import WhatsAppWebhookRequest
 from pipecat.transports.whatsapp.client import WhatsAppClient
 
@@ -518,6 +529,73 @@ def create_app():
             raise HTTPException(409, "Callback already handled or expired")
         await app.state.calls.request_case(data["id"])
         return {"ok": True}
+
+    return app
+
+
+class LinkedAudioSerializer(FrameSerializer):
+    def __init__(self):
+        super().__init__()
+        self.resampler = create_stream_resampler()
+
+    async def serialize(self, frame):
+        if isinstance(frame, InterruptionFrame):
+            return 'clear'
+        if isinstance(frame, OutputAudioRawFrame):
+            return await self.resampler.resample(frame.audio, frame.sample_rate, 16000)
+        return None
+
+    async def deserialize(self, data):
+        if isinstance(data, bytes):
+            return InputAudioRawFrame(audio=data, sample_rate=16000, num_channels=1)
+        return None
+
+
+def create_bridge_app():
+    @asynccontextmanager
+    async def bridge_lifespan(app):
+        yield
+        await call_state.close()
+
+    app = FastAPI(lifespan=bridge_lifespan)
+    capacity = asyncio.Semaphore(1)
+
+    @app.websocket('/call')
+    async def linked_call(socket: WebSocket):
+        secret = os.environ.get('LINKED_BRIDGE_SECRET', '')
+        if not secret or not hmac.compare_digest(socket.headers.get('authorization', ''), f'Bearer {secret}'):
+            await socket.close(code=1008)
+            return
+        customer, call_id = socket.query_params.get('customer', ''), socket.query_params.get('call', '')
+        if not re.fullmatch(r'[0-9a-f-]{36}', customer) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', call_id):
+            await socket.close(code=1008)
+            return
+        row = await query("""select a.id,a.customer_id from portal_whatsapp_links l
+            join portal_agents a on a.id=l.agent_id and a.customer_id=l.customer_id
+            where l.customer_id=%s and l.enabled and a.status<>'archived'""", (customer,))
+        if not row:
+            await socket.close(code=1008)
+            return
+        if capacity.locked():
+            await socket.close(code=1013)
+            return
+        await capacity.acquire()
+        try:
+            await socket.accept()
+            context = CallContext(call_id, socket.query_params.get('peer', '')[:50], str(row['id']), str(row['customer_id']))
+            call_state.start_call(context)
+            ready = asyncio.Event()
+            ready.set()
+            config = await DatabaseTools().agent_config(context)
+            config['enabled_tools'] = [t for t in config['enabled_tools'] if t != 'send_whatsapp_message']
+            transport = FastAPIWebsocketTransport(socket, FastAPIWebsocketParams(
+                audio_in_enabled=True, audio_out_enabled=True, serializer=LinkedAudioSerializer(),
+                allowed_origins=[], audio_out_10ms_chunks=2,
+            ))
+            await run_agent(None, context, ready, config=config, transport=transport)
+        finally:
+            call_state.end_call(call_id)
+            capacity.release()
 
     return app
 

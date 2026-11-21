@@ -1,0 +1,18 @@
+[Unit]
+Description=SerendibAI linked-device audio bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/serendibai/voice-agent
+EnvironmentFile=/opt/serendibai/inbound.env
+EnvironmentFile=/opt/serendibai/linked-device/bridge.env
+ExecStart=/opt/serendibai/voice-agent/.venv/bin/uvicorn app.server:create_bridge_app --factory --host 127.0.0.1 --port 8098
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

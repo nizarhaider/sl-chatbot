@@ -50,7 +50,28 @@ Existing permission starts the selected callback immediately; otherwise the appr
 `serendibai_demo_call` template requests permission, and acceptance starts it.
 Callbacks are limited to five minutes. Ordinary inbound calls use the host agent.
 The older generic demo API and text-based CASE selection have been removed.
-Historical database tables and records remain untouched.
+
+## Experimental linked-device calls
+
+The portal `/onboarding` page pairs an existing WhatsApp Business app as an
+unofficial linked device. `linked-device/` runs the Go call adapter; the local
+`app.server:create_bridge_app` WebSocket service forwards PCM to the existing
+Pipecat pipeline. The adapter and audio bridge run separately from the company
+voice service. Both use the shared `serendib_v2` database and a private
+`LINKED_BRIDGE_SECRET`. The adapter keeps pairing credentials under its private
+working directory. Never expose these files or the service secret.
+
+The adapter receives start and stop requests through the authenticated
+`linked.serendibai.lk` tunnel. It queries the database on startup, account state
+changes and calls, rather than continuously polling. Turning off AI answering
+disconnects the linked device without deleting the stored pairing. Customers can
+unlink it in WhatsApp. This protocol is unofficial and call reliability depends
+on WhatsApp's current implementation. Linked calls do not use the Cloud API
+message tool.
+
+Build the adapter with `cd linked-device && CGO_ENABLED=0 GOOS=linux GOARCH=arm64
+go build -o /tmp/serendib-linked-device .`. The deployment runs the adapter,
+audio bridge and their Cloudflare tunnel as separate systemd services.
 
 `uv sync --locked` installs dependencies. `uv run ruff check .` validates Python code.
 `./deploy.sh --env local` starts on port 8081 and may connect the production tunnel;

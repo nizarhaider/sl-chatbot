@@ -1,0 +1,16 @@
+[Unit]
+Description=SerendibAI linked-device tunnel
+After=network-online.target serendib-linked-device.service
+Wants=network-online.target serendib-linked-device.service
+
+[Service]
+User=ubuntu
+EnvironmentFile=/opt/serendibai/linked-device/tunnel.env
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

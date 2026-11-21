@@ -257,9 +257,9 @@ def build_pipeline(transport, config, context, state=call_state):
     return worker, recording, llm
 
 
-async def run_agent(connection, context, ready, state=call_state, config=None):
+async def run_agent(connection, context, ready, state=call_state, config=None, transport=None):
     config = config or await DatabaseTools().agent_config(context)
-    transport = SmallWebRTCTransport(
+    transport = transport or SmallWebRTCTransport(
         connection,
         TransportParams(
             audio_in_enabled=True, audio_out_enabled=True, audio_out_10ms_chunks=2
