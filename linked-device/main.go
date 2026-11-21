@@ -60,7 +60,12 @@ func (a *audioQueue) clear() { a.mu.Lock(); a.data = nil; a.mu.Unlock() }
 type manager struct {
 	db       *pgxpool.Pool
 	mu       sync.Mutex
-	sessions map[string]context.CancelFunc
+	sessions map[string]*linkedSession
+}
+
+type linkedSession struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func (m *manager) status(id, status, qr, errText string, seconds int) {
@@ -219,7 +224,7 @@ func main() {
 	defer db.Close()
 	store.DeviceProps.Os = proto.String("SerendibAI")
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
-	m := &manager{db: db, sessions: map[string]context.CancelFunc{}}
+	m := &manager{db: db, sessions: map[string]*linkedSession{}}
 	rows, err := db.Query(ctx, `select customer_id::text from portal_whatsapp_links where enabled`)
 	if err != nil {
 		log.Fatal("Unable to load linked accounts")
@@ -232,7 +237,7 @@ func main() {
 	}
 	rows.Close()
 	http.HandleFunc("/connection", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+os.Getenv("LINKED_BRIDGE_SECRET"))) != 1 {
+		if (r.Method != http.MethodPost && r.Method != http.MethodDelete) || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+os.Getenv("LINKED_BRIDGE_SECRET"))) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -244,14 +249,15 @@ func main() {
 			http.Error(w, "Invalid request", 400)
 			return
 		}
-		if b.Enabled {
+		if r.Method == http.MethodDelete {
+			if err := m.stop(b.Customer, true); err != nil {
+				http.Error(w, "Unable to remove linked account", http.StatusInternalServerError)
+				return
+			}
+		} else if b.Enabled {
 			m.start(b.Customer)
 		} else {
-			m.mu.Lock()
-			if cancel := m.sessions[b.Customer]; cancel != nil {
-				cancel()
-			}
-			m.mu.Unlock()
+			m.stop(b.Customer, false)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -264,7 +270,31 @@ func (m *manager) start(id string) {
 	defer m.mu.Unlock()
 	if _, ok := m.sessions[id]; !ok {
 		ctx, cancel := context.WithCancel(context.Background())
-		m.sessions[id] = cancel
-		go m.run(ctx, id)
+		session := &linkedSession{cancel: cancel, done: make(chan struct{})}
+		m.sessions[id] = session
+		go func() {
+			defer close(session.done)
+			m.run(ctx, id)
+		}()
 	}
+}
+
+func (m *manager) stop(id string, remove bool) error {
+	m.mu.Lock()
+	session := m.sessions[id]
+	if session != nil {
+		session.cancel()
+	}
+	m.mu.Unlock()
+	if session != nil {
+		<-session.done
+	}
+	if remove {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			if err := os.Remove(filepath.Join("sessions", id+".db"+suffix)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -69,6 +69,10 @@ unlink it in WhatsApp. This protocol is unofficial and call reliability depends
 on WhatsApp's current implementation. Linked calls do not use the Cloud API
 message tool.
 
+An authenticated `DELETE /connection` request stops the linked-device session
+and removes its local pairing database; the portal uses this when an administrator
+deletes a customer workspace.
+
 Build the adapter with `cd linked-device && CGO_ENABLED=0 GOOS=linux GOARCH=arm64
 go build -o /tmp/serendib-linked-device .`. The deployment runs the adapter,
 audio bridge and their Cloudflare tunnel as separate systemd services.
