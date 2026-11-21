@@ -128,7 +128,7 @@ class DatabaseTools:
                     ).fetchone()
                 if row is None:
                     raise RuntimeError("Voice agent is missing from Neon")
-                return {**row, "enabled_tools": ["send_whatsapp_message", "end_call"]}
+                return {**row, "enabled_tools": list(STANDARD_TOOLS)}
             with connection() as db:
                 row = db.execute(
                     """select a.name,a.company_name,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
