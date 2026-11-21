@@ -572,7 +572,7 @@ def create_bridge_app():
             return
         row = await query("""select a.id,a.customer_id from portal_whatsapp_links l
             join portal_agents a on a.id=l.agent_id and a.customer_id=l.customer_id
-            where l.customer_id=%s and l.enabled and a.status<>'archived'""", (customer,))
+            where l.id=%s and l.enabled and a.status<>'archived'""", (customer,))
         if not row:
             await socket.close(code=1008)
             return

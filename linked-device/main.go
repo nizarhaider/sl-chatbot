@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -66,10 +67,11 @@ type manager struct {
 type linkedSession struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+	client *whatsmeow.Client
 }
 
 func (m *manager) status(id, status, qr, errText string, seconds int) {
-	_, err := m.db.Exec(context.Background(), `update portal_whatsapp_links set status=$2,qr=nullif($3,''),error=$4,qr_expires_at=case when $5>0 then now()+$5*interval '1 second' else null end,updated_at=now() where customer_id=$1`, id, status, qr, errText, seconds)
+	_, err := m.db.Exec(context.Background(), `update portal_whatsapp_links set status=$2,qr=nullif($3,''),error=$4,qr_expires_at=case when $5>0 then now()+$5*interval '1 second' else null end,updated_at=now() where id=$1`, id, status, qr, errText, seconds)
 	if err != nil {
 		log.Printf("status update failed: %v", err)
 	}
@@ -93,11 +95,20 @@ func (m *manager) run(ctx context.Context, id string) {
 		return
 	}
 	client := whatsmeow.NewClient(device, waLog.Noop)
+	m.mu.Lock()
+	if session := m.sessions[id]; session != nil {
+		session.client = client
+	}
+	m.mu.Unlock()
 	calls := meow.NewClient(client)
 	client.AddEventHandler(func(evt any) {
 		switch evt.(type) {
 		case *events.Connected:
 			m.status(id, "connected", "", "", 0)
+			_, err := m.db.Exec(context.Background(), `update portal_whatsapp_links set phone=$2 where id=$1`, id, client.Store.GetJID().User)
+			if err != nil {
+				log.Printf("phone update failed: %v", err)
+			}
 			go client.SendPresence(context.Background(), types.PresenceAvailable)
 		case *events.LoggedOut:
 			m.status(id, "error", "", "Device was unlinked in WhatsApp", 0)
@@ -136,7 +147,7 @@ func (m *manager) run(ctx context.Context, id string) {
 }
 func (m *manager) handleCall(ctx context.Context, id string, call *meow.Call) {
 	var enabled, voiceEnabled bool
-	if err := m.db.QueryRow(ctx, `select enabled,voice_enabled from portal_whatsapp_links where customer_id=$1`, id).Scan(&enabled, &voiceEnabled); err != nil || !enabled || !voiceEnabled {
+	if err := m.db.QueryRow(ctx, `select enabled,voice_enabled from portal_whatsapp_links where id=$1`, id).Scan(&enabled, &voiceEnabled); err != nil || !enabled || !voiceEnabled {
 		return
 	}
 	secret := os.Getenv("LINKED_BRIDGE_SECRET")
@@ -225,7 +236,7 @@ func main() {
 	store.DeviceProps.Os = proto.String("SerendibAI")
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 	m := &manager{db: db, sessions: map[string]*linkedSession{}}
-	rows, err := db.Query(ctx, `select customer_id::text from portal_whatsapp_links where enabled`)
+	rows, err := db.Query(ctx, `select id::text from portal_whatsapp_links where enabled`)
 	if err != nil {
 		log.Fatal("Unable to load linked accounts")
 	}
@@ -261,7 +272,7 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	server := &http.Server{Addr: "127.0.0.1:8099", ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	server := &http.Server{Addr: "127.0.0.1:8099", ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 30 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
 
@@ -282,11 +293,44 @@ func (m *manager) start(id string) {
 func (m *manager) stop(id string, remove bool) error {
 	m.mu.Lock()
 	session := m.sessions[id]
+	var client *whatsmeow.Client
 	if session != nil {
-		session.cancel()
+		client = session.client
 	}
 	m.mu.Unlock()
+	if remove {
+		if session != nil && client == nil {
+			return errors.New("connection is starting")
+		}
+		if client != nil && client.Store.ID != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			err := client.Logout(ctx)
+			cancel()
+			if err != nil {
+				return err
+			}
+		} else if session == nil {
+			path := filepath.Join("sessions", id+".db")
+			if _, err := os.Stat(path); err == nil {
+				container, err := sqlstore.New(context.Background(), "sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", waLog.Noop)
+				if err != nil {
+					return err
+				}
+				device, err := container.GetFirstDevice(context.Background())
+				container.Close()
+				if err != nil {
+					return err
+				}
+				if device.ID != nil {
+					return errors.New("reconnect before unlinking")
+				}
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
 	if session != nil {
+		session.cancel()
 		<-session.done
 	}
 	if remove {
