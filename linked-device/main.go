@@ -135,8 +135,8 @@ func (m *manager) run(ctx context.Context, id string) {
 	m.status(id, "offline", "", "", 0)
 }
 func (m *manager) handleCall(ctx context.Context, id string, call *meow.Call) {
-	var enabled bool
-	if err := m.db.QueryRow(ctx, `select enabled from portal_whatsapp_links where customer_id=$1`, id).Scan(&enabled); err != nil || !enabled {
+	var enabled, voiceEnabled bool
+	if err := m.db.QueryRow(ctx, `select enabled,voice_enabled from portal_whatsapp_links where customer_id=$1`, id).Scan(&enabled, &voiceEnabled); err != nil || !enabled || !voiceEnabled {
 		return
 	}
 	secret := os.Getenv("LINKED_BRIDGE_SECRET")
