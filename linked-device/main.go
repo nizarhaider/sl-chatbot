@@ -267,6 +267,7 @@ func main() {
 		var b struct {
 			Customer string `json:"customer"`
 			Enabled  bool   `json:"enabled"`
+			Refresh  bool   `json:"refresh"`
 		}
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&b) != nil || !regexp.MustCompile(`^[0-9a-f-]{36}$`).MatchString(b.Customer) {
 			http.Error(w, "Invalid request", 400)
@@ -278,7 +279,14 @@ func main() {
 				return
 			}
 		} else if b.Enabled {
-			m.start(b.Customer)
+			if b.Refresh {
+				if err := m.restartPairing(b.Customer); err != nil {
+					http.Error(w, "Unable to refresh pairing code", http.StatusConflict)
+					return
+				}
+			} else {
+				m.start(b.Customer)
+			}
 		} else {
 			m.stop(b.Customer, false)
 		}
@@ -300,6 +308,22 @@ func (m *manager) start(id string) {
 			m.run(ctx, id)
 		}()
 	}
+}
+
+func (m *manager) restartPairing(id string) error {
+	var status string
+	if err := m.db.QueryRow(context.Background(), `select status from portal_whatsapp_links where id=$1`, id).Scan(&status); err != nil {
+		return err
+	}
+	if status == "connected" {
+		return errors.New("connection is already paired")
+	}
+	if err := m.stop(id, false); err != nil {
+		return err
+	}
+	m.status(id, "connecting", "", "", 0)
+	m.start(id)
+	return nil
 }
 
 func (m *manager) stop(id string, remove bool) error {
