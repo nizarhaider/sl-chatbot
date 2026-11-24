@@ -19,7 +19,8 @@ def system_prompt(agent_config):
         " Start with the supplied language selector and listen. Continue in the caller's chosen "
         "language, follow later switches, and respond to a direct request in its language."
     )
-    if os.environ.get("SERENDIB_INBOUND") == "1" and not agent_config.get("outbound"):
+    serendib_agent = agent_config.get("company_name", "").strip().casefold() == "serendibai.lk"
+    if (os.environ.get("SERENDIB_INBOUND") == "1" or serendib_agent) and not agent_config.get("outbound"):
         return (
             "- You are Nishadi, SerendibAI's voice assistant.\n"
             "- After the language choice, introduce yourself and what we do in one short sentence, then ask how you can help.\n"
