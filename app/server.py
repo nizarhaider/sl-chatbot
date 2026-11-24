@@ -34,7 +34,6 @@ load_dotenv()
 
 from app.agent import prewarm, run_agent
 from app.config import CASE_CALL_SECONDS, DEFAULT_MAX_CALLS, ICE_SERVERS
-from app.prompts import system_prompt
 from app.store import call_state
 from app.tools import CallContext, DatabaseTools, connection, whatsapp_api
 
@@ -579,15 +578,14 @@ def create_bridge_app():
         message_id, text = body.get('message_id', ''), body.get('text', '')
         if not re.fullmatch(r'[0-9a-f-]{36}', connection_id) or not isinstance(peer, str) or not peer or len(peer) > 80 or not isinstance(message_id, str) or not message_id or len(message_id) > 128 or not isinstance(text, str) or not text.strip() or len(text) > 16000:
             raise HTTPException(status_code=400)
-        link = await query("""select l.agent_id::text,l.customer_id::text,l.message_reply_instructions
+        link = await query("""select l.agent_id::text,l.customer_id::text,l.message_reply_instructions,a.text_reply_instructions
             from portal_whatsapp_links l join portal_agents a on a.id=l.agent_id and a.customer_id=l.customer_id
             where l.id=%s and l.enabled and l.message_replies_enabled and a.status<>'archived'""", (connection_id,))
         if not link:
             return {'reply': ''}
         context = CallContext(message_id, peer, link['agent_id'], link['customer_id'])
         tools = DatabaseTools()
-        config = await tools.agent_config(context)
-        instructions = [system_prompt(config), 'You are responding in a WhatsApp text chat for this business. Keep replies concise and natural. Do not claim to have made bookings, orders, tickets, or other changes. If asked to do something you cannot do in chat, explain that a team member can help.']
+        instructions = ['You are replying to a WhatsApp text message for this business. Follow the text reply instructions only; call instructions and opening greetings do not apply. Reply naturally in the language the sender used. Do not ask them to choose a language or present a language selector. Keep replies concise. Do not claim to have made bookings, orders, tickets, or other changes. If asked to do something you cannot do in chat, explain that a team member can help.', (link['text_reply_instructions'] or '').strip()]
         guidance = (link['message_reply_instructions'] or '').strip()
         if guidance:
             instructions.append(f'WhatsApp message guidance:\n{guidance}')
