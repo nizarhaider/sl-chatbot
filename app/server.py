@@ -560,6 +560,10 @@ def create_bridge_app():
     app = FastAPI(lifespan=bridge_lifespan)
     capacity = asyncio.Semaphore(1)
 
+    @app.get('/health')
+    async def health():
+        return {'status': 'ready'}
+
     @app.websocket('/call')
     async def linked_call(socket: WebSocket):
         secret = os.environ.get('LINKED_BRIDGE_SECRET', '')

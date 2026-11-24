@@ -1,13 +1,15 @@
 [Unit]
 Description=SerendibAI linked-device adapter
 After=network-online.target serendib-linked-audio.service
-Wants=network-online.target serendib-linked-audio.service
+Wants=network-online.target
+Requires=serendib-linked-audio.service
 
 [Service]
 User=ubuntu
 WorkingDirectory=/opt/serendibai/linked-device
 EnvironmentFile=/opt/serendibai/inbound.env
 EnvironmentFile=/opt/serendibai/linked-device/bridge.env
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 90); do /usr/bin/curl -fsS http://127.0.0.1:8098/health >/dev/null && exit 0; sleep 1; done; exit 1'
 ExecStart=/opt/serendibai/linked-device/linked-device
 Restart=always
 RestartSec=5
