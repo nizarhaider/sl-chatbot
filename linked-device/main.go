@@ -1,18 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
@@ -68,6 +72,7 @@ type linkedSession struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	client *whatsmeow.Client
+	seen   map[string]struct{}
 }
 
 func (m *manager) status(id, status, qr, errText string, seconds int) {
@@ -102,9 +107,13 @@ func (m *manager) run(ctx context.Context, id string) {
 	m.mu.Unlock()
 	calls := meow.NewClient(client)
 	client.AddEventHandler(func(evt any) {
-		switch evt.(type) {
+		switch event := evt.(type) {
 		case *events.CallOffer:
 			log.Printf("WhatsApp call offer event received for connection %s", id)
+		case *events.Message:
+			if !event.Info.IsFromMe && !event.Info.IsGroup && !event.Info.IsNewsletterStatus {
+				go m.replyToMessage(ctx, id, client, event)
+			}
 		case *events.Connected:
 			m.status(id, "connected", "", "", 0)
 			_, err := m.db.Exec(context.Background(), `update portal_whatsapp_links set phone=$2 where id=$1`, id, client.Store.GetJID().User)
@@ -301,12 +310,79 @@ func (m *manager) start(id string) {
 	defer m.mu.Unlock()
 	if _, ok := m.sessions[id]; !ok {
 		ctx, cancel := context.WithCancel(context.Background())
-		session := &linkedSession{cancel: cancel, done: make(chan struct{})}
+		session := &linkedSession{cancel: cancel, done: make(chan struct{}), seen: map[string]struct{}{}}
 		m.sessions[id] = session
 		go func() {
 			defer close(session.done)
 			m.run(ctx, id)
 		}()
+	}
+}
+
+func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsmeow.Client, event *events.Message) {
+	messageID := string(event.Info.ID)
+	if messageID != "" {
+		m.mu.Lock()
+		for _, session := range m.sessions {
+			if session.client == client {
+				if _, ok := session.seen[messageID]; ok {
+					m.mu.Unlock()
+					return
+				}
+				session.seen[messageID] = struct{}{}
+				if len(session.seen) > 512 {
+					for key := range session.seen {
+						delete(session.seen, key)
+						break
+					}
+				}
+				break
+			}
+		}
+		m.mu.Unlock()
+	}
+	if event.Message == nil || event.Info.Chat.IsBroadcastList() {
+		return
+	}
+	text := strings.TrimSpace(event.Message.GetConversation())
+	if text == "" && event.Message.GetExtendedTextMessage() != nil {
+		text = strings.TrimSpace(event.Message.GetExtendedTextMessage().GetText())
+	}
+	if text == "" {
+		return
+	}
+	if runes := []rune(text); len(runes) > 4000 {
+		text = string(runes[:4000])
+	}
+	payload, err := json.Marshal(map[string]string{"connection": id, "peer": event.Info.Chat.User, "message_id": messageID, "text": text})
+	if err != nil {
+		return
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, "http://127.0.0.1:8098/message", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("LINKED_BRIDGE_SECRET"))
+	req.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	if err != nil {
+		log.Printf("chat reply unavailable for connection %s: %v", id, err)
+		return
+	}
+	defer response.Body.Close()
+	var result struct {
+		Reply string `json:"reply"`
+	}
+	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 16384)).Decode(&result) != nil {
+		log.Printf("chat reply failed for connection %s: status=%d", id, response.StatusCode)
+		return
+	}
+	if reply := strings.TrimSpace(result.Reply); reply != "" {
+		if _, err = client.SendMessage(requestCtx, event.Info.Chat.ToNonAD(), &waE2E.Message{Conversation: proto.String(reply)}); err != nil {
+			log.Printf("chat reply send failed for connection %s: %v", id, err)
+		}
 	}
 }
 
