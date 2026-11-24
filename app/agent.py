@@ -6,6 +6,7 @@ import re
 import wave
 
 from google import genai
+from google.genai import errors as genai_errors
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
@@ -51,6 +52,7 @@ from app.store import call_state
 from app.tools import VOICE_TOOLS, DatabaseTools
 
 greeting_audio = {}
+prewarm_usage = None
 tts_exhausted = False
 
 
@@ -59,7 +61,7 @@ def greeting_key(text):
 
 
 def agent_settings(agent_config):
-    replicated = bool(os.environ.get("REPLICATED_VOICE_ID"))
+    replicated = bool(agent_config.get("replicated_voice"))
     return GeminiLiveLLMService.Settings(
         model=GEMINI_LIVE_MODEL,
         voice=agent_config.get("voice", DEFAULT_VOICE),
@@ -74,11 +76,11 @@ def agent_settings(agent_config):
 
 
 class CallGeminiService(GeminiLiveLLMService):
-    def __init__(self, context, state=call_state, **kwargs):
+    def __init__(self, context, state=call_state, replicated=False, **kwargs):
         super().__init__(**kwargs)
         self.call_context, self.call_state = context, state
         self.first_speech = asyncio.Event()
-        self.replicated = bool(os.environ.get("REPLICATED_VOICE_ID"))
+        self.replicated = replicated
         self.speaking = False
         self.interrupted = False
 
@@ -104,7 +106,7 @@ class CallGeminiService(GeminiLiveLLMService):
             self.call_state.emit(
                 self.call_context.call_id,
                 "gemini_live.usage",
-                {"total_tokens": usage.get("total_token_count"), "usage": usage},
+                {"model": GEMINI_LIVE_MODEL, "total_tokens": usage.get("total_token_count"), "usage": usage},
             )
             self.call_state.persist(self.call_context.call_id)
         await super()._handle_msg_usage_metadata(message)
@@ -113,60 +115,149 @@ class CallGeminiService(GeminiLiveLLMService):
 class LiveSpeechFilter(FrameProcessor):
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if direction == FrameDirection.DOWNSTREAM and isinstance(
+        if not tts_exhausted and direction == FrameDirection.DOWNSTREAM and isinstance(
             frame, (TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSTextFrame)
         ):
             return
         await self.push_frame(frame, direction)
 
 
-class CachedGeminiTTSService(GeminiTTSService):
+class NishadiTTSService(GeminiTTSService):
+    def __init__(self, call_id, **kwargs):
+        super().__init__(**kwargs)
+        self.call_id = call_id
+
     async def run_tts(self, text, context_id):
-        global tts_exhausted
+        global prewarm_usage, tts_exhausted
+        if tts_exhausted:
+            return
         audio = greeting_audio.get(greeting_key(text))
         if audio:
+            usage = prewarm_usage
+            call_state.emit(self.call_id, "gemini_tts.usage", {
+                "model": self._settings.model,
+                "usage": usage,
+                "total_tokens": usage.get("total_token_count") if usage else 0,
+                "audio_seconds": len(audio) / (OUTPUT_SAMPLE_RATE * 2),
+                "request_count": 1 if usage else 0,
+                "cached_audio": True,
+            })
+            prewarm_usage = None
             yield TTSAudioRawFrame(audio, OUTPUT_SAMPLE_RATE, 1, context_id=context_id)
-        else:
+            return
+        try:
+            self.last_usage = None
+            audio_seconds = 0.0
             async for frame in super().run_tts(text, context_id):
-                if isinstance(frame, ErrorFrame) and ("429" in frame.error or "RESOURCE_EXHAUSTED" in frame.error):
+                if isinstance(frame, ErrorFrame):
                     tts_exhausted = True
+                    call_state.emit(self.call_id, "gemini_tts.error", {
+                        "model": self._settings.model,
+                        "error": frame.error[:240],
+                        "fallback": GEMINI_LIVE_MODEL,
+                    })
+                    return
+                if isinstance(frame, TTSAudioRawFrame):
+                    audio_seconds += len(frame.audio) / (frame.sample_rate * 2 * frame.num_channels)
                 yield frame
+        except (genai_errors.APIError, ValueError, RuntimeError, TimeoutError, OSError) as error:
+            tts_exhausted = True
+            call_state.emit(self.call_id, "gemini_tts.error", {
+                "model": self._settings.model,
+                "error": type(error).__name__,
+                "fallback": GEMINI_LIVE_MODEL,
+            })
+            return
+        if audio_seconds or self.last_usage:
+            usage = self.last_usage
+            call_state.emit(self.call_id, "gemini_tts.usage", {
+                "model": self._settings.model,
+                "usage": usage,
+                "total_tokens": usage.get("total_token_count") if usage else 0,
+                "audio_seconds": audio_seconds,
+                "request_count": 1,
+            })
+
+    async def _run_genai_tts(self, text, context_id):
+        try:
+            model = self._settings.model
+            part_kwargs = {"text": text}
+            if self._settings.prompt:
+                part_kwargs["speech_metadata"] = genai.types.SpeechMetadata(style=self._settings.prompt)
+            contents = [genai.types.Content(role="user", parts=[genai.types.Part(**part_kwargs)])]
+            config = genai.types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=genai.types.SpeechConfig(
+                    voice_config=genai.types.VoiceConfig(voice=self._settings.voice),
+                ),
+            )
+            await self.start_tts_usage_metrics(text)
+            response = await self._client.aio.models.generate_content_stream(
+                model=model, contents=contents, config=config,
+            )
+            self.last_usage = None
+
+            async def audio_chunks():
+                first_chunk = True
+                buffer = bytearray()
+                async for chunk in response:
+                    if chunk.usage_metadata:
+                        self.last_usage = chunk.usage_metadata.model_dump(mode="json", exclude_none=True)
+                    parts = chunk.candidates[0].content.parts if chunk.candidates and chunk.candidates[0].content else []
+                    for part in parts:
+                        if part.inline_data and part.inline_data.data:
+                            if first_chunk:
+                                await self.stop_ttfb_metrics()
+                                first_chunk = False
+                            buffer.extend(part.inline_data.data)
+                            while len(buffer) >= self.chunk_size:
+                                yield bytes(buffer[:self.chunk_size])
+                                del buffer[:self.chunk_size]
+                if buffer:
+                    yield bytes(buffer)
+
+            async for frame in self._stream_audio_frames_from_iterator(
+                audio_chunks(), strip_wav_header=True, context_id=context_id,
+            ):
+                yield frame
+        except (genai_errors.APIError, ValueError, RuntimeError, TimeoutError, OSError) as error:
+            yield ErrorFrame(error=f"Gemini TTS failed: {type(error).__name__}")
+
+
+async def prewarm_replicated_voice():
+    global prewarm_usage, tts_exhausted
+    voice = os.environ.get("REPLICATED_VOICE_ID")
+    if not voice:
+        return
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    try:
+        result = await client.aio.models.generate_content(
+            model=os.environ.get("REPLICATED_TTS_MODEL", "gemini-3.8-flash-lite-tts"),
+            contents=opening_greeting({}),
+            config=genai.types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=genai.types.SpeechConfig(
+                    voice_config=genai.types.VoiceConfig(voice=voice),
+                ),
+            ),
+        )
+        part = result.candidates[0].content.parts[0]
+        audio = part.inline_data.data
+        if audio.startswith(b"RIFF"):
+            with wave.open(io.BytesIO(audio), "rb") as wav:
+                audio = wav.readframes(wav.getnframes())
+        greeting_audio[greeting_key(opening_greeting({}))] = audio
+        prewarm_usage = result.usage_metadata.model_dump(mode="json", exclude_none=True) if result.usage_metadata else None
+        tts_exhausted = False
+    except (genai_errors.APIError, ValueError, RuntimeError, TimeoutError, OSError) as error:
+        tts_exhausted = True
+        logging.getLogger(__name__).warning("Nishadi TTS unavailable; using Gemini Live: %s", type(error).__name__)
+    finally:
+        await client.aio.aclose()
 
 
 async def prewarm():
-    config = await DatabaseTools().agent_config()
-    voice = os.environ.get("REPLICATED_VOICE_ID")
-    if voice and os.environ.get("SERENDIB_INBOUND") == "1":
-        try:
-            client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-            sentences = re.findall(r"[^.!?]+[.!?]?", opening_greeting(config))
-
-            async def synthesize(text):
-                result = await client.aio.models.generate_content(
-                    model=os.environ.get("REPLICATED_TTS_MODEL", "gemini-3.8-flash-lite-tts"), contents=text,
-                    config={"response_modalities": ["AUDIO"], "speech_config": {
-                        "voice_config": {"prebuilt_voice_config": {"voice_name": voice}}
-                    }},
-                )
-                audio = result.candidates[0].content.parts[0].inline_data.data
-                if audio.startswith(b"RIFF"):
-                    with wave.open(io.BytesIO(audio), "rb") as wav:
-                        if (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) != (OUTPUT_SAMPLE_RATE, 1, 2):
-                            raise ValueError("Unexpected greeting audio format")
-                        audio = wav.readframes(wav.getnframes())
-                greeting_audio[greeting_key(text)] = audio
-
-            results = await asyncio.wait_for(
-                asyncio.gather(*(synthesize(t.strip()) for t in sentences), return_exceptions=True), 15
-            )
-            if any(isinstance(result, BaseException) for result in results):
-                logging.getLogger(__name__).warning("Greeting audio prewarm failed")
-            elif sentences:
-                greeting_audio[greeting_key(opening_greeting(config))] = b"".join(
-                    greeting_audio[greeting_key(t)] for t in sentences
-                )
-        except TimeoutError:
-            logging.getLogger(__name__).warning("Greeting audio prewarm timed out")
+    await prewarm_replicated_voice()
     async with genai.Client(api_key=os.environ["GEMINI_API_KEY"]).aio.live.connect(
         model=GEMINI_LIVE_MODEL,
         config={
@@ -181,16 +272,19 @@ async def prewarm():
 
 def build_pipeline(transport, config, context, state=call_state):
     enabled = [tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])]
-    voice = os.environ.get("REPLICATED_VOICE_ID")
-    direct = os.environ.get("SERENDIB_INBOUND") == "1" and not context.outbound
+    serendib_agent = config.get("company_name", "").strip().casefold() == "serendibai.lk"
+    direct = (os.environ.get("SERENDIB_INBOUND") == "1" or serendib_agent) and not context.outbound
+    voice = os.environ.get("REPLICATED_VOICE_ID") if direct and serendib_agent else None
     if direct and (tts_exhausted or not greeting_audio.get(greeting_key(opening_greeting(config)))):
         voice = None
     instant = bool(voice) and direct
+    llm_config = {**config, "replicated_voice": bool(voice)}
     llm = CallGeminiService(
         context,
         state,
         api_key=os.environ["GEMINI_API_KEY"],
-        settings=agent_settings(config),
+        settings=agent_settings(llm_config),
+        replicated=bool(voice),
         tools=ToolsSchema(standard_tools=enabled),
         inference_on_context_initialization=not context.outbound and not instant,
     )
@@ -206,7 +300,8 @@ def build_pipeline(transport, config, context, state=call_state):
     if voice:
         processors.extend([
             LiveSpeechFilter(),
-            CachedGeminiTTSService(
+            NishadiTTSService(
+                context.call_id,
                 api_key=os.environ["GEMINI_API_KEY"],
                 settings=GeminiTTSService.Settings(
                     model=os.environ.get("REPLICATED_TTS_MODEL", "gemini-3.8-flash-lite-tts"), voice=voice, language=None

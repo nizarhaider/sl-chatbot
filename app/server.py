@@ -30,7 +30,7 @@ from pipecat.transports.whatsapp.client import WhatsAppClient
 
 load_dotenv()
 
-from app.agent import prewarm, run_agent
+from app.agent import prewarm, prewarm_replicated_voice, run_agent
 from app.config import CASE_CALL_SECONDS, DEFAULT_MAX_CALLS, ICE_SERVERS
 from app.store import call_state
 from app.tools import CallContext, DatabaseTools, connection, whatsapp_api
@@ -554,6 +554,7 @@ class LinkedAudioSerializer(FrameSerializer):
 def create_bridge_app():
     @asynccontextmanager
     async def bridge_lifespan(app):
+        await prewarm_replicated_voice()
         yield
         await call_state.close()
 

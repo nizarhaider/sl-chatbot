@@ -19,6 +19,7 @@ from loguru import logger as pipecat_logger
 from psycopg.types.json import Jsonb
 
 from app.config import (
+    GEMINI_LIVE_MODEL,
     HEARTBEAT_SECONDS,
     LOG_LEVEL,
     MP3_BITRATE,
@@ -40,25 +41,33 @@ class CallStore:
             else agent_ids()
         )
         events = call.get("events", [])
-        usage_events = [
-            event for event in events if event.get("kind") == "gemini_live.usage"
-        ]
-        totals = [event["data"].get("total_tokens") for event in usage_events]
-        tokens = (
-            sum(totals)
-            if totals and all(value is not None for value in totals)
-            else None
-        )
-        requests = [
-            event["data"]["usage"]
-            for event in usage_events
-            if event["data"].get("usage")
-        ]
-        usage = (
-            {"provider": "google_gemini_live", "requests": requests}
-            if requests
-            else None
-        )
+        usage_events = [event for event in events if event.get("kind") in ("gemini_live.usage", "gemini_tts.usage")]
+        models = {}
+        for event in usage_events:
+            data = event.get("data", {})
+            metadata = data.get("usage") or {}
+            model = data.get("model") or GEMINI_LIVE_MODEL
+            bucket = models.setdefault(model, {
+                "request_count": 0,
+                "total_tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "input_audio_tokens": 0,
+                "output_audio_tokens": 0,
+                "audio_seconds": 0,
+                "requests": [],
+            })
+            bucket["request_count"] += data.get("request_count", 1)
+            bucket["total_tokens"] += data.get("total_tokens") or metadata.get("total_token_count") or 0
+            bucket["input_tokens"] += metadata.get("prompt_token_count") or metadata.get("input_token_count") or 0
+            bucket["output_tokens"] += metadata.get("response_token_count") or metadata.get("candidates_token_count") or 0
+            bucket["input_audio_tokens"] += sum(item.get("token_count", 0) for item in metadata.get("prompt_tokens_details", []) if item.get("modality") == "AUDIO")
+            bucket["output_audio_tokens"] += sum(item.get("token_count", 0) for item in metadata.get("response_tokens_details", metadata.get("candidates_tokens_details", [])) if item.get("modality") == "AUDIO")
+            bucket["audio_seconds"] += data.get("audio_seconds", 0)
+            if metadata:
+                bucket["requests"].append(metadata)
+        tokens = sum(bucket["total_tokens"] for bucket in models.values()) or None
+        usage = {"models": models} if models else None
         recording = next(
             (
                 event["data"]
