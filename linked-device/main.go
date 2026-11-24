@@ -103,6 +103,8 @@ func (m *manager) run(ctx context.Context, id string) {
 	calls := meow.NewClient(client)
 	client.AddEventHandler(func(evt any) {
 		switch evt.(type) {
+		case *events.CallOffer:
+			log.Printf("WhatsApp call offer event received for connection %s", id)
 		case *events.Connected:
 			m.status(id, "connected", "", "", 0)
 			_, err := m.db.Exec(context.Background(), `update portal_whatsapp_links set phone=$2 where id=$1`, id, client.Store.GetJID().User)
@@ -118,7 +120,10 @@ func (m *manager) run(ctx context.Context, id string) {
 			}
 		}
 	})
-	calls.OnIncomingCall(func(call *meow.Call) { go m.handleCall(ctx, id, call) })
+	calls.OnIncomingCall(func(call *meow.Call) {
+		log.Printf("WhatsApp call offer accepted by adapter for connection %s", id)
+		go m.handleCall(ctx, id, call)
+	})
 	if client.Store.ID == nil {
 		qr, err := client.GetQRChannel(ctx)
 		if err != nil {
@@ -147,7 +152,12 @@ func (m *manager) run(ctx context.Context, id string) {
 }
 func (m *manager) handleCall(ctx context.Context, id string, call *meow.Call) {
 	var enabled, voiceEnabled bool
-	if err := m.db.QueryRow(ctx, `select enabled,voice_enabled from portal_whatsapp_links where id=$1`, id).Scan(&enabled, &voiceEnabled); err != nil || !enabled || !voiceEnabled {
+	if err := m.db.QueryRow(ctx, `select enabled,voice_enabled from portal_whatsapp_links where id=$1`, id).Scan(&enabled, &voiceEnabled); err != nil {
+		log.Printf("incoming call state lookup failed for connection %s: %v", id, err)
+		return
+	}
+	if !enabled || !voiceEnabled {
+		log.Printf("incoming call ignored for connection %s: enabled=%t voice_enabled=%t", id, enabled, voiceEnabled)
 		return
 	}
 	secret := os.Getenv("LINKED_BRIDGE_SECRET")
@@ -156,13 +166,15 @@ func (m *manager) handleCall(ctx context.Context, id string, call *meow.Call) {
 	h.Set("Authorization", "Bearer "+secret)
 	ws, _, err := websocket.Dial(ctx, "ws://127.0.0.1:8098/call?"+q.Encode(), &websocket.DialOptions{HTTPHeader: h})
 	if err != nil {
-		log.Printf("voice bridge unavailable")
+		log.Printf("voice bridge unavailable for connection %s: %v", id, err)
 		return
 	}
 	defer ws.CloseNow()
 	if err = call.Answer(); err != nil {
+		log.Printf("incoming call answer failed for connection %s: %v", id, err)
 		return
 	}
+	log.Printf("incoming call answered for connection %s", id)
 	defer call.Hangup()
 	call.OnEnd(func(string) { ws.CloseNow() })
 	audio := make(chan []byte, 25)
