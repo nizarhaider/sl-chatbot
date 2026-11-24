@@ -111,6 +111,41 @@ VOICE_TOOLS = [
 
 
 class DatabaseTools:
+    async def text_reply_data(self, connection_id, query):
+        def load():
+            terms = " OR ".join(query.strip().split()[:12])
+            like = "%" + query.replace("%", "").replace("_", "") + "%"
+            with connection() as db:
+                link = db.execute(
+                    """select l.agent_id::text,l.customer_id::text,l.message_reply_instructions,a.text_reply_instructions
+                       from portal_whatsapp_links l join portal_agents a on a.id=l.agent_id and a.customer_id=l.customer_id
+                       where l.id=%s and l.enabled and l.message_replies_enabled and a.status<>'archived'""",
+                    (connection_id,),
+                ).fetchone()
+                if not link:
+                    return None
+                references = db.execute(
+                    """with knowledge as (
+                           select id,name,left(content,18000) as content,
+                                  ts_rank(to_tsvector('simple',content),websearch_to_tsquery('simple',%s)) as rank
+                           from portal_documents where customer_id=%s
+                           and (to_tsvector('simple',content) @@ websearch_to_tsquery('simple',%s) or name ilike %s)
+                           order by rank desc limit 5
+                       ), products as (
+                           select name,sku,description,category,price,currency,stock,status
+                           from portal_products where customer_id=%s and status='active'
+                           and (to_tsvector('simple',name || ' ' || description || ' ' || category || ' ' || sku)
+                                @@ websearch_to_tsquery('simple',%s) or name ilike %s)
+                           limit 15
+                       )
+                       select coalesce((select jsonb_agg(jsonb_build_object('id',id,'name',name,'content',content) order by rank desc) from knowledge),'[]'::jsonb) as knowledge,
+                              coalesce((select jsonb_agg(to_jsonb(products)) from products),'[]'::jsonb) as products""",
+                    (terms, link["customer_id"], terms, like, link["customer_id"], terms, like),
+                ).fetchone()
+                return link, references
+
+        return await asyncio.to_thread(load)
+
     async def agent_config(self, context=None):
         def load():
             agent_id, customer_id = (
