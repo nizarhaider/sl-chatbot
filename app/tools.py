@@ -121,7 +121,7 @@ class DatabaseTools:
             if os.environ.get("SERENDIB_INBOUND") == "1":
                 with connection() as db:
                     row = db.execute(
-                        """select a.name,a.company_name,a.languages,a.max_calls
+                        """select a.name,a.company_name,a.languages,a.max_calls,a.greeting,a.system_prompt
                            from portal_agents a where a.id=%s and a.customer_id=%s
                            and a.status<>'archived'""",
                         (agent_id, customer_id),
@@ -132,7 +132,7 @@ class DatabaseTools:
             with connection() as db:
                 row = db.execute(
                     """select a.name,a.company_name,a.languages,a.tools,a.max_calls,a.version,c.portal_tools,
-                              (select slug from portal_agent_cases where agent_id=a.id) as case_slug
+                              a.greeting,a.system_prompt
                        from portal_agents a join customers c on c.id=a.customer_id
                        where a.id=%s and a.customer_id=%s and a.status<>'archived'""",
                     (agent_id, customer_id),
@@ -143,13 +143,14 @@ class DatabaseTools:
                 "name": row["name"],
                 "company_name": row["company_name"],
                 "languages": row["languages"],
+                "greeting": row["greeting"],
+                "system_prompt": row["system_prompt"],
                 "enabled_tools": [
                     *STANDARD_TOOLS,
                     *(tool for tool in row["tools"] if tool in row["portal_tools"]),
                 ],
                 "max_calls": row["max_calls"],
                 "version": row["version"],
-                "case_slug": row["case_slug"],
                 "outbound": bool(context and context.outbound),
             }
 

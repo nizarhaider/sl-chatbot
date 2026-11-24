@@ -9,6 +9,8 @@ create table if not exists portal_agents (
   customer_id uuid not null references customers(id),
   name text not null,
   company_name text not null default '',
+  greeting text not null default '',
+  system_prompt text not null default '',
   languages text[] not null default array['English','Sinhala','Tamil'],
   max_calls integer not null default 3,
   phone_number_id text not null,
