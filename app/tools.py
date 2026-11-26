@@ -18,7 +18,7 @@ from app.config import (
 )
 
 logger = logging.getLogger(__name__)
-STANDARD_TOOLS = ("search_knowledge", "search_products", "send_whatsapp_message", "end_call")
+STANDARD_TOOLS = ("search_knowledge", "search_products", "send_whatsapp_message", "send_product_image", "end_call")
 
 
 def connection():
@@ -106,6 +106,12 @@ VOICE_TOOLS = [
         {"message": {"type": "string"}},
         ["message"],
     ),
+    FunctionSchema(
+        "send_product_image",
+        "Send a product photo to this caller only when they ask to see a product. Use the exact product name returned by search_products.",
+        {"product_name": {"type": "string"}},
+        ["product_name"],
+    ),
     FunctionSchema("end_call", "End the call after saying goodbye.", {}, []),
 ]
 
@@ -143,7 +149,7 @@ class DatabaseTools:
                            and (to_tsvector('simple',content) @@ websearch_to_tsquery('simple',%s) or name ilike %s)
                            order by rank desc limit 5
                        ), products as (
-                           select name,sku,description,category,price,currency,stock,status
+                           select name,sku,description,category,unit,price,currency,stock,status,image is not null as image_available
                            from portal_products where customer_id=%s and status='active'
                            and (to_tsvector('simple',name || ' ' || description || ' ' || category || ' ' || sku)
                                 @@ websearch_to_tsquery('simple',%s) or name ilike %s)
@@ -211,6 +217,8 @@ class DatabaseTools:
         if name == "send_whatsapp_message":
             message = str(arguments.get("message", ""))[:4000]
             return {"ok": await whatsapp_api.send_text_message(context.caller_phone, message)}
+        if name == "send_product_image":
+            return await self.send_product_image(arguments, context)
         try:
             return await asyncio.to_thread(self._execute, name, arguments, context)
         except (TypeError, ValueError):
@@ -221,6 +229,24 @@ class DatabaseTools:
         except psycopg.Error:
             logger.exception("Neon tool query failed")
             return {"ok": False, "error": "The service is temporarily unavailable."}
+
+    async def send_product_image(self, arguments, context):
+        product_name = str(arguments.get("product_name", "")).strip()[:200]
+        def load():
+            with connection() as db:
+                return db.execute(
+                    """select name,image,image_type from portal_products
+                       where customer_id=%s and status='active' and image is not null
+                       and lower(name)=lower(%s) limit 1""",
+                    (context.customer_id, product_name),
+                ).fetchone()
+        product = await asyncio.to_thread(load)
+        if not product:
+            return {"ok": False, "error": "No photo is available for that exact product."}
+        sent = await whatsapp_api.send_image_message(
+            context.caller_phone, product["name"], bytes(product["image"]), product["image_type"]
+        )
+        return {"ok": sent, "product": product["name"] if sent else None}
 
     def _execute(self, name, arguments, context):
         agent_id, customer_id = (
@@ -245,7 +271,7 @@ class DatabaseTools:
                         row["id"] = str(row["id"])
                 else:
                     rows = db.execute(
-                        """select name,sku,description,category,price,currency,stock,status
+                        """select name,sku,description,category,unit,price,currency,stock,status,image is not null as image_available
                            from portal_products where customer_id=%s and status='active'
                            and (to_tsvector('simple',name || ' ' || description || ' ' || category || ' ' || sku)
                                 @@ websearch_to_tsquery('simple',%s) or name ilike %s)
@@ -490,6 +516,35 @@ class WhatsAppAPI:
             return True
         except httpx.HTTPError:
             logger.exception("WhatsApp message failed")
+            return False
+
+    async def send_image_message(self, phone, caption, content, content_type):
+        recipient = normalize_phone_number(phone)
+        if not recipient:
+            return False
+        if self.client is None:
+            self.client = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
+        token = os.environ.get("WHATSAPP_ACCESS_TOKEN") or os.environ.get("WHATSAPP_TOKEN")
+        headers = {"Authorization": f"Bearer {token}"}
+        base = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{os.environ['PHONE_NUMBER_ID']}"
+        try:
+            upload = await self.client.post(
+                f"{base}/media",
+                headers=headers,
+                data={"messaging_product": "whatsapp", "type": content_type},
+                files={"file": ("product-image", content, content_type)},
+            )
+            upload.raise_for_status()
+            media_id = upload.json()["id"]
+            sent = await self.client.post(
+                f"{base}/messages",
+                headers={**headers, "Content-Type": "application/json"},
+                json={"messaging_product": "whatsapp", "to": recipient, "type": "image", "image": {"id": media_id, "caption": caption[:1024]}},
+            )
+            sent.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            logger.exception("WhatsApp product image failed")
             return False
 
 
