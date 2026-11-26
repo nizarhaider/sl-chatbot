@@ -111,7 +111,7 @@ func (m *manager) run(ctx context.Context, id string) {
 		case *events.CallOffer:
 			log.Printf("WhatsApp call offer event received for connection %s", id)
 		case *events.Message:
-			if !event.Info.IsFromMe && !event.Info.IsGroup && !event.Info.IsNewsletterStatus {
+			if !event.Info.IsGroup && !event.Info.IsNewsletterStatus {
 				go m.replyToMessage(ctx, id, client, event)
 			}
 		case *events.Connected:
@@ -436,21 +436,29 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 	phone := contact
 	if event.Info.Chat.Server == types.HiddenUserServer {
 		phone = ""
-		if event.Info.SenderAlt.Server == types.DefaultUserServer {
-			phone = event.Info.SenderAlt.User
+		alt := event.Info.SenderAlt
+		if event.Info.IsFromMe {
+			alt = event.Info.RecipientAlt
+		}
+		if alt.Server == types.DefaultUserServer {
+			phone = alt.User
 		} else if jid, err := client.Store.LIDs.GetPNForLID(ctx, event.Info.Chat); err == nil && jid.Server == types.DefaultUserServer {
 			phone = jid.User
 		}
 	}
+	direction, status := "inbound", "received"
+	if event.Info.IsFromMe {
+		direction, status = "outbound", "sent"
+	}
 	inserted, err := m.db.Exec(ctx, `insert into portal_messages
 		(customer_id,agent_id,connection_id,contact_phone,display_phone,direction,body,status,source,provider_message_id)
-		select customer_id,agent_id,id,$2,$5,'inbound',$4,'received','linked_device',$3
-		from portal_whatsapp_links where id=$1 on conflict do nothing`, id, contact, messageID, text, phone)
+		select customer_id,agent_id,id,$2,$5,$6,$4,$7,'linked_device',$3
+		from portal_whatsapp_links where id=$1 on conflict do nothing`, id, contact, messageID, text, phone, direction, status)
 	if err != nil {
 		log.Printf("incoming message could not be saved for connection %s: %v", id, err)
 		return
 	}
-	if inserted.RowsAffected() == 0 {
+	if inserted.RowsAffected() == 0 || event.Info.IsFromMe {
 		return
 	}
 	payload, err := json.Marshal(map[string]string{"connection": id, "peer": contact, "recipient": event.Info.Chat.ToNonAD().String(), "message_id": messageID, "text": text})
