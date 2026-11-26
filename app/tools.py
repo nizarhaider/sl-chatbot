@@ -578,7 +578,7 @@ class WhatsAppAPI:
             return None
 
     async def send_image_message(self, phone, caption, content, content_type, connection_id=""):
-        recipient = normalize_phone_number(phone)
+        recipient = phone if connection_id and re.fullmatch(r"\d{10,20}@(lid|s\.whatsapp\.net)", phone) else normalize_phone_number(phone)
         if not recipient:
             return False
         if connection_id:

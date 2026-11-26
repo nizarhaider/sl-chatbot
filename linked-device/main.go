@@ -312,7 +312,7 @@ func main() {
 			return
 		}
 		connection, peer, caption := r.FormValue("connection"), r.FormValue("peer"), r.FormValue("caption")
-		if !regexp.MustCompile(`^[0-9a-f-]{36}$`).MatchString(connection) || !regexp.MustCompile(`^\d{10,15}$`).MatchString(peer) {
+		if !regexp.MustCompile(`^[0-9a-f-]{36}$`).MatchString(connection) || !regexp.MustCompile(`^\d{10,20}(@lid|@s\.whatsapp\.net)?$`).MatchString(peer) {
 			http.Error(w, "Invalid recipient", http.StatusBadRequest)
 			return
 		}
@@ -369,7 +369,14 @@ func (m *manager) sendImage(ctx context.Context, id, peer, caption string, conte
 		FileSHA256:    media.FileSHA256,
 		FileLength:    &media.FileLength,
 	}
-	_, err = client.SendMessage(ctx, types.NewJID(peer, "s.whatsapp.net"), &waE2E.Message{ImageMessage: image})
+	if !strings.Contains(peer, "@") {
+		peer += "@s.whatsapp.net"
+	}
+	jid, err := types.ParseJID(peer)
+	if err != nil {
+		return err
+	}
+	_, err = client.SendMessage(ctx, jid, &waE2E.Message{ImageMessage: image})
 	return err
 }
 
@@ -446,7 +453,7 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 	if inserted.RowsAffected() == 0 {
 		return
 	}
-	payload, err := json.Marshal(map[string]string{"connection": id, "peer": contact, "message_id": messageID, "text": text})
+	payload, err := json.Marshal(map[string]string{"connection": id, "peer": contact, "recipient": event.Info.Chat.ToNonAD().String(), "message_id": messageID, "text": text})
 	if err != nil {
 		return
 	}
