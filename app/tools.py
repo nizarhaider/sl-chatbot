@@ -187,13 +187,13 @@ class DatabaseTools:
                     return None
                 references = db.execute(
                     """with knowledge as (
-                           select id,name,left(content,18000) as content,
+                           select id,name,ts_headline('simple',content,websearch_to_tsquery('simple',%s),'MaxWords=100, MinWords=25, MaxFragments=3, FragmentDelimiter= ... ') as content,
                                   ts_rank(to_tsvector('simple',content),websearch_to_tsquery('simple',%s)) as rank
                            from portal_documents where customer_id=%s
                            and (to_tsvector('simple',content) @@ websearch_to_tsquery('simple',%s) or name ilike %s)
                            order by rank desc limit 5
                        ), products as (
-                           select name,sku,description,category,unit,price,currency,stock,status,image is not null as image_available
+                           select name,sku,left(description,1000) as description,category,unit,price,currency,stock,status,image is not null as image_available
                            from portal_products where customer_id=%s and status='active'
                            and (to_tsvector('simple',name || ' ' || description || ' ' || category || ' ' || sku)
                                 @@ websearch_to_tsquery('simple',%s) or name ilike %s)
@@ -201,7 +201,7 @@ class DatabaseTools:
                        )
                        select coalesce((select jsonb_agg(jsonb_build_object('id',id,'name',name,'content',content) order by rank desc) from knowledge),'[]'::jsonb) as knowledge,
                               coalesce((select jsonb_agg(to_jsonb(products)) from products),'[]'::jsonb) as products""",
-                    (terms, link["customer_id"], terms, like, link["customer_id"], terms, like),
+                    (terms, terms, link["customer_id"], terms, like, link["customer_id"], terms, like),
                 ).fetchone()
                 return link, references
 
