@@ -36,3 +36,12 @@ create table if not exists portal_calls (
 
 create index if not exists portal_agents_customer on portal_agents(customer_id);
 create index if not exists portal_calls_customer_date on portal_calls(customer_id,created_at desc);
+create table if not exists portal_text_usage (
+  id text primary key,
+  customer_id uuid not null references customers(id) on delete cascade,
+  agent_id uuid references portal_agents(id) on delete set null,
+  model text not null,
+  usage jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists portal_text_usage_customer_date on portal_text_usage(customer_id,created_at desc);

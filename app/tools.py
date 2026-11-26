@@ -111,6 +111,17 @@ VOICE_TOOLS = [
 
 
 class DatabaseTools:
+    async def record_text_usage(self, usage_id, customer_id, agent_id, model, usage):
+        def save():
+            with connection() as db:
+                db.execute(
+                    """insert into portal_text_usage(id,customer_id,agent_id,model,usage)
+                       values(%s,%s,%s,%s,%s) on conflict(id) do nothing""",
+                    (usage_id, customer_id, agent_id, model, Jsonb(usage)),
+                )
+
+        await asyncio.to_thread(save)
+
     async def text_reply_data(self, connection_id, query):
         def load():
             terms = " OR ".join(query.strip().split()[:12])

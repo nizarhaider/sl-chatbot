@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import aiohttp
+import psycopg
 from aiortc import RTCSessionDescription
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
@@ -603,8 +604,9 @@ def create_bridge_app():
             contents.append({'role': 'user', 'parts': [{'text': text[:4000]}]})
             model_started = time.perf_counter()
             try:
+                model = os.environ.get('CHAT_MODEL', 'gemini-3.8-flash')
                 result = await request.app.state.chat_client.aio.models.generate_content(
-                    model=os.environ.get('CHAT_MODEL', 'gemini-3.8-flash'),
+                    model=model,
                     contents=contents,
                     config=genai.types.GenerateContentConfig(
                         system_instruction='\n\n'.join(part for part in instructions if part),
@@ -616,6 +618,14 @@ def create_bridge_app():
             except (genai_errors.APIError, KeyError, OSError, RuntimeError, TimeoutError, ValueError) as error:
                 logger.warning('WhatsApp text response failed after %.0f ms: %s', (time.perf_counter() - model_started) * 1000, type(error).__name__)
                 return {'reply': ''}
+            if result.usage_metadata:
+                try:
+                    await tools.record_text_usage(
+                        f'{connection_id}:{message_id}', link['customer_id'], link['agent_id'],
+                        model, result.usage_metadata.model_dump(mode='json', exclude_none=True),
+                    )
+                except (OSError, TypeError, ValueError, RuntimeError, psycopg.Error) as error:
+                    logger.warning('WhatsApp token usage could not be saved: %s', type(error).__name__)
             if reply:
                 history.extend([
                     {'role': 'user', 'text': text[:4000], 'message_id': message_id},
