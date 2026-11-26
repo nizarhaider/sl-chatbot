@@ -38,6 +38,7 @@ class CallContext:
     agent_id: str = ""
     customer_id: str = ""
     outbound: bool = False
+    connection_id: str = ""
 
 
 VOICE_TOOLS = [
@@ -244,7 +245,11 @@ class DatabaseTools:
         if not product:
             return {"ok": False, "error": "No photo is available for that exact product."}
         sent = await whatsapp_api.send_image_message(
-            context.caller_phone, product["name"], bytes(product["image"]), product["image_type"]
+            context.caller_phone,
+            product["name"],
+            bytes(product["image"]),
+            product["image_type"],
+            context.connection_id,
         )
         return {"ok": sent, "product": product["name"] if sent else None}
 
@@ -518,10 +523,26 @@ class WhatsAppAPI:
             logger.exception("WhatsApp message failed")
             return False
 
-    async def send_image_message(self, phone, caption, content, content_type):
+    async def send_image_message(self, phone, caption, content, content_type, connection_id=""):
         recipient = normalize_phone_number(phone)
         if not recipient:
             return False
+        if connection_id:
+            client = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
+            try:
+                response = await client.post(
+                    f"{os.environ.get('LINKED_SERVICE_URL', 'https://linked.serendibai.lk').rstrip('/')}/send-image",
+                    headers={"Authorization": f"Bearer {os.environ.get('LINKED_BRIDGE_SECRET', '')}"},
+                    data={"connection": connection_id, "peer": recipient, "caption": caption[:1024]},
+                    files={"image": ("product-image", content, content_type)},
+                )
+                response.raise_for_status()
+                return True
+            except httpx.HTTPError:
+                logger.exception("Linked WhatsApp product image failed")
+                return False
+            finally:
+                await client.aclose()
         if self.client is None:
             self.client = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
         token = os.environ.get("WHATSAPP_ACCESS_TOKEN") or os.environ.get("WHATSAPP_TOKEN")

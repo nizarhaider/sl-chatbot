@@ -657,7 +657,7 @@ def create_bridge_app():
         await capacity.acquire()
         try:
             await socket.accept()
-            context = CallContext(call_id, socket.query_params.get('peer', '')[:50], str(row['id']), str(row['customer_id']))
+            context = CallContext(call_id, socket.query_params.get('peer', '')[:50], str(row['id']), str(row['customer_id']), connection_id=customer)
             call_state.start_call(context)
             ready = asyncio.Event()
             ready.set()

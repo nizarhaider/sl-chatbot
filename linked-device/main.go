@@ -301,8 +301,76 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	http.HandleFunc("/send-image", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+os.Getenv("LINKED_BRIDGE_SECRET"))) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 5_500_000)
+		if r.ParseMultipartForm(5_500_000) != nil {
+			http.Error(w, "Invalid image upload", http.StatusBadRequest)
+			return
+		}
+		connection, peer, caption := r.FormValue("connection"), r.FormValue("peer"), r.FormValue("caption")
+		if !regexp.MustCompile(`^[0-9a-f-]{36}$`).MatchString(connection) || !regexp.MustCompile(`^\d{10,15}$`).MatchString(peer) {
+			http.Error(w, "Invalid recipient", http.StatusBadRequest)
+			return
+		}
+		file, header, err := r.FormFile("image")
+		if err != nil {
+			http.Error(w, "Image is required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+		if header.Header.Get("Content-Type") != "image/jpeg" && header.Header.Get("Content-Type") != "image/png" {
+			http.Error(w, "Use a JPG or PNG image", http.StatusBadRequest)
+			return
+		}
+		content, err := io.ReadAll(io.LimitReader(file, 5_000_001))
+		if err != nil || len(content) == 0 || len(content) > 5_000_000 {
+			http.Error(w, "Image must be smaller than 5 MB", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err = m.sendImage(ctx, connection, peer, caption, content, header.Header.Get("Content-Type")); err != nil {
+			log.Printf("product image send failed for connection %s: %v", connection, err)
+			http.Error(w, "Unable to send product image", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	server := &http.Server{Addr: "127.0.0.1:8099", ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 30 * time.Second}
 	log.Fatal(server.ListenAndServe())
+}
+
+func (m *manager) sendImage(ctx context.Context, id, peer, caption string, content []byte, contentType string) error {
+	m.mu.Lock()
+	session := m.sessions[id]
+	var client *whatsmeow.Client
+	if session != nil {
+		client = session.client
+	}
+	m.mu.Unlock()
+	if client == nil {
+		return errors.New("linked WhatsApp is not connected")
+	}
+	media, err := client.Upload(ctx, content, whatsmeow.MediaImage)
+	if err != nil {
+		return err
+	}
+	image := &waE2E.ImageMessage{
+		Caption:       proto.String(caption),
+		Mimetype:      proto.String(contentType),
+		URL:           &media.URL,
+		DirectPath:    &media.DirectPath,
+		MediaKey:      media.MediaKey,
+		FileEncSHA256: media.FileEncSHA256,
+		FileSHA256:    media.FileSHA256,
+		FileLength:    &media.FileLength,
+	}
+	_, err = client.SendMessage(ctx, types.NewJID(peer, "s.whatsapp.net"), &waE2E.Message{ImageMessage: image})
+	return err
 }
 
 func (m *manager) start(id string) {
