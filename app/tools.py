@@ -118,7 +118,7 @@ VOICE_TOOLS = [
 
 
 class DatabaseTools:
-    async def record_text_usage(self, usage_id, customer_id, agent_id, model, usage):
+    async def record_text_usage(self, usage_id, customer_id, agent_id, model, usage, connection_id, message_id):
         def save():
             with connection() as db:
                 db.execute(
@@ -126,8 +126,51 @@ class DatabaseTools:
                        values(%s,%s,%s,%s,%s) on conflict(id) do nothing""",
                     (usage_id, customer_id, agent_id, model, Jsonb(usage)),
                 )
+                db.execute(
+                    """update portal_messages set model=%s,usage=%s
+                       where connection_id=%s and provider_message_id=%s and direction='inbound'""",
+                    (model, Jsonb(usage), connection_id, message_id),
+                )
 
         await asyncio.to_thread(save)
+
+    async def record_message(
+        self, customer_id, agent_id, connection_id, phone, body, status,
+        provider_message_id=None, reply_to_message_id=None, source="cloud_api", direction="outbound",
+    ):
+        def save():
+            with connection() as db:
+                db.execute(
+                    """insert into portal_messages
+                       (customer_id,agent_id,connection_id,contact_phone,direction,body,status,
+                        source,provider_message_id,reply_to_message_id)
+                       values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       on conflict do nothing""",
+                    (customer_id, agent_id, connection_id, phone, direction, body, status,
+                     source, provider_message_id, reply_to_message_id),
+                )
+
+        try:
+            await asyncio.to_thread(save)
+        except psycopg.Error as error:
+            logger.warning("WhatsApp message could not be saved: %s", type(error).__name__)
+
+    async def message_history(self, connection_id, phone, exclude_message_id):
+        def load():
+            with connection() as db:
+                rows = db.execute(
+                    """select direction,body from portal_messages
+                       where connection_id=%s and contact_phone=%s and direction in ('inbound','outbound')
+                         and status in ('received','sent') and provider_message_id is distinct from %s
+                       order by created_at desc,id desc limit 12""",
+                    (connection_id, phone, exclude_message_id),
+                ).fetchall()
+                return [
+                    {"role": "user" if row["direction"] == "inbound" else "model", "text": row["body"]}
+                    for row in reversed(rows)
+                ]
+
+        return await asyncio.to_thread(load)
 
     async def text_reply_data(self, connection_id, query):
         def load():
@@ -217,7 +260,18 @@ class DatabaseTools:
             return {"ok": True}
         if name == "send_whatsapp_message":
             message = str(arguments.get("message", ""))[:4000]
-            return {"ok": await whatsapp_api.send_text_message(context.caller_phone, message)}
+            message_id = await whatsapp_api.send_text_message(context.caller_phone, message)
+            await self.record_message(
+                context.customer_id,
+                context.agent_id,
+                context.connection_id or None,
+                context.caller_phone,
+                message,
+                "sent" if message_id else "failed",
+                message_id,
+                source="cloud_api",
+            )
+            return {"ok": bool(message_id)}
         if name == "send_product_image":
             return await self.send_product_image(arguments, context)
         try:
@@ -507,9 +561,9 @@ class WhatsAppAPI:
     async def send_text_message(self, phone, body):
         recipient = normalize_phone_number(phone)
         if not recipient:
-            return False
+            return None
         try:
-            await self.request(
+            result = await self.request(
                 "messages",
                 {
                     "messaging_product": "whatsapp",
@@ -518,10 +572,10 @@ class WhatsAppAPI:
                     "text": {"preview_url": False, "body": body},
                 },
             )
-            return True
+            return result.get("messages", [{}])[0].get("id")
         except httpx.HTTPError:
             logger.exception("WhatsApp message failed")
-            return False
+            return None
 
     async def send_image_message(self, phone, caption, content, content_type, connection_id=""):
         recipient = normalize_phone_number(phone)

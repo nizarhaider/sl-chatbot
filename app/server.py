@@ -39,7 +39,6 @@ from app.store import call_state
 from app.tools import CallContext, DatabaseTools, connection, whatsapp_api
 
 logger = logging.getLogger(__name__)
-chat_histories = {}
 chat_locks = {}
 
 
@@ -494,6 +493,21 @@ def create_app():
                     raise HTTPException(400, "Wrong business phone")
                 if value.get("calls") and not app.state.voice_ready:
                     raise HTTPException(503, "Voice agent unavailable")
+                for message in value.get("messages", []):
+                    text = ((message.get("text") or {}).get("body") or "").strip()
+                    phone = message.get("from", "")
+                    if message.get("type") == "text" and text and phone:
+                        await DatabaseTools().record_message(
+                            os.environ["VOICE_CUSTOMER_ID"],
+                            os.environ["VOICE_AGENT_ID"],
+                            None,
+                            phone,
+                            text[:4000],
+                            "received",
+                            message.get("id"),
+                            source="cloud_api",
+                            direction="inbound",
+                        )
                 await app.state.calls.handle_change(value)
         return Response("EVENT_RECEIVED")
 
@@ -597,9 +611,7 @@ def create_bridge_app():
         key = f'{connection_id}:{peer}'
         lock = chat_locks.setdefault(key, asyncio.Lock())
         async with lock:
-            history = chat_histories.setdefault(key, [])
-            if len(history) >= 2 and history[-2].get('message_id') == message_id:
-                return {'reply': history[-1]['text']}
+            history = await tools.message_history(connection_id, peer, message_id)
             contents = [{'role': item['role'], 'parts': [{'text': item['text']}]} for item in history]
             contents.append({'role': 'user', 'parts': [{'text': text[:4000]}]})
             model_started = time.perf_counter()
@@ -623,15 +635,10 @@ def create_bridge_app():
                     await tools.record_text_usage(
                         f'{connection_id}:{message_id}', link['customer_id'], link['agent_id'],
                         model, result.usage_metadata.model_dump(mode='json', exclude_none=True),
+                        connection_id, message_id,
                     )
                 except (OSError, TypeError, ValueError, RuntimeError, psycopg.Error) as error:
                     logger.warning('WhatsApp token usage could not be saved: %s', type(error).__name__)
-            if reply:
-                history.extend([
-                    {'role': 'user', 'text': text[:4000], 'message_id': message_id},
-                    {'role': 'model', 'text': reply},
-                ])
-                del history[:-24]
             logger.info('WhatsApp text reply ready in %.0f ms (references %.0f ms, model %.0f ms)', (time.perf_counter() - started) * 1000, references_ms, (time.perf_counter() - model_started) * 1000)
             return {'reply': reply}
 

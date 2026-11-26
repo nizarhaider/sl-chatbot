@@ -422,6 +422,20 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 	if runes := []rune(text); len(runes) > 4000 {
 		text = string(runes[:4000])
 	}
+	if messageID == "" {
+		messageID = "event-" + time.Now().UTC().Format("20060102150405.000000000")
+	}
+	inserted, err := m.db.Exec(ctx, `insert into portal_messages
+		(customer_id,agent_id,connection_id,contact_phone,direction,body,status,source,provider_message_id)
+		select customer_id,agent_id,id,$2,'inbound',$4,'received','linked_device',$3
+		from portal_whatsapp_links where id=$1 on conflict do nothing`, id, event.Info.Chat.User, messageID, text)
+	if err != nil {
+		log.Printf("incoming message could not be saved for connection %s: %v", id, err)
+		return
+	}
+	if inserted.RowsAffected() == 0 {
+		return
+	}
 	payload, err := json.Marshal(map[string]string{"connection": id, "peer": event.Info.Chat.User, "message_id": messageID, "text": text})
 	if err != nil {
 		return
@@ -448,8 +462,23 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 		return
 	}
 	if reply := strings.TrimSpace(result.Reply); reply != "" {
-		if _, err = client.SendMessage(requestCtx, event.Info.Chat.ToNonAD(), &waE2E.Message{Conversation: proto.String(reply)}); err != nil {
-			log.Printf("chat reply send failed for connection %s: %v", id, err)
+		sent, sendErr := client.SendMessage(requestCtx, event.Info.Chat.ToNonAD(), &waE2E.Message{Conversation: proto.String(reply)})
+		status := "sent"
+		var providerID any
+		if sendErr != nil {
+			status = "failed"
+		} else {
+			providerID = string(sent.ID)
+		}
+		_, saveErr := m.db.Exec(requestCtx, `insert into portal_messages
+			(customer_id,agent_id,connection_id,contact_phone,direction,body,status,source,provider_message_id,reply_to_message_id)
+			select customer_id,agent_id,id,$2,'outbound',$4,$5,'linked_device',$6,$3
+			from portal_whatsapp_links where id=$1 on conflict do nothing`, id, event.Info.Chat.User, messageID, reply, status, providerID)
+		if saveErr != nil {
+			log.Printf("outgoing message could not be saved for connection %s: %v", id, saveErr)
+		}
+		if sendErr != nil {
+			log.Printf("chat reply send failed for connection %s: %v", id, sendErr)
 		}
 	}
 }
