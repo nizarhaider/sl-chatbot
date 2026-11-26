@@ -62,6 +62,7 @@ create table if not exists portal_messages (
   created_at timestamptz not null default now()
 );
 create index if not exists portal_messages_contact_history on portal_messages(customer_id,contact_phone,created_at desc);
+alter table portal_messages add column if not exists display_phone text;
 create index if not exists portal_messages_customer_date on portal_messages(customer_id,created_at desc);
 create unique index if not exists portal_messages_linked_provider on portal_messages(connection_id,provider_message_id) where connection_id is not null and provider_message_id is not null;
 create unique index if not exists portal_messages_cloud_provider on portal_messages(customer_id,provider_message_id) where connection_id is null and provider_message_id is not null;

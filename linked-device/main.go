@@ -425,10 +425,20 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 	if messageID == "" {
 		messageID = "event-" + time.Now().UTC().Format("20060102150405.000000000")
 	}
+	contact := event.Info.Chat.User
+	phone := contact
+	if event.Info.Chat.Server == types.HiddenUserServer {
+		phone = ""
+		if event.Info.SenderAlt.Server == types.DefaultUserServer {
+			phone = event.Info.SenderAlt.User
+		} else if jid, err := client.Store.LIDs.GetPNForLID(ctx, event.Info.Chat); err == nil && jid.Server == types.DefaultUserServer {
+			phone = jid.User
+		}
+	}
 	inserted, err := m.db.Exec(ctx, `insert into portal_messages
-		(customer_id,agent_id,connection_id,contact_phone,direction,body,status,source,provider_message_id)
-		select customer_id,agent_id,id,$2,'inbound',$4,'received','linked_device',$3
-		from portal_whatsapp_links where id=$1 on conflict do nothing`, id, event.Info.Chat.User, messageID, text)
+		(customer_id,agent_id,connection_id,contact_phone,display_phone,direction,body,status,source,provider_message_id)
+		select customer_id,agent_id,id,$2,$5,'inbound',$4,'received','linked_device',$3
+		from portal_whatsapp_links where id=$1 on conflict do nothing`, id, contact, messageID, text, phone)
 	if err != nil {
 		log.Printf("incoming message could not be saved for connection %s: %v", id, err)
 		return
@@ -436,7 +446,7 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 	if inserted.RowsAffected() == 0 {
 		return
 	}
-	payload, err := json.Marshal(map[string]string{"connection": id, "peer": event.Info.Chat.User, "message_id": messageID, "text": text})
+	payload, err := json.Marshal(map[string]string{"connection": id, "peer": contact, "message_id": messageID, "text": text})
 	if err != nil {
 		return
 	}
@@ -471,9 +481,9 @@ func (m *manager) replyToMessage(ctx context.Context, id string, client *whatsme
 			providerID = string(sent.ID)
 		}
 		_, saveErr := m.db.Exec(requestCtx, `insert into portal_messages
-			(customer_id,agent_id,connection_id,contact_phone,direction,body,status,source,provider_message_id,reply_to_message_id)
-			select customer_id,agent_id,id,$2,'outbound',$4,$5,'linked_device',$6,$3
-			from portal_whatsapp_links where id=$1 on conflict do nothing`, id, event.Info.Chat.User, messageID, reply, status, providerID)
+			(customer_id,agent_id,connection_id,contact_phone,display_phone,direction,body,status,source,provider_message_id,reply_to_message_id)
+			select customer_id,agent_id,id,$2,$7,'outbound',$4,$5,'linked_device',$6,$3
+			from portal_whatsapp_links where id=$1 on conflict do nothing`, id, contact, messageID, reply, status, providerID, phone)
 		if saveErr != nil {
 			log.Printf("outgoing message could not be saved for connection %s: %v", id, saveErr)
 		}
