@@ -60,13 +60,13 @@ def greeting_key(text):
     return re.sub(r"[^\w]+", "", text.casefold())
 
 
-def agent_settings(agent_config):
+def agent_settings(agent_config, lead_discovery=False):
     replicated = bool(agent_config.get("replicated_voice"))
     return GeminiLiveLLMService.Settings(
         model=GEMINI_LIVE_MODEL,
         voice=agent_config.get("voice", DEFAULT_VOICE),
         language=LANGUAGE_CODE,
-        system_instruction=system_prompt(agent_config),
+        system_instruction=system_prompt(agent_config, lead_discovery),
         vad=GeminiVADParams(disabled=False, silence_duration_ms=600 if replicated else None),
     )
 
@@ -222,7 +222,7 @@ class NishadiTTSService(GeminiTTSService):
 
 async def prewarm_replicated_voice():
     global prewarm_usage, tts_exhausted
-    voice = os.environ.get("REPLICATED_VOICE_ID")
+    voice = os.environ.get("SERENDIBAI_REPLICATED_VOICE")
     if not voice:
         return
     greeting = opening_greeting(await DatabaseTools().agent_config())
@@ -273,7 +273,7 @@ def build_pipeline(transport, config, context, state=call_state):
     enabled = [tool for tool in VOICE_TOOLS if tool.name in config.get("enabled_tools", [])]
     serendib_agent = config.get("company_name", "").strip().casefold() == "serendibai.lk"
     direct = (os.environ.get("SERENDIB_INBOUND") == "1" or serendib_agent) and not context.outbound
-    voice = os.environ.get("REPLICATED_VOICE_ID") if direct and serendib_agent else None
+    voice = os.environ.get("SERENDIBAI_REPLICATED_VOICE") if direct and serendib_agent else None
     if direct and tts_exhausted:
         voice = None
     instant = bool(voice) and direct
@@ -282,7 +282,7 @@ def build_pipeline(transport, config, context, state=call_state):
         context,
         state,
         api_key=os.environ["GEMINI_API_KEY"],
-        settings=agent_settings(llm_config),
+        settings=agent_settings(llm_config, serendib_agent and not context.outbound),
         replicated=bool(voice),
         tools=ToolsSchema(standard_tools=enabled),
         inference_on_context_initialization=not context.outbound and not instant,
